@@ -3157,6 +3157,10 @@ static void eapol_sm_test_eap_tls(const void *data)
 	struct eapol_8021x_tls_test_state s = {};
 	struct l_settings* config = l_settings_new();
 
+	l_info("CERTDIR=%s", CERTDIR);
+	l_log_set_stderr();
+	l_debug_enable("*");
+
 	l_settings_load_from_data(config, config_8021x, strlen(config_8021x));
 
 	s.app_data_cb = eapol_sm_test_tls_new_data;
