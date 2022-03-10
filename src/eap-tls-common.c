@@ -986,6 +986,7 @@ bool eap_tls_common_settings_load(struct eap_state *eap,
 	snprintf(setting_key, sizeof(setting_key), "%sCACert", prefix);
 	value = l_settings_get_string(settings, "Security", setting_key);
 	if (value) {
+		l_info("Loading CA Cert");
 		eap_tls->ca_cert = eap_tls_load_ca_cert(settings, value);
 		if (!eap_tls->ca_cert) {
 			l_error("Could not load CACert %s", value);

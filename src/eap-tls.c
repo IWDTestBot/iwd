@@ -352,6 +352,7 @@ static bool eap_tls_settings_load(struct eap_state *eap,
 
 	snprintf(tls_prefix, sizeof(tls_prefix), "%sTLS-", prefix);
 
+	l_info("TLS load settings common");
 	if (!eap_tls_common_settings_load(eap, settings, tls_prefix,
 						&eap_tls_ops, NULL))
 		return false;
@@ -363,6 +364,7 @@ static bool eap_tls_settings_load(struct eap_state *eap,
 	snprintf(setting_key, sizeof(setting_key), "%sClientCert", tls_prefix);
 	value = l_settings_get_string(settings, "Security", setting_key);
 	if (value) {
+		l_info("Loading client cert");
 		client_cert = eap_tls_load_client_cert(settings, value,
 							passphrase, NULL);
 		if (!client_cert)
@@ -374,10 +376,13 @@ static bool eap_tls_settings_load(struct eap_state *eap,
 	snprintf(setting_key, sizeof(setting_key), "%sClientKey", tls_prefix);
 	value = l_settings_get_string(settings, "Security", setting_key);
 	if (value) {
+		l_info("Loading priv key");
 		client_key = eap_tls_load_priv_key(settings, value,
 							passphrase, NULL);
-		if (!client_key)
+		if (!client_key) {
+			l_info("could not load private key");
 			goto bad_client_key;
+		}
 	}
 
 	l_free(value);
@@ -390,6 +395,7 @@ static bool eap_tls_settings_load(struct eap_state *eap,
 							&client_cert,
 							&client_key, NULL) ||
 			 !client_cert || !client_key)) {
+		l_info("Bad bundle");
 		goto bad_bundle;
 	}
 

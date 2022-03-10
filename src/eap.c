@@ -787,9 +787,11 @@ bool eap_load_settings(struct eap_state *eap, struct l_settings *settings,
 	if (eap->set_key_material && !eap->method->exports_msk)
 		goto err;
 
-	if (eap->method->load_settings)
+	if (eap->method->load_settings) {
+		l_info("calling method load settings");
 		if (!eap->method->load_settings(eap, settings, prefix))
 			goto err;
+	}
 
 	eap->authenticator = eap->method->handle_request == NULL;
 
