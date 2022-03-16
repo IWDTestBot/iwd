@@ -1,0 +1,14 @@
+{
+    "email": {
+        "enable": true,
+        "server": "smtp.gmail.com",
+        "port": 587,
+        "user": "iwd.ci.bot@gmail.com",
+        "starttls": true,
+        "default-to": "prestwoj@gmail.com",
+        "only-maintainers": false,
+        "maintainers": [
+            "prestwoj@gmail.com"
+        ]
+    }
+}
