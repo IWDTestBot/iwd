@@ -1,0 +1,150 @@
+name: Test Runner
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tests:
+        description: Specific test to run (comma separated, no spaces)
+        default: all
+        required: false
+      runner:
+        description: Type of runner (qemu, uml, or host)
+        default: uml
+        required: false
+      kernel:
+        description: Kernel version (5.15, 5.16, etc)
+        default: '5.16'
+        required: false
+
+jobs:
+  test-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          path: iwd
+
+      - name: Install packages
+        run: |
+          sudo apt update
+          sudo apt install qemu-system make git iw iproute2 haveged pip python-docutils pkg-config libreadline-dev libtool automake flex bison libelf-dev bc libssl-dev libnl-genl-3-dev libdbus-1-dev libnl-route-3-dev isc-dhcp-server radvd libc6 build-essential
+          sudo pip install termcolor prettytable pyroute2 pycrypto
+          sudo modprobe pkcs8_key_parser
+
+          # For some reason /etc/radvd.conf isn't getting installed
+          sudo touch /etc/radvd.conf
+
+      - name: Cache QEMU Kernel
+        id: cache-kernel
+        uses: actions/cache@v2
+        with:
+          path: bzImage-${{ github.event.inputs.kernel }}
+          key: bzImage-${{ github.event.inputs.kernel }}
+
+      - name: Cache UML Kernel
+        id: cache-uml-kernel
+        uses: actions/cache@v2
+        with:
+          path: um-linux-${{ github.event.inputs.kernel }}
+          key: um-linux-${{ github.event.inputs.kernel }}
+
+      - name: Cache Hostapd
+        id: cache-hostapd
+        uses: actions/cache@v2
+        with:
+          path: |
+            hostapd
+            hostapd_cli
+          key: hostapd
+
+      - name: Cache WpaSupplicant
+        id: cache-wpas
+        uses: actions/cache@v2
+        with:
+          path: |
+            wpa_supplicant
+            wpa_cli
+          key: wpa_supplicant
+
+      - name: Build UML kernel
+        if: |
+          steps.cache-uml-kernel.outputs.cache-hit != 'true' &&
+          github.event.inputs.runner == 'uml'
+        run: |
+          git clone -b v${{ github.event.inputs.kernel }} --depth=1 https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git linux/
+          cd linux/
+          git checkout v${{ github.event.inputs.kernel }} -b ${{ github.event.inputs.kernel }}
+          make ARCH=um x86_64_defconfig
+          sh ../iwd/tools/test_runner_kernel_config
+          echo 'yes' | make ARCH=um -j4
+          cp linux ../um-linux-${{ github.event.inputs.kernel }}
+
+      - name: Build kernel
+        if: |
+          steps.cache-kernel.outputs.cache-hit != 'true' &&
+          github.event.inputs.runner == 'qemu'
+        run: |
+          git clone -b v${{ github.event.inputs.kernel }} --depth=1 https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git linux/
+          cd linux/
+          git checkout v${{ github.event.inputs.kernel }} -b ${{ github.event.inputs.kernel }}
+          make x86_64_defconfig
+          make kvm_guest.config
+          sh ../iwd/tools/test_runner_kernel_config
+          echo 'yes' | make -j4
+          cp arch/x86/boot/bzImage ../bzImage-${{ github.event.inputs.kernel }}
+
+      - name: Clone Hostapd/WpaSupplicant
+        run: git clone --depth=1 http://w1.fi/hostap.git hostap/
+
+      - name: Build Hostapd
+        if: steps.cache-hostapd.outputs.cache-hit != 'true'
+        run: |
+          cp iwd/doc/hostapd.config hostap/hostapd/.config
+          cd hostap/hostapd
+          make -j4
+          # Copy binaries to root directory to be cached
+          cp hostapd ../../
+          cp hostapd_cli ../../
+
+      - name: Build WpaSupplicant
+        if: steps.cache-wpas.outputs.cache-hit != 'true'
+        run: |
+          cd hostap/wpa_supplicant
+          cp defconfig .config
+          make -j4
+          cp wpa_supplicant ../../
+          cp wpa_cli ../../
+
+      - name: Build and Unit test
+        run: |
+          git clone --depth=1 https://git.kernel.org/pub/scm/libs/ell/ell.git ell/
+          cd iwd/
+          ./bootstrap-configure
+          make -j4
+          make check
+
+      - name: Run test-runner
+        shell: 'script -q -e -c "bash {0}"'
+        run: |
+          PATH=$(pwd):$PATH
+          cd iwd/
+          cd autotests/
+          if [ "${{ github.event.inputs.tests }}" = "all" ]; then
+            TESTS=$(grep -r -L hwsim_medium=yes | grep test.*hw.conf | cut -d/ -f1 | sort | sed -z 's/\n/,/g;s/,$/\n/')
+          else
+            TESTS=${{ github.event.inputs.tests }}
+          fi
+          cd ../
+
+          ./tools/test-runner -k ../um-linux-${{ github.event.inputs.kernel }} -A $TESTS || true
+
+      - name: Archive logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-runner-logs
+          path: |
+            um-linux-${{ github.event.inputs.kernel }}
