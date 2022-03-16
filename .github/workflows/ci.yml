@@ -1,0 +1,236 @@
+name: IWD CI
+
+#
+# The basic flow of the CI is as follows:
+#
+# 1. Get all inputs, or default values, and set as 'setup' job output
+# 2. Find any cached binaries (hostapd, wpa_supplicant, kernel etc)
+# 3. Checkout all dependent repositories
+# 4. Tar all local files. This is an unfortunate requirement since github jobs
+#    cannot share local files. Since there are multiple CI's acting on the same
+#    set of repositories it makes more sense to retain these and re-download
+#    them for each CI job.
+# 5. Run each CI, currently 'main' and 'musl'.
+#       * 'main' is the default IWD CI which runs all the build steps as well
+#          as test-runner
+#       * 'musl' uses an alpine docker image to test the build on musl-libc
+#
+#     Both CI's use the 'iwd-ci-v2' repo which calls into 'ci-docker'. The
+#     'ci-docker' action essentially re-implements the native Github docker
+#     action but allows arbitrary options to be passed in (e.g. privileged or
+#     mounting non-standard directories)
+#
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tests:
+        description: Tests to run (comma separated, no spaces)
+        default: all
+      kernel:
+        description: Kernel version
+        default: '5.16'
+      hostapd_version:
+        description: Hostapd and wpa_supplicant version
+        default: '2_10'
+      ell_ref:
+        description: ELL reference
+        default: refs/heads/workflow
+
+  repository_dispatch:
+    types: [ell-dispatch]
+
+jobs:
+  setup:
+    runs-on: ubuntu-22.04
+    outputs:
+      tests: ${{ steps.inputs.outputs.tests }}
+      kernel: ${{ steps.inputs.outputs.kernel }}
+      hostapd_version: ${{ steps.inputs.outputs.hostapd_version }}
+      ell_ref: ${{ steps.inputs.outputs.ell_ref }}
+      repository: ${{ steps.inputs.outputs.repository }}
+      ref_branch: ${{ steps.inputs.outputs.ref_branch }}
+    steps:
+      #
+      # This makes CI inputs consistent depending on how the CI was invoked:
+      #  * pull_request trigger won't have any inputs, so these need to be set
+      #    to default values.
+      #  * workflow_dispatch sets all inputs from the user input
+      #  * repository_dispatch sets all inputs based on the JSON payload of
+      #    the request.
+      #
+    - name: Setup Inputs
+      id: inputs
+      run: |
+        if [ ${{ github.event_name }} == 'workflow_dispatch' ]
+        then
+          TESTS=${{ github.event.inputs.tests }}
+          KERNEL=${{ github.event.inputs.kernel }}
+          HOSTAPD_VERSION=${{ github.event.inputs.hostapd_version }}
+          ELL_REF=${{ github.event.inputs.ell_ref }}
+          REF="$GITHUB_REF"
+          REPO="$GITHUB_REPOSITORY"
+        elif [ ${{ github.event_name }} == 'repository_dispatch' ]
+        then
+          TESTS=all
+          KERNEL=5.16
+          HOSTAPD_VERSION=2_10
+          ELL_REF=${{ github.event.client_payload.ref }}
+          REF=$ELL_REF
+          REPO=${{ github.event.client_payload.repo }}
+        else
+          TESTS=all
+          KERNEL=5.16
+          HOSTAPD_VERSION=2_10
+          ELL_REF="refs/heads/workflow"
+          REF="$GITHUB_REF"
+          REPO="$GITHUB_REPOSITORY"
+        fi
+
+        #
+        # Now that the inputs are sorted, set the output of this step to these
+        # values so future jobs can refer to them.
+        #
+        echo ::set-output name=tests::$TESTS
+        echo ::set-output name=kernel::$KERNEL
+        echo ::set-output name=hostapd_version::$HOSTAPD_VERSION
+        echo ::set-output name=ell_ref::$ELL_REF
+        echo ::set-output name=repository::$REPO
+        echo ::set-output name=ref_branch::$REF
+
+    - name: Cache UML Kernel
+      id: cache-uml-kernel
+      uses: actions/cache@v3
+      with:
+        path: ${{ github.workspace }}/cache/um-linux-${{ steps.inputs.outputs.kernel }}
+        key: um-linux-${{ steps.inputs.outputs.kernel }}_ubuntu22
+
+    - name: Cache Hostapd
+      id: cache-hostapd
+      uses: actions/cache@v3
+      with:
+        path: |
+          ${{ github.workspace }}/cache/hostapd_${{ steps.inputs.outputs.hostapd_version }}
+          ${{ github.workspace }}/cache/hostapd_cli_${{ steps.inputs.outputs.hostapd_version }}
+        key: hostapd_${{ steps.inputs.outputs.hostapd_version }}_ssl3
+
+    - name: Cache WpaSupplicant
+      id: cache-wpas
+      uses: actions/cache@v3
+      with:
+        path: |
+          ${{ github.workspace }}/cache/wpa_supplicant_${{ steps.inputs.outputs.hostapd_version }}
+          ${{ github.workspace }}/cache/wpa_cli_${{ steps.inputs.outputs.hostapd_version }}
+        key: wpa_supplicant_${{ steps.inputs.outputs.hostapd_version }}_ssl3
+
+    - name: Checkout IWD
+      uses: actions/checkout@v3
+      with:
+        path: iwd
+        repository: IWDTestBot/iwd
+        token: ${{ secrets.ACTION_TOKEN }}
+
+    - name: Checkout ELL
+      uses: actions/checkout@v3
+      with:
+        path: ell
+        repository: IWDTestBot/ell
+        ref: ${{ steps.inputs.outputs.ell_ref }}
+
+    - name: Checkout CiBase
+      uses: actions/checkout@v3
+      with:
+        repository: IWDTestBot/cibase
+        path: cibase
+
+    - name: Checkout CI
+      uses: actions/checkout@v3
+      with:
+        repository: IWDTestBot/iwd-ci-v2
+        path: iwd-ci
+
+    - name: Tar files
+      run: |
+        tar -cvf archive.tar \
+          ${{ github.workspace }}/cache/um-linux-${{ steps.inputs.outputs.kernel }} \
+          ${{ github.workspace }}/cache/hostapd_${{ steps.inputs.outputs.hostapd_version }} \
+          ${{ github.workspace }}/cache/hostapd_cli_${{ steps.inputs.outputs.hostapd_version }} \
+          ${{ github.workspace }}/cache/wpa_supplicant_${{ steps.inputs.outputs.hostapd_version }} \
+          ${{ github.workspace }}/cache/wpa_cli_${{ steps.inputs.outputs.hostapd_version }} \
+          iwd \
+          ell \
+          cibase \
+          iwd-ci \
+          cache
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: iwd-artifacts
+        path: |
+          archive.tar
+
+  iwd-alpine-ci:
+    runs-on: ubuntu-22.04
+    needs: setup
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: iwd-artifacts
+
+    - name: Untar
+      run: tar -xf archive.tar
+
+    - name: Modprobe pkcs8_key_parser
+      run: |
+        sudo modprobe pkcs8_key_parser
+
+    - name: Alpine CI
+      uses: IWDTestBot/iwd-ci-v2@master
+      with:
+        ref_branch: ${{ needs.setup.outputs.ref_branch }}
+        repository: ${{ needs.setup.outputs.repository }}
+        github_token: ${{ secrets.ACTION_TOKEN }}
+        email_token: ${{ secrets.EMAIL_TOKEN }}
+        patchwork_token: ${{ secrets.PATCHWORK_TOKEN }}
+        ci: musl
+
+  iwd-ci:
+    runs-on: ubuntu-22.04
+    needs: setup
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: iwd-artifacts
+
+    - name: Untar
+      run: tar -xf archive.tar
+
+    - name: Modprobe pkcs8_key_parser
+      run: |
+        sudo modprobe pkcs8_key_parser
+        echo ${{ needs.setup.outputs.ref_branch }}
+        echo ${{ needs.setup.outputs.repository }}
+
+    - name: Run CI
+      uses: IWDTestBot/iwd-ci-v2@master
+      with:
+        ref_branch: ${{ needs.setup.outputs.ref_branch }}
+        repository: ${{ needs.setup.outputs.repository }}
+        tests: ${{ needs.setup.outputs.tests }}
+        kernel: ${{ needs.setup.outputs.kernel }}
+        hostapd_version: ${{ needs.setup.outputs.hostapd_version }}
+        github_token: ${{ secrets.ACTION_TOKEN }}
+        email_token: ${{ secrets.EMAIL_TOKEN }}
+        patchwork_token: ${{ secrets.PATCHWORK_TOKEN }}
+        ci: main
+
+    - name: Upload Logs
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-runner-logs
+        path: ${{ github.workspace }}/log
