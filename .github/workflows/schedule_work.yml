@@ -1,0 +1,43 @@
+name: Sync Upstream
+on:
+  schedule:
+  - cron:  "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  repo-sync:
+    runs-on: ubuntu-latest
+    steps:
+
+    - uses: actions/checkout@v2
+      with:
+        persist-credentials: false
+        fetch-depth: 0
+
+    - name: Manage Repo
+      uses: IWDTestBot/action-manage-repo@master
+      with:
+        src_repo: "https://git.kernel.org/pub/scm/network/wireless/iwd.git"
+        src_branch: "master"
+        dest_branch: "master"
+        workflow_branch: "workflow"
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  create_pr:
+    needs: repo-sync
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+
+    - name: Patchwork to PR
+      uses: IWDTestBot/action-patchwork-to-pr@master
+      with:
+        pw_key_str: "user"
+        github_token: ${{ secrets.ACTION_TOKEN }}
+        email_token: ${{ secrets.EMAIL_TOKEN }}
+        patchwork_token: ${{ secrets.PATCHWORK_TOKEN }}
+        config: https://raw.githubusercontent.com/IWDTestBot/iwd/workflow/.github/workflows/pw-to-pr.json
+        patchwork_id: "408"
+        email_message: https://raw.githubusercontent.com/IWDTestBot/iwd/workflow/.github/workflows/pw-to-pr-email.txt
