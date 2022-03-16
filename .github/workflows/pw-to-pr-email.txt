@@ -1,0 +1,16 @@
+This is an automated email and please do not reply to this email.
+
+Dear Submitter,
+
+Thank you for submitting the patches to the IWD mailing list.
+While preparing the CI tests, the patches you submitted couldn't be applied to the current HEAD of the repository.
+
+----- Output -----
+{}
+
+Please resolve the issue and submit the patches again.
+
+
+---
+Regards,
+IWDTestBot
