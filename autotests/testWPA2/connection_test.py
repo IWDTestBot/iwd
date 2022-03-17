@@ -15,6 +15,8 @@ class Test(unittest.TestCase):
     def test_connection_success(self):
         wd = IWD()
 
+        raise Exception("FAILED")
+
         psk_agent = PSKAgent("secret123")
         wd.register_psk_agent(psk_agent)
 
