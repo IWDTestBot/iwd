@@ -1816,12 +1816,15 @@ class Main:
 			smp = int(nproc / 2)
 
 		#
-		# Increase RAM if valgrind is being used
+		# TODO: Its unclear exactly what causes it (leak, fragmentation,
+		# or ?), but after many test runs the kernel starts running out
+		# of memory. This is sometimes non-fatal, e.g. a python call
+		# fails, but other times the kernel fully panics.
 		#
-		if self.args.valgrind:
-			ram = 512
-		else:
-			ram = 384
+		# For now increase the RAM which allows full test runs to
+		# complete.
+		#
+		ram = 1024
 
 		print("Using %d cores, %d RAM for VM" % (smp, ram))
 
