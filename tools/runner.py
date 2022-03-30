@@ -66,6 +66,16 @@ class RunnerNamespace(Namespace):
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
 
+	def to_env(self):
+		env = {}
+		for k, v in self.__dict__.items():
+			if v in [None, False, [], '']:
+				continue
+
+			env[k] = str(v)
+
+		return env
+
 	def to_cmd(self):
 		ret = ''
 		for k, v in self.__dict__.items():
@@ -218,6 +228,8 @@ class Runner:
 
 		if args.runner == 'uml':
 			return UmlRunner(args)
+		elif args.runner == 'host':
+			return HostRunner(args)
 		elif args.runner == 'qemu':
 			return QemuRunner(args)
 		else:
@@ -538,3 +550,27 @@ class UmlRunner(RunnerAbstract):
 		# exit is achieved with RB_POWER_OFF
 		#
 		libc.reboot(RB_POWER_OFF)
+
+class HostRunner(RunnerAbstract):
+	name = "Host Runner"
+
+	def __init__(self, args):
+		super().__init__(args)
+
+		if len(sys.argv) <= 1:
+			return
+
+		self.env = args.to_env()
+
+		self.cmdline = [args.start]
+
+	def prepare_environment(self):
+		super().prepare_environment()
+
+		os.system('ip link add eth0 type veth peer name eth1')
+
+	def cleanup_environment(self):
+		super().cleanup_environment()
+
+		os.system('ip link del eth0')
+		os.system('ip link del eth1')
