@@ -30,7 +30,8 @@ class Test(unittest.TestCase):
         ctx.stop_process(p)
     @classmethod
     def setUpClass(cls):
-        os.mkdir('/tmp/ead')
+        if not os.path.exists('/tmp/ead'):
+            os.mkdir('/tmp/ead')
 
         IWD.copy_to_storage('default.8021x', storage_dir='/tmp/ead')
 
