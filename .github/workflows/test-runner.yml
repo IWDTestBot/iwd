@@ -26,7 +26,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
+    env:
+      RUN_TESTS: "all"
+      RUNNER: "uml"
+      KERNEL: "5.16"
+
     steps:
+      - name: Sanitize Input
+        run: |
+          if [[ ! -z "${INPUT_TESTS}" ]]; then
+            RUN_TESTS=${INPUT_TESTS}
+          fi
+          if [[ ! -z "${INPUT_RUNNER}" ]]; then
+            RUNNER=${INPUT_RUNNER}
+          fi
+          if [[ ! -z "${INPUT_KERNEL}" ]]; then
+            KERNEL=${INPUT_KERNEL}
+          fi
       - uses: actions/checkout@v2
         with:
           path: iwd
@@ -45,15 +61,15 @@ jobs:
         id: cache-kernel
         uses: actions/cache@v2
         with:
-          path: bzImage-${{ github.event.inputs.kernel }}
-          key: bzImage-${{ github.event.inputs.kernel }}
+          path: bzImage-$KERNEL
+          key: bzImage-$KERNEL
 
       - name: Cache UML Kernel
         id: cache-uml-kernel
         uses: actions/cache@v2
         with:
-          path: um-linux-${{ github.event.inputs.kernel }}
-          key: um-linux-${{ github.event.inputs.kernel }}
+          path: um-linux-$KERNEL
+          key: um-linux-$KERNEL
 
       - name: Cache Hostapd
         id: cache-hostapd
@@ -76,29 +92,29 @@ jobs:
       - name: Build UML kernel
         if: |
           steps.cache-uml-kernel.outputs.cache-hit != 'true' &&
-          github.event.inputs.runner == 'uml'
+          env.RUNNER == 'uml'
         run: |
-          git clone -b v${{ github.event.inputs.kernel }} --depth=1 https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git linux/
+          git clone -b v$KERNEL --depth=1 https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git linux/
           cd linux/
-          git checkout v${{ github.event.inputs.kernel }} -b ${{ github.event.inputs.kernel }}
+          git checkout v$KERNEL -b $KERNEL
           make ARCH=um x86_64_defconfig
           sh ../iwd/tools/test_runner_kernel_config
           echo 'yes' | make ARCH=um -j4
-          cp linux ../um-linux-${{ github.event.inputs.kernel }}
+          cp linux ../um-linux-$KERNEL
 
       - name: Build kernel
         if: |
           steps.cache-kernel.outputs.cache-hit != 'true' &&
-          github.event.inputs.runner == 'qemu'
+          env.RUNNER == 'qemu'
         run: |
-          git clone -b v${{ github.event.inputs.kernel }} --depth=1 https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git linux/
+          git clone -b v$KERNEL --depth=1 https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git linux/
           cd linux/
-          git checkout v${{ github.event.inputs.kernel }} -b ${{ github.event.inputs.kernel }}
+          git checkout v$KERNEL -b $KERNEL
           make x86_64_defconfig
           make kvm_guest.config
           sh ../iwd/tools/test_runner_kernel_config
           echo 'yes' | make -j4
-          cp arch/x86/boot/bzImage ../bzImage-${{ github.event.inputs.kernel }}
+          cp arch/x86/boot/bzImage ../bzImage-$KERNEL
 
       - name: Clone Hostapd/WpaSupplicant
         run: git clone --depth=1 http://w1.fi/hostap.git hostap/
@@ -136,14 +152,14 @@ jobs:
           PATH=$(pwd):$PATH
           cd iwd/
           cd autotests/
-          if [ "${{ github.event.inputs.tests }}" = "all" ]; then
+          if [ "$RUN_TESTS" = "all" ]; then
             TESTS=$(grep -r -L hwsim_medium=yes | grep test.*hw.conf | cut -d/ -f1 | sort | sed -z 's/\n/,/g;s/,$/\n/')
           else
-            TESTS=${{ github.event.inputs.tests }}
+            TESTS=$RUN_TESTS
           fi
           cd ../
 
-          ./tools/test-runner -k ../um-linux-${{ github.event.inputs.kernel }} -A $TESTS || true
+          ./tools/test-runner -k ../um-linux-$KERNEL -A $TESTS || true
 
       - name: Archive logs
         if: always()
@@ -151,4 +167,4 @@ jobs:
         with:
           name: test-runner-logs
           path: |
-            um-linux-${{ github.event.inputs.kernel }}
+            um-linux-$KERNEL
