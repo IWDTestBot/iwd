@@ -2,6 +2,7 @@ name: Test Runner
 
 on:
   pull_request:
+    - "**"
   workflow_dispatch:
     inputs:
       tests:
