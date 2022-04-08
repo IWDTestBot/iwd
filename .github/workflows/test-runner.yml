@@ -1,11 +1,6 @@
 name: Test Runner
 
 on:
-  pull_request:
-    with:
-      tests: all
-      runner: uml
-      kernel: '5.16'
   workflow_dispatch:
     inputs:
       tests:
