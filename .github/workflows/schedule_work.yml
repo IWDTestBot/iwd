@@ -18,7 +18,7 @@ jobs:
         fetch-depth: 0
 
     - name: Manage Repo
-      uses: BluezTestBot/action-manage-repo@master
+      uses: IWDTestBot/action-manage-repo@master
       with:
         src_repo: "https://git.kernel.org/pub/scm/network/wireless/iwd.git"
         src_branch: "master"
@@ -39,3 +39,6 @@ jobs:
         github_token: ${{ secrets.ACTION_TOKEN }}
         email_token: ${{ secrets.EMAIL_TOKEN }}
         patchwork_token: ${{ secrets.PATCHWORK_TOKEN }}
+        config: https://raw.githubusercontent.com/IWDTestBot/iwd/workflow/.github/workflows/pw-to-pr.json
+        patchwork_id: "408"
+        email_message: https://raw.githubusercontent.com/IWDTestBot/iwd/workflow/.github/workflows/pw-to-pr-email.txt
