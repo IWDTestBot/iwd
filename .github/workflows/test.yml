@@ -1,0 +1,19 @@
+name: Test
+on:
+  workflow_dispatch:
+  pull_request:
+
+env:
+  REF: ${{ github.event.pull_request.head.sha }}
+
+jobs:
+  test-runner:
+    runs-on: ubuntu-latest
+    steps:
+
+    - uses: IWDTestBot/test-runner@main
+      with:
+        tests: all
+        runner: uml
+        kernel: 5.16
+        ref: $REF
