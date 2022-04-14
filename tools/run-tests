@@ -832,9 +832,7 @@ def pre_test(ctx, test, copied):
 
 		subtests = pruned
 
-	if ctx.args.log:
-		ctx.start_process(['iwmon', '--nowiphy'])
-	elif ctx.args.monitor:
+	if ctx.args.monitor:
 		ctx.start_process(['iwmon'], outfile=ctx.args.monitor)
 
 	ctx.start_dbus()
