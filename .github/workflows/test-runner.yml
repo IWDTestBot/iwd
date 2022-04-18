@@ -9,7 +9,16 @@ jobs:
     steps:
 
     - uses: IWDTestBot/test-runner@main
+      id: test
       with:
         tests: all
         runner: uml
         kernel: 5.16
+
+    - name: Report Results
+      if: always()
+      run: |
+        echo Configure: ${{ steps.test.outputs.configure_iwd }}
+        echo Build: ${{ steps.test.outputs.build_iwd }}
+        echo Unit: ${{ steps.test.outputs.unit_iwd }}
+        echo Test: ${{ steps.test.outputs.test_iwd }}
