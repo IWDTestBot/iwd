@@ -1,12 +1,22 @@
 name: Test Runner
 on:
   workflow_dispatch:
-  pull_request:
 
 jobs:
   test-runner:
     runs-on: ubuntu-latest
     steps:
+
+    - name: Report pending
+      if: github.event_name == 'pull_request'
+      uses: IWDTestBot/action-patchwork@main
+      with:
+        user: 185529
+        state: pending
+        patchwork_token: ${{ secrets.PATCHWORK_TOKEN }}
+        context: 'test-runner'
+        description: 'Run Autotests'
+        github_token: ${{ secrets.ACTION_TOKEN }}
 
     - uses: IWDTestBot/test-runner@main
       id: test
@@ -15,7 +25,30 @@ jobs:
         runner: uml
         kernel: 5.16
 
-    - name: Report Results
+    - name: Report Fail
+      if: failure() && github.event_name == 'pull_request'
+      uses: IWDTestBot/action-patchwork@main
+      with:
+        user: 185529
+        state: fail
+        patchwork_token: ${{ secrets.PATCHWORK_TOKEN }}
+        context: 'test-runner'
+        description: 'Run Autotests'
+        github_token: ${{ secrets.ACTION_TOKEN }}
+
+    - name: Report Success
+      if: success() && github.event_name == 'pull_request'
+      uses: IWDTestBot/action-patchwork@main
+      with:
+        user: 185529
+        state: pass
+        patchwork_token: ${{ secrets.PATCHWORK_TOKEN }}
+        context: 'test-runner'
+        description: 'Run Autotests'
+        github_token: ${{ secrets.ACTION_TOKEN }}
+
+
+    - name: Print Results
       if: always()
       run: |
         echo Configure: ${{ steps.test.outputs.configure_iwd }}
