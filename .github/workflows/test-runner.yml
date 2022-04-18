@@ -8,6 +8,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
+    - name: Report Patchwork
+      if: always()
+      uses: IWDTestBot/action-patchwork@main
+      with:
+        user: 104215
+        state: pending
+        patchwork_token: ${{ secrets.PATCHWORK_TOKEN }}
+        context: 'Test context'
+        description: 'A test description'
+        github_token: ${{ secrets.ACTION_TOKEN }}
+
     - uses: IWDTestBot/test-runner@main
       id: test
       with:
