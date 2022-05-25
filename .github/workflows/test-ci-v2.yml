@@ -1,0 +1,12 @@
+name: CI V2
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Run CI
+      uses: IWDTestBot/iwd-ci@master
