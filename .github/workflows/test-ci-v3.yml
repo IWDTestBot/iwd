@@ -1,0 +1,98 @@
+name: IWD CI V3
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tests:
+        description: Tests to run (comma separated, no spaces)
+        default: all
+      kernel:
+        description: Kernel version
+        default: '5.16'
+      hostapd_version:
+        description: Hostapd and wpa_supplicant version
+        default: '2_10'
+
+jobs:
+  ci:
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Setup Inputs
+      id: inputs
+      run: |
+        if [ ${{ github.event.action }} == 'pull_request' ]
+        then
+          TESTS=all
+          KERNEL=5.16
+          HOSTAPD_VERSION=2_10
+        else
+          TESTS=${{ github.event.inputs.tests }}
+          KERNEL=${{ github.event.inputs.kernel }}
+          HOSTAPD_VERSION=${{ github.event.inputs.hostapd_version }}
+        fi
+
+        echo ::set-output name=tests::$TESTS
+        echo ::set-output name=kernel::$KERNEL
+        echo ::set-output name=hostapd_version::$HOSTAPD_VERSION
+
+    - name: Modprobe pkcs8_key_parser
+      run: |
+        sudo modprobe pkcs8_key_parser
+
+    - name: Cache UML Kernel
+      id: cache-uml-kernel
+      uses: actions/cache@v3
+      with:
+        path: ${{ github.workspace }}/cache/um-linux-${{ steps.inputs.outputs.kernel }}
+        key: um-linux-${{ steps.inputs.outputs.kernel }}_ubuntu22
+
+    - name: Cache Hostapd
+      id: cache-hostapd
+      uses: actions/cache@v3
+      with:
+        path: |
+          ${{ github.workspace }}/cache/hostapd_${{ steps.inputs.outputs.hostapd_version }}
+          ${{ github.workspace }}/cache/hostapd_cli_${{ steps.inputs.outputs.hostapd_version }}
+        key: hostapd_${{ steps.inputs.outputs.hostapd_version }}_ssl3
+
+    - name: Cache WpaSupplicant
+      id: cache-wpas
+      uses: actions/cache@v3
+      with:
+        path: |
+          ${{ github.workspace }}/cache/wpa_supplicant_${{ steps.inputs.outputs.hostapd_version }}
+          ${{ github.workspace }}/cache/wpa_cli_${{ steps.inputs.outputs.hostapd_version }}
+        key: wpa_supplicant_${{ steps.inputs.outputs.hostapd_version }}_ssl3
+
+    - name: Checkout IWD
+      uses: actions/checkout@v3
+      with:
+        path: iwd
+        repository: IWDTestBot/iwd
+
+    - name: Checkout ELL
+      uses: actions/checkout@v3
+      with:
+        path: ell
+        repository: IWDTestBot/ell
+
+    - name: Checkout CiBase
+      uses: actions/checkout@v3
+      with:
+        repository: IWDTestBot/cibase
+        path: cibase
+
+    - name: Checkout CI
+      uses: actions/checkout@v3
+      with:
+        repository: IWDTestBot/iwd-ci-v2
+        path: iwd-ci
+
+    - name: Run CI
+      uses: IWDTestBot/iwd-ci-v2@master
+      with:
+        tests: ${{ steps.inputs.outputs.tests }}
+        kernel: ${{ steps.inputs.outputs.kernel }}
+        hostapd_version: ${{ steps.inputs.outputs.hostapd_version }}
+
