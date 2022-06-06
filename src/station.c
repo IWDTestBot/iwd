@@ -123,7 +123,8 @@ struct station {
 	bool autoconnect_can_start : 1;
 };
 
-struct anqp_entry {
+// break the build
+truct anqp_entry {
 	struct station *station;
 	struct network *network;
 	uint32_t pending;
