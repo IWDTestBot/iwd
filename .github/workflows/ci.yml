@@ -15,8 +15,12 @@ on:
         default: '2_10'
 
 jobs:
-  ci:
+  setup:
     runs-on: ubuntu-22.04
+    outputs:
+      tests: ${{ steps.inputs.outputs.tests }}
+      kernel: ${{ steps.inputs.outputs.kernel }}
+      hostapd_version: ${{ steps.inputs.outputs.hostapd_version }}
     steps:
     - name: Setup Inputs
       id: inputs
@@ -35,10 +39,6 @@ jobs:
         echo ::set-output name=tests::$TESTS
         echo ::set-output name=kernel::$KERNEL
         echo ::set-output name=hostapd_version::$HOSTAPD_VERSION
-
-    - name: Modprobe pkcs8_key_parser
-      run: |
-        sudo modprobe pkcs8_key_parser
 
     - name: Cache UML Kernel
       id: cache-uml-kernel
@@ -89,12 +89,69 @@ jobs:
         repository: IWDTestBot/iwd-ci-v2
         path: iwd-ci
 
+    - name: Tar files
+      run: |
+        tar -cvf archive.tar \
+          ${{ github.workspace }}/cache/um-linux-${{ steps.inputs.outputs.kernel }} \
+          ${{ github.workspace }}/cache/hostapd_${{ steps.inputs.outputs.hostapd_version }} \
+          ${{ github.workspace }}/cache/hostapd_cli_${{ steps.inputs.outputs.hostapd_version }} \
+          ${{ github.workspace }}/cache/wpa_supplicant_${{ steps.inputs.outputs.hostapd_version }} \
+          ${{ github.workspace }}/cache/wpa_cli_${{ steps.inputs.outputs.hostapd_version }} \
+          iwd \
+          ell \
+          cibase \
+          iwd-ci \
+          cache
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: iwd-artifacts
+        path: |
+          archive.tar
+
+  alpine-ci:
+    if: ${{ false }}
+    runs-on: ubuntu-22.04
+    needs: setup
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: iwd-artifacts
+
+    - name: Untar
+      run: tar -xf archive.tar
+
+    - name: Alpine CI
+      uses: IWDTestBot/iwd-ci-base@master
+      with:
+        github_token: ${{ secrets.ACTION_TOKEN }}
+        email_token: ${{ secrets.EMAIL_TOKEN }}
+        patchwork_token : ${{ secrets.PATCHWORK_TOKEN }}
+
+  ci:
+    runs-on: ubuntu-22.04
+    needs: setup
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: iwd-artifacts
+
+    - name: Untar
+      run: tar -xf archive.tar
+
+    - name: Modprobe pkcs8_key_parser
+      run: |
+        sudo modprobe pkcs8_key_parser
+
     - name: Run CI
       uses: IWDTestBot/iwd-ci-v2@master
       with:
-        tests: ${{ steps.inputs.outputs.tests }}
-        kernel: ${{ steps.inputs.outputs.kernel }}
-        hostapd_version: ${{ steps.inputs.outputs.hostapd_version }}
+        tests: ${{ needs.setup.outputs.tests }}
+        kernel: ${{ needs.setup.outputs.kernel }}
+        hostapd_version: ${{ needs.setup.outputs.hostapd_version }}
         github_token: ${{ secrets.ACTION_TOKEN }}
         email_token: ${{ secrets.EMAIL_TOKEN }}
         patchwork_token : ${{ secrets.PATCHWORK_TOKEN }}
