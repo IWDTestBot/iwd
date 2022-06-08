@@ -111,7 +111,7 @@ jobs:
           archive.tar
 
   alpine-ci:
-    if: ${{ false }}
+    #if: ${{ false }}
     runs-on: ubuntu-22.04
     needs: setup
     steps:
@@ -122,6 +122,10 @@ jobs:
 
     - name: Untar
       run: tar -xf archive.tar
+
+    - name: Modprobe pkcs8_key_parser
+      run: |
+        sudo modprobe pkcs8_key_parser
 
     - name: Alpine CI
       uses: IWDTestBot/iwd-ci-base@master
