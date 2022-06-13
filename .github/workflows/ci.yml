@@ -161,3 +161,8 @@ jobs:
         email_token: ${{ secrets.EMAIL_TOKEN }}
         patchwork_token : ${{ secrets.PATCHWORK_TOKEN }}
 
+    - name: Upload Logs
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-runner-logs
+        path: ${{ github.workspace }}/log
