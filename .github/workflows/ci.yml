@@ -16,6 +16,7 @@ on:
       ell_ref:
         description: ELL ref
         default: refs/heads/workflow
+
   repository_dispatch:
     types: [ell-dispatch]
 
@@ -26,34 +27,47 @@ jobs:
       tests: ${{ steps.inputs.outputs.tests }}
       kernel: ${{ steps.inputs.outputs.kernel }}
       hostapd_version: ${{ steps.inputs.outputs.hostapd_version }}
-      ell_ref: ${{ steps.inputs.output.ell_ref }}
+      ell_ref: ${{ steps.inputs.outputs.ell_ref }}
+      repository: ${{ steps.inputs.outputs.repository }}
+      ref_branch: ${{ steps.inputs.outputs.ref_branch }}
     steps:
     - name: Setup Inputs
       id: inputs
       run: |
-        if [ ${{ github.event_name }} == 'workflow_dispatch']
+        if [ ${{ github.event_name }} == 'workflow_dispatch' ]
         then
           TESTS=${{ github.event.inputs.tests }}
           KERNEL=${{ github.event.inputs.kernel }}
           HOSTAPD_VERSION=${{ github.event.inputs.hostapd_version }}
           ELL_REF=${{ github.event.inputs.ell_ref }}
-        elif [ ${{ github.event_name }} == 'repository_dispatch']
+          REF="$GITHUB_REF"
+          REPO="$GITHUB_REPOSITORY"
+        elif [ ${{ github.event_name }} == 'repository_dispatch' ]
         then
           TESTS=all
           KERNEL=5.16
           HOSTAPD_VERSION=2_10
           ELL_REF=${{ github.event.client_payload.ref }}
+          REF=$ELL_REF
+          REPO=${{ github.event.client_payload.repo }}
         else
           TESTS=all
           KERNEL=5.16
           HOSTAPD_VERSION=2_10
           ELL_REF="refs/heads/workflow"
+          REF="$GITHUB_REF"
+          REPO="$GITHUB_REPOSITORY"
         fi
 
         echo ::set-output name=tests::$TESTS
         echo ::set-output name=kernel::$KERNEL
         echo ::set-output name=hostapd_version::$HOSTAPD_VERSION
         echo ::set-output name=ell_ref::$ELL_REF
+        echo ::set-output name=repository::$REPO
+        echo ::set-output name=ref_branch::$REF
+
+        echo "REPO: $REPO"
+        echo "REF: $REF"
 
     - name: Cache UML Kernel
       id: cache-uml-kernel
@@ -166,16 +180,20 @@ jobs:
     - name: Modprobe pkcs8_key_parser
       run: |
         sudo modprobe pkcs8_key_parser
+        echo ${{ needs.setup.outputs.ref_branch }}
+        echo ${{ needs.setup.outputs.repository }}
 
     - name: Run CI
       uses: IWDTestBot/iwd-ci-v2@master
       with:
+        ref_branch: ${{ needs.setup.outputs.ref_branch }}
+        repository: ${{ needs.setup.outputs.repository }}
         tests: ${{ needs.setup.outputs.tests }}
         kernel: ${{ needs.setup.outputs.kernel }}
         hostapd_version: ${{ needs.setup.outputs.hostapd_version }}
         github_token: ${{ secrets.ACTION_TOKEN }}
         email_token: ${{ secrets.EMAIL_TOKEN }}
-        patchwork_token : ${{ secrets.PATCHWORK_TOKEN }}
+        patchwork_token: ${{ secrets.PATCHWORK_TOKEN }}
 
     - name: Upload Logs
       if: always()
