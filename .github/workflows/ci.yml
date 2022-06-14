@@ -141,7 +141,7 @@ jobs:
         path: |
           archive.tar
 
-  alpine-ci:
+  iwd-alpine-ci:
     #if: ${{ false }}
     runs-on: ubuntu-22.04
     needs: setup
@@ -165,7 +165,7 @@ jobs:
         email_token: ${{ secrets.EMAIL_TOKEN }}
         patchwork_token : ${{ secrets.PATCHWORK_TOKEN }}
 
-  ci:
+  iwd-ci:
     runs-on: ubuntu-22.04
     needs: setup
     steps:
