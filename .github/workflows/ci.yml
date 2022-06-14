@@ -13,6 +13,11 @@ on:
       hostapd_version:
         description: Hostapd and wpa_supplicant version
         default: '2_10'
+      ell_ref:
+        description: ELL ref
+        default: refs/heads/workflow
+  repository_dispatch:
+    types: [ell-dispatch]
 
 jobs:
   setup:
@@ -21,6 +26,7 @@ jobs:
       tests: ${{ steps.inputs.outputs.tests }}
       kernel: ${{ steps.inputs.outputs.kernel }}
       hostapd_version: ${{ steps.inputs.outputs.hostapd_version }}
+      ell_ref: ${{ steps.inputs.output.ell_ref }}
     steps:
     - name: Setup Inputs
       id: inputs
@@ -30,15 +36,24 @@ jobs:
           TESTS=${{ github.event.inputs.tests }}
           KERNEL=${{ github.event.inputs.kernel }}
           HOSTAPD_VERSION=${{ github.event.inputs.hostapd_version }}
+          ELL_REF=${{ github.event.inputs.ell_ref }}
+        elif [ ${{ github.event_name }} == 'repository_dispatch']
+        then
+          TESTS=all
+          KERNEL=5.16
+          HOSTAPD_VERSION=2_10
+          ELL_REF=${{ github.event.client_payload.ref }}
         else
           TESTS=all
           KERNEL=5.16
           HOSTAPD_VERSION=2_10
+          ELL_REF="refs/heads/workflow"
         fi
 
         echo ::set-output name=tests::$TESTS
         echo ::set-output name=kernel::$KERNEL
         echo ::set-output name=hostapd_version::$HOSTAPD_VERSION
+        echo ::set-output name=ell_ref::$ELL_REF
 
     - name: Cache UML Kernel
       id: cache-uml-kernel
@@ -77,6 +92,7 @@ jobs:
       with:
         path: ell
         repository: IWDTestBot/ell
+        ref: ${{ steps.inputs.outputs.ell_ref }}
 
     - name: Checkout CiBase
       uses: actions/checkout@v3
