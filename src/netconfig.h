@@ -26,6 +26,7 @@ struct ie_fils_ip_addr_response_info;
 
 enum netconfig_event {
 	NETCONFIG_EVENT_CONNECTED,
+	NETCONFIG_EVENT_FAILED,
 };
 
 typedef void (*netconfig_notify_func_t)(enum netconfig_event event,
