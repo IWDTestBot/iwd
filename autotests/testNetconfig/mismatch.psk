@@ -1,0 +1,7 @@
+[IPv6]
+# IPv4 addresses where IPv6 are expected
+Address=192.168.1.10
+Gateway=192.168.1.1
+
+[Settings]
+AutoConnect=false

@@ -92,6 +92,35 @@ class Test(unittest.TestCase):
 
         wd.unregister_psk_agent(psk_agent)
 
+    def test_addr_type_error(self):
+        IWD.copy_to_storage('mismatch.psk', name='ssidTKIP.psk')
+        wd = IWD(True)
+
+        psk_agent = PSKAgent("secret123")
+        wd.register_psk_agent(psk_agent)
+
+        devices = wd.list_devices(1)
+        device = devices[0]
+
+        ordered_network = device.get_ordered_network('ssidTKIP')
+
+        self.assertEqual(ordered_network.type, NetworkType.psk)
+
+        condition = 'not obj.connected'
+        wd.wait_for_object_condition(ordered_network.network_object, condition)
+
+        # Ideally we want to check that this errors out at an early phase, especially
+        # before any radio operations, due to netconfig setting validation, but this is
+        # tricky to ensure.  Also ideally this would happen even before asking the user
+        # for the passphrase which is easier to ensure in the tests, but currently IWD
+        # asks for the PSK before control reaches station.c.
+        self.assertRaises(iwd.InvalidArgumentsEx, ordered_network.network_object.connect)
+
+        wd.unregister_psk_agent(psk_agent)
+
+    def tearDown(self):
+        IWD.clear_storage()
+
     @classmethod
     def setUpClass(cls):
         def remove_lease4():
@@ -147,7 +176,6 @@ class Test(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        IWD.clear_storage()
         ctx.stop_process(cls.dhcpd_pid)
         cls.dhcpd_pid = None
         ctx.stop_process(cls.dhcpd6_pid)
