@@ -50,6 +50,7 @@
 #include "linux/nl80211.h"
 
 #include "ell/useful.h"
+#include "ell/netlink-private.h"
 #include "src/ie.h"
 #include "src/mpdu.h"
 #include "src/eapol.h"
@@ -5332,15 +5333,7 @@ static const struct attr_entry rekey_table[] = {
 	{ }
 };
 
-#define NLA_OK(nla,len)         ((len) >= (int) sizeof(struct nlattr) && \
-				(nla)->nla_len >= sizeof(struct nlattr) && \
-				(nla)->nla_len <= (len))
-#define NLA_NEXT(nla,attrlen)	((attrlen) -= NLA_ALIGN((nla)->nla_len), \
-				(struct nlattr*)(((char*)(nla)) + \
-				NLA_ALIGN((nla)->nla_len)))
-
-#define NLA_LENGTH(len)		(NLA_ALIGN(sizeof(struct nlattr)) + (len))
-#define NLA_DATA(nla)		((void*)(((char*)(nla)) + NLA_LENGTH(0)))
+#undef NLA_PAYLOAD
 #define NLA_PAYLOAD(nla)	((int)((nla)->nla_len - NLA_LENGTH(0)))
 
 static void print_supported_commands(unsigned int level, const char *label,
@@ -6835,7 +6828,7 @@ static void netlink_str(char *str, size_t size,
 	}
 }
 
-static void print_message(struct nlmon *nlmon, const struct timeval *tv,
+static bool print_message(struct nlmon *nlmon, const struct timeval *tv,
 						enum msg_type type,
 						uint16_t flags, int status,
 						uint8_t cmd, uint8_t version,
@@ -6848,11 +6841,11 @@ static void print_message(struct nlmon *nlmon, const struct timeval *tv,
 	bool out = false;
 
 	if (nlmon->nowiphy && (cmd == NL80211_CMD_NEW_WIPHY))
-		return;
+		return false;
 
 	if (nlmon->noscan && ((cmd == NL80211_CMD_NEW_SCAN_RESULTS) ||
 			(cmd == NL80211_CMD_TRIGGER_SCAN)))
-		return;
+		return false;
 
 	switch (type) {
 	case MSG_REQUEST:
@@ -6911,6 +6904,8 @@ static void print_message(struct nlmon *nlmon, const struct timeval *tv,
 			print_field("Status: %d", status);
 		break;
 	}
+
+	return true;
 }
 
 struct nlmon_req_match {
@@ -6978,12 +6973,17 @@ static void nlmon_message(struct nlmon *nlmon, const struct timeval *tv,
 			enum msg_type type;
 			struct nlmsgerr *err;
 			int status;
+			bool print;
+			const char *err_str = NULL;
+			uint32_t err_offset = -1U;
 
 			switch (nlmsg->nlmsg_type) {
 			case NLMSG_ERROR:
 				type = MSG_RESPONSE;
 				err = NLMSG_DATA(nlmsg);
 				status = -err->error;
+				netlink_parse_ext_ack_error(nlmsg, &err_str,
+								&err_offset);
 				break;
 			case NLMSG_DONE:
 				type = MSG_COMPLETE;
@@ -6994,10 +6994,18 @@ static void nlmon_message(struct nlmon *nlmon, const struct timeval *tv,
 			}
 
 			store_message(nlmon, tv, nlmsg);
-			print_message(nlmon, tv, type, nlmsg->nlmsg_flags, status,
+			print = print_message(nlmon, tv, type,
+						nlmsg->nlmsg_flags, status,
 						req->cmd, req->version,
 						NULL, sizeof(status));
 			nlmon_req_free(req);
+
+			if (err_str && print)
+				print_field("Extended error: %s", err_str);
+
+			if (err_offset != -1U && print)
+				print_field("Offending element offset: %i "
+						"bytes", (int) err_offset);
 		}
 		return;
 	}
@@ -7795,6 +7803,8 @@ static void print_nlmsg(const struct timeval *tv, const struct nlmsghdr *nlmsg)
 {
 	struct nlmsgerr *err;
 	int status;
+	const char *err_str = NULL;
+	uint32_t err_offset = -1U;
 
 	print_nlmsghdr(tv, nlmsg);
 
@@ -7802,11 +7812,22 @@ static void print_nlmsg(const struct timeval *tv, const struct nlmsghdr *nlmsg)
 	case NLMSG_ERROR:
 		err = NLMSG_DATA(nlmsg);
 		status = err->error;
-		if (status < 0)
-			print_field("Error: %d (%s)",
-						status, strerror(-status));
-		else
+		if (status >= 0) {
 			print_field("ACK: %d", status);
+			break;
+		}
+
+		print_field("Error: %d (%s)", status, strerror(-status));
+
+		netlink_parse_ext_ack_error(nlmsg, &err_str, &err_offset);
+
+		if (err_str)
+			print_field("Extended error: %s", err_str);
+
+		if (err_offset != -1U)
+			print_field("Offending element offset: %i bytes",
+					(int) err_offset);
+
 		break;
 
 	case NLMSG_DONE:

@@ -1623,6 +1623,9 @@ static void station_reset_connection_state(struct station *station)
 
 	station_roam_state_clear(station);
 
+	if (station->netconfig)
+		netconfig_reset(station->netconfig);
+
 	/* Refresh the ordered network list */
 	network_rank_update(station->connected_network, false);
 	l_queue_remove(station->networks_sorted, station->connected_network);
@@ -1654,9 +1657,6 @@ static void station_reset_connection_state(struct station *station)
 static void station_disassociated(struct station *station)
 {
 	l_debug("%u", netdev_get_ifindex(station->netdev));
-
-	if (station->netconfig)
-		netconfig_reset(station->netconfig);
 
 	station_reset_connection_state(station);
 
@@ -2011,6 +2011,73 @@ delayed_retry:
 	station_roam_retry(station);
 }
 
+static void station_connect_failed(struct station *station, int error,
+					bool during_eapol)
+{
+	bool continue_autoconnect;
+
+	if (station->connect_pending) {
+		struct l_dbus_message *reply;
+
+		if (error == -ECANCELED)
+			reply = dbus_error_aborted(station->connect_pending);
+		else
+			reply = dbus_error_failed(station->connect_pending);
+
+		dbus_pending_reply(&station->connect_pending, reply);
+	}
+
+	if (error == -ECANCELED)
+		return;
+
+	continue_autoconnect = station->state == STATION_STATE_CONNECTING_AUTO;
+
+	if (station->state == STATION_STATE_CONNECTING)
+		network_connect_failed(station->connected_network,
+								during_eapol);
+
+	station_reset_connection_state(station);
+	station_enter_state(station, STATION_STATE_DISCONNECTED);
+
+	if (continue_autoconnect) {
+		if (station_autoconnect_next(station) < 0) {
+			l_debug("Nothing left on autoconnect list");
+			station_enter_state(station,
+					STATION_STATE_AUTOCONNECT_FULL);
+		}
+
+		return;
+	}
+
+	if (station->autoconnect)
+		station_enter_state(station, STATION_STATE_AUTOCONNECT_QUICK);
+}
+
+static void station_disconnect_on_error_cb(struct netdev *netdev, bool success,
+					void *user_data)
+{
+	struct station *station = user_data;
+	bool continue_autoconnect;
+
+	station_enter_state(station, STATION_STATE_DISCONNECTED);
+
+	continue_autoconnect = station->state == STATION_STATE_CONNECTING_AUTO;
+
+	if (continue_autoconnect) {
+		if (station_autoconnect_next(station) < 0) {
+			l_debug("Nothing left on autoconnect list");
+			station_enter_state(station,
+					STATION_STATE_AUTOCONNECT_FULL);
+		}
+
+		return;
+	}
+
+	if (station->autoconnect)
+		station_enter_state(station, STATION_STATE_AUTOCONNECT_QUICK);
+}
+
+
 static void station_netconfig_event_handler(enum netconfig_event event,
 							void *user_data)
 {
@@ -2019,7 +2086,32 @@ static void station_netconfig_event_handler(enum netconfig_event event,
 	switch (event) {
 	case NETCONFIG_EVENT_CONNECTED:
 		station_enter_state(station, STATION_STATE_CONNECTED);
+		break;
+	case NETCONFIG_EVENT_FAILED:
+		if (station->connect_pending) {
+			struct l_dbus_message *reply = dbus_error_failed(
+						station->connect_pending);
 
+			dbus_pending_reply(&station->connect_pending, reply);
+		}
+
+		if (L_IN_SET(station->state, STATION_STATE_CONNECTING,
+				STATION_STATE_CONNECTING_AUTO))
+			network_connect_failed(station->connected_network,
+						false);
+
+		/*
+		 * TODO: if in STATION_STATE_CONNECTING_AUTO, continue with
+		 * the previous autoconnect list after disconnect completes.
+		 */
+
+		netdev_disconnect(station->netdev,
+					station_disconnect_on_error_cb,
+					station);
+
+		station_reset_connection_state(station);
+
+		station_enter_state(station, STATION_STATE_DISCONNECTING);
 		break;
 	default:
 		l_error("station: Unsupported netconfig event: %d.", event);
@@ -2899,7 +2991,6 @@ static void station_connect_cb(struct netdev *netdev, enum netdev_result result,
 					void *event_data, void *user_data)
 {
 	struct station *station = user_data;
-	bool continue_autoconnect;
 
 	l_debug("%u, result: %d", netdev_get_ifindex(station->netdev), result);
 
@@ -2925,43 +3016,10 @@ static void station_connect_cb(struct netdev *netdev, enum netdev_result result,
 		break;
 	}
 
-	if (station->connect_pending) {
-		struct l_dbus_message *reply;
-
-		if (result == NETDEV_RESULT_ABORTED)
-			reply = dbus_error_aborted(station->connect_pending);
-		else
-			reply = dbus_error_failed(station->connect_pending);
-
-		dbus_pending_reply(&station->connect_pending, reply);
-	}
-
-	if (result == NETDEV_RESULT_ABORTED)
-		return;
-
-	continue_autoconnect = station->state == STATION_STATE_CONNECTING_AUTO;
-
-	if (station->state == STATION_STATE_CONNECTING) {
-		bool during_eapol = result == NETDEV_RESULT_HANDSHAKE_FAILED;
-		network_connect_failed(station->connected_network,
-								during_eapol);
-	}
-
-	station_reset_connection_state(station);
-	station_enter_state(station, STATION_STATE_DISCONNECTED);
-
-	if (continue_autoconnect) {
-		if (station_autoconnect_next(station) < 0) {
-			l_debug("Nothing left on autoconnect list");
-			station_enter_state(station,
-					STATION_STATE_AUTOCONNECT_FULL);
-		}
-
-		return;
-	}
-
-	if (station->autoconnect)
-		station_enter_state(station, STATION_STATE_AUTOCONNECT_QUICK);
+	station_connect_failed(station,
+				result == NETDEV_RESULT_ABORTED ?
+					-ECANCELED : -EIO,
+				result == NETDEV_RESULT_HANDSHAKE_FAILED);
 }
 
 static void station_disconnect_event(struct station *station, void *event_data)
@@ -3095,9 +3153,6 @@ static void station_disconnect_onconnect(struct station *station,
 					dbus_error_from_errno(-EIO, message));
 		return;
 	}
-
-	if (station->netconfig)
-		netconfig_reset(station->netconfig);
 
 	station_reset_connection_state(station);
 
@@ -3401,9 +3456,6 @@ int station_disconnect(struct station *station)
 
 	if (!station->connected_bss)
 		return -ENOTCONN;
-
-	if (station->netconfig)
-		netconfig_reset(station->netconfig);
 
 	/*
 	 * If the disconnect somehow fails we won't know if we're still

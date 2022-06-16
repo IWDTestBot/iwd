@@ -1,0 +1,17 @@
+name: Docker Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Call docker action
+        uses: IWDTestBot/ci-docker@master
+        env:
+          AN_ENV_VAR: hello
+        with:
+          image: .github/workflows/Dockerfile.test
+          options: |
+            --privileged -v /dev/shm:/dev/shm
