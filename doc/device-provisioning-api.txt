@@ -56,3 +56,13 @@ Methods		string StartEnrollee()
 						net.connman.iwd.NotConfigured
 						net.connman.iwd.NotSupported
 						net.connman.iwd.Busy
+
+Properties	string State [readonly, optional]
+
+			Reflects the DPP state. Possible values are "presence",
+			"authenticating", and "configuring".
+
+		string Role [readonly, optional]
+
+			Reflects the DPP role. Possible values are "enrollee"
+			and "configurator"
