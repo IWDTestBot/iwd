@@ -149,6 +149,58 @@ struct dpp_sm {
 	bool roc_started : 1;
 };
 
+static bool dpp_get_state(struct l_dbus *dbus,
+				struct l_dbus_message *message,
+				struct l_dbus_message_builder *builder,
+				void *user_data)
+{
+	struct dpp_sm *dpp = user_data;
+	const char *state;
+
+	switch (dpp->state) {
+	    case DPP_STATE_PRESENCE:
+		state = "presence";
+		break;
+	    case DPP_STATE_AUTHENTICATING:
+		state = "authenticating";
+		break;
+	    case DPP_STATE_CONFIGURING:
+		state = "configuring";
+		break;
+	    default:
+		return false;
+	}
+
+	l_dbus_message_builder_append_basic(builder, 's', state);
+	return true;
+}
+
+static bool dpp_get_role(struct l_dbus *dbus,
+				struct l_dbus_message *message,
+				struct l_dbus_message_builder *builder,
+				void *user_data)
+{
+	struct dpp_sm *dpp = user_data;
+	const char *role;
+
+	if (dpp->state == DPP_STATE_NOTHING)
+	    return false;
+
+	switch (dpp->role) {
+	    case DPP_CAPABILITY_ENROLLEE:
+		role = "enrollee";
+		break;
+	    case DPP_CAPABILITY_CONFIGURATOR:
+		role = "configurator";
+		break;
+	    default:
+		return false;
+	}
+
+	l_dbus_message_builder_append_basic(builder, 's', role);
+	return true;
+}
+
 static void *dpp_serialize_iovec(struct iovec *iov, size_t iov_len,
 				size_t *out_len)
 {
@@ -252,6 +304,15 @@ static void dpp_reset(struct dpp_sm *dpp)
 	dpp->new_freq = 0;
 	dpp->frame_retry = 0;
 	dpp->frame_cookie = 0;
+
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(dpp->netdev),
+				IWD_DPP_INTERFACE,
+				"State");
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(dpp->netdev),
+				IWD_DPP_INTERFACE,
+				"Role");
 
 	explicit_bzero(dpp->r_nonce, dpp->nonce_len);
 	explicit_bzero(dpp->i_nonce, dpp->nonce_len);
@@ -493,6 +554,11 @@ static void dpp_configuration_start(struct dpp_sm *dpp, const uint8_t *addr)
 	iov[1].iov_len = ptr - attrs;
 
 	dpp->state = DPP_STATE_CONFIGURING;
+
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(dpp->netdev),
+				IWD_DPP_INTERFACE,
+				"State");
 
 	dpp_send_frame(dpp, iov, 2, dpp->current_freq);
 }
@@ -994,6 +1060,11 @@ static void dpp_handle_config_request_frame(const struct mmpdu_header *frame,
 
 	dpp->state = DPP_STATE_CONFIGURING;
 
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(dpp->netdev),
+				IWD_DPP_INTERFACE,
+				"State");
+
 	dpp_send_config_response(dpp, DPP_STATUS_OK);
 
 	return;
@@ -1286,6 +1357,11 @@ static void authenticate_confirm(struct dpp_sm *dpp, const uint8_t *from,
 auth_confirm_failed:
 	dpp->state = DPP_STATE_PRESENCE;
 	dpp_free_auth_data(dpp);
+
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(dpp->netdev),
+				IWD_DPP_INTERFACE,
+				"State");
 }
 
 static void dpp_auth_request_failed(struct dpp_sm *dpp,
@@ -1750,6 +1826,11 @@ static void authenticate_request(struct dpp_sm *dpp, const uint8_t *from,
 	dpp->state = DPP_STATE_AUTHENTICATING;
 	dpp_reset_protocol_timer(dpp);
 
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(dpp->netdev),
+				IWD_DPP_INTERFACE,
+				"State");
+
 	/* Don't send if the frequency is changing */
 	if (!dpp->new_freq)
 		send_authenticate_response(dpp);
@@ -1757,7 +1838,6 @@ static void authenticate_request(struct dpp_sm *dpp, const uint8_t *from,
 	return;
 
 auth_request_failed:
-	dpp->state = DPP_STATE_PRESENCE;
 	dpp_free_auth_data(dpp);
 }
 
@@ -2039,6 +2119,11 @@ static void dpp_handle_presence_announcement(struct dpp_sm *dpp,
 	memcpy(dpp->auth_addr, from, 6);
 
 	dpp->state = DPP_STATE_AUTHENTICATING;
+
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(dpp->netdev),
+				IWD_DPP_INTERFACE,
+				"State");
 
 	if (!dpp_send_authenticate_request(dpp))
 		return;
@@ -2416,6 +2501,15 @@ static struct l_dbus_message *dpp_dbus_start_enrollee(struct l_dbus *dbus,
 	dpp->state = DPP_STATE_PRESENCE;
 	dpp->role = DPP_CAPABILITY_ENROLLEE;
 
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(dpp->netdev),
+				IWD_DPP_INTERFACE,
+				"State");
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(dpp->netdev),
+				IWD_DPP_INTERFACE,
+				"Role");
+
 	l_ecdh_generate_key_pair(dpp->curve, &dpp->proto_private,
 					&dpp->own_proto_public);
 
@@ -2560,6 +2654,15 @@ static struct l_dbus_message *dpp_start_configurator_common(
 						network_get_ssid(network),
 						hs->akm_suite);
 
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(dpp->netdev),
+				IWD_DPP_INTERFACE,
+				"State");
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(dpp->netdev),
+				IWD_DPP_INTERFACE,
+				"Role");
+
 	scan_periodic_stop(dpp->wdev_id);
 
 	l_debug("DPP Start Configurator: %s", dpp->uri);
@@ -2606,6 +2709,11 @@ static void dpp_setup_interface(struct l_dbus_interface *interface)
 				dpp_dbus_configure_enrollee, "", "s", "uri");
 	l_dbus_interface_method(interface, "Stop", 0,
 				dpp_dbus_stop, "", "");
+
+	l_dbus_interface_property(interface, "State", 0, "s",
+				  dpp_get_state, NULL);
+	l_dbus_interface_property(interface, "Role", 0, "s",
+				  dpp_get_role, NULL);
 }
 
 static void dpp_destroy_interface(void *user_data)
