@@ -111,7 +111,14 @@ class AsyncOpAbstract(object):
         self._exception = _convert_dbus_ex(ex)
 
     def _wait_for_async_op(self):
-        ctx.non_block_wait(lambda s: s._is_completed, 30, self, exception=None)
+        def check_complete(s):
+            if s._is_completed:
+                return True
+
+            time.sleep(0.1)
+            return False
+
+        ctx.non_block_wait(check_complete, 30, self, exception=None)
 
         self._is_completed = False
         if self._exception is not None:
