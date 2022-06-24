@@ -33,7 +33,7 @@ on:
         default: '5.16'
       hostapd_version:
         description: Hostapd and wpa_supplicant version
-        default: '2_10'
+        default: '09a281e52a25b5461c4b08d261f093181266a554'
       ell_ref:
         description: ELL reference
         default: refs/heads/workflow
@@ -75,14 +75,14 @@ jobs:
         then
           TESTS=all
           KERNEL=5.16
-          HOSTAPD_VERSION=2_10
+          HOSTAPD_VERSION=09a281e52a25b5461c4b08d261f093181266a554
           ELL_REF=${{ github.event.client_payload.ref }}
           REF=$ELL_REF
           REPO=${{ github.event.client_payload.repo }}
         else
           TESTS=all
           KERNEL=5.16
-          HOSTAPD_VERSION=2_10
+          HOSTAPD_VERSION=09a281e52a25b5461c4b08d261f093181266a554
           ELL_REF="refs/heads/workflow"
           REF="$GITHUB_REF"
           REPO="$GITHUB_REPOSITORY"
@@ -152,17 +152,25 @@ jobs:
 
     - name: Tar files
       run: |
-        tar -cvf archive.tar \
-          ${{ github.workspace }}/cache/um-linux-${{ steps.inputs.outputs.kernel }} \
-          ${{ github.workspace }}/cache/hostapd_${{ steps.inputs.outputs.hostapd_version }} \
-          ${{ github.workspace }}/cache/hostapd_cli_${{ steps.inputs.outputs.hostapd_version }} \
-          ${{ github.workspace }}/cache/wpa_supplicant_${{ steps.inputs.outputs.hostapd_version }} \
-          ${{ github.workspace }}/cache/wpa_cli_${{ steps.inputs.outputs.hostapd_version }} \
-          iwd \
-          ell \
-          cibase \
-          iwd-ci \
-          cache
+        FILES="iwd ell cibase iwd-ci cache"
+
+        if [ "${{ steps.cache-uml-kernel.outputs.cache-hit }}" == 'true' ]
+        then
+          FILES+=" ${{ github.workspace }}/cache/um-linux-${{ steps.inputs.outputs.kernel }}"
+        fi
+
+        if [ "${{ steps.cache-hostapd.outputs.cache-hit }}" == 'true' ]
+        then
+          FILES+=" ${{ github.workspace }}/cache/hostapd_${{ steps.inputs.outputs.hostapd_version }}"
+          FILES+=" ${{ github.workspace }}/cache/hostapd_cli_${{ steps.inputs.outputs.hostapd_version }}"
+        fi
+        if [ "${{ steps.cache-wpas.outputs.cache-hit }}" == 'true' ]
+        then
+          FILES+=" ${{ github.workspace }}/cache/wpa_supplicant_${{ steps.inputs.outputs.hostapd_version }}"
+          FILES+=" ${{ github.workspace }}/cache/wpa_cli_${{ steps.inputs.outputs.hostapd_version }}"
+        fi
+
+        tar -cvf archive.tar $FILES
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v3
@@ -208,6 +216,31 @@ jobs:
 
     - name: Untar
       run: tar -xf archive.tar
+
+    - name: Cache UML Kernel
+      id: cache-uml-kernel
+      uses: actions/cache@v3
+      with:
+        path: ${{ github.workspace }}/cache/um-linux-${{ needs.setup.outputs.kernel }}
+        key: um-linux-${{ needs.setup.outputs.kernel }}_ubuntu22
+
+    - name: Cache Hostapd
+      id: cache-hostapd
+      uses: actions/cache@v3
+      with:
+        path: |
+          ${{ github.workspace }}/cache/hostapd_${{ needs.setup.outputs.hostapd_version }}
+          ${{ github.workspace }}/cache/hostapd_cli_${{ needs.setup.outputs.hostapd_version }}
+        key: hostapd_${{ needs.setup.outputs.hostapd_version }}_ssl3
+
+    - name: Cache WpaSupplicant
+      id: cache-wpas
+      uses: actions/cache@v3
+      with:
+        path: |
+          ${{ github.workspace }}/cache/wpa_supplicant_${{ needs.setup.outputs.hostapd_version }}
+          ${{ github.workspace }}/cache/wpa_cli_${{ needs.setup.outputs.hostapd_version }}
+        key: wpa_supplicant_${{ needs.setup.outputs.hostapd_version }}_ssl3
 
     - name: Modprobe pkcs8_key_parser
       run: |
