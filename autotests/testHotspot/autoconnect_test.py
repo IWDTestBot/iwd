@@ -8,7 +8,7 @@ sys.path.append('../util')
 from iwd import IWD
 from iwd import IWD_CONFIG_DIR
 from iwd import NetworkType
-from hostapd import HostapdCLI
+from config import ctx
 import testutil
 
 class Test(unittest.TestCase):
@@ -16,8 +16,8 @@ class Test(unittest.TestCase):
     def test_connection_success(self):
         wd = self.wd
 
-        hapd_hotspot = HostapdCLI(config='ssidHotspot.conf')
-        hapd_wpa = HostapdCLI(config='ssidWPA2-1.conf')
+        hapd_hotspot = ctx.get_hapd_instance('ssidHotspot.conf').cli
+        hapd_wpa = ctx.get_hapd_instance('ssidWPA2-1.conf').cli
 
         self.assertEqual(len(wd.list_known_networks()), 2)
 

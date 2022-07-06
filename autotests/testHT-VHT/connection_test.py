@@ -10,7 +10,7 @@ from iwd import PSKAgent
 from iwd import NetworkType
 from hwsim import Hwsim
 import testutil
-from hostapd import HostapdCLI
+from config import ctx
 
 class Test(unittest.TestCase):
     def do_connect(self, wd, device, hostapd):
@@ -40,9 +40,9 @@ class Test(unittest.TestCase):
 
     def test_connection_success(self):
         hwsim = Hwsim()
-        non_ht_hostapd = HostapdCLI(config='non-ht-vht.conf')
-        ht_hostapd = HostapdCLI(config='ht.conf')
-        vht_hostapd = HostapdCLI(config='vht.conf')
+        non_ht_hostapd = ctx.get_hapd_instance('non-ht-vht.conf').cli
+        ht_hostapd = ctx.get_hapd_instance('ht.conf').cli
+        vht_hostapd = ctx.get_hapd_instance('vht.conf').cli
         non_ht_radio = hwsim.get_radio('rad0')
         ht_radio = hwsim.get_radio('rad1')
         vht_radio = hwsim.get_radio('rad2')

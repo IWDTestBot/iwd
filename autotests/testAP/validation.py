@@ -1,6 +1,6 @@
 from iwd import PSKAgent
 from iwd import NetworkType
-from hostapd import HostapdCLI
+from config import ctx
 import testutil
 
 def validate(wd, sta_dev, ap_dev, ssid, passphrase,
@@ -45,7 +45,7 @@ def validate(wd, sta_dev, ap_dev, ssid, passphrase,
             ap_dev.stop_ap()
 
 def client_connect(wd, dev, ssid):
-    hostapd = HostapdCLI(config='psk-ccmp.conf')
+    hostapd = ctx.get_hapd_instance('psk-ccmp.conf').cli
 
     ordered_network = dev.get_ordered_network(ssid)
 

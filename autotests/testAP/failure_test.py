@@ -8,13 +8,13 @@ import iwd
 from iwd import IWD
 from iwd import PSKAgent
 from iwd import NetworkType
-from hostapd import HostapdCLI
+from config import ctx
 import testutil
 
 class Test(unittest.TestCase):
 
     def client_connect(self, wd, dev):
-        hostapd = HostapdCLI(config='psk-ccmp.conf')
+        hostapd = ctx.get_hapd_instance('psk-ccmp.conf').cli
 
         ordered_network = dev.get_ordered_network('TestAP1', True)
 

@@ -8,13 +8,13 @@ import iwd
 from iwd import IWD
 from iwd import PSKAgent
 from iwd import NetworkType
-from hostapd import HostapdCLI
+from config import ctx
 import testutil
 
 class Test(unittest.TestCase):
 
     def test_connection_success(self):
-        hapd = HostapdCLI()
+        hapd = ctx.get_hapd_instance().cli
         wd = IWD()
 
         psk_agent = PSKAgent("secret123")

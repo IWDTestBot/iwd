@@ -9,7 +9,7 @@ from iwd import IWD
 from iwd import PSKAgent
 from iwd import NetworkType
 from hwsim import Hwsim
-from hostapd import HostapdCLI
+from config import ctx
 
 from time import sleep
 
@@ -18,7 +18,7 @@ class Test(unittest.TestCase):
     def test_connection_success(self):
         hwsim = Hwsim()
 
-        hostapd = HostapdCLI(config='ssidCCMP.conf')
+        hostapd = ctx.get_hapd_instance('ssidCCMP.conf').cli
         radio = hwsim.get_radio('rad0')
 
         wd = IWD()

@@ -6,13 +6,13 @@ import sys, os
 sys.path.append('../util')
 from iwd import IWD
 from iwd import NetworkType
-from hostapd import HostapdCLI
+from config import ctx
 import testutil
 
 class Test(unittest.TestCase):
     def test_preauth_success(self):
-        bss_hostapd = [ HostapdCLI(config='eaptls-preauth-1.conf'),
-                        HostapdCLI(config='eaptls-preauth-2.conf') ]
+        bss_hostapd = [ ctx.get_hapd_instance('eaptls-preauth-1.conf').cli,
+                        ctx.get_hapd_instance('eaptls-preauth-2.conf').cli ]
 
         bss0_addr = bss_hostapd[0].bssid
         bss1_addr = bss_hostapd[1].bssid

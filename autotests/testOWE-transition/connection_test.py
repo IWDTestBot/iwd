@@ -7,7 +7,7 @@ sys.path.append('../util')
 import iwd
 from iwd import IWD
 from iwd import NetworkType
-from hostapd import HostapdCLI
+from config import ctx
 from hwsim import Hwsim
 import testutil
 
@@ -234,10 +234,10 @@ class Test(unittest.TestCase):
 
     def setUp(self):
         self.wd = IWD(True)
-        self.hapd_owe = HostapdCLI(config='ssidOWE.conf')
-        self.hapd_open = HostapdCLI(config='ssidOpen.conf')
-        self.hapd_owe2 = HostapdCLI(config='ssidOWE-2.conf')
-        self.hapd_open2 = HostapdCLI(config='ssidOpen-2.conf')
+        self.hapd_owe = ctx.get_hapd_instance('ssidOWE.conf').cli
+        self.hapd_open = ctx.get_hapd_instance('ssidOpen.conf').cli
+        self.hapd_owe2 = ctx.get_hapd_instance('ssidOWE-2.conf').cli
+        self.hapd_open2 = ctx.get_hapd_instance('ssidOpen-2.conf').cli
 
         self.hwsim = Hwsim()
 

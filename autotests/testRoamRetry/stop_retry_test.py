@@ -8,10 +8,10 @@ import iwd
 from iwd import IWD
 from iwd import PSKAgent
 from iwd import NetworkType
+from config import ctx
 
 import testutil
 
-from hostapd import HostapdCLI
 from hwsim import Hwsim
 
 class Test(unittest.TestCase):
@@ -20,8 +20,8 @@ class Test(unittest.TestCase):
     def test_stop_retry(self):
         hwsim = Hwsim()
 
-        bss_hostapd = [ HostapdCLI(config='ssid1.conf'),
-                        HostapdCLI(config='ssid2.conf') ]
+        bss_hostapd = [ ctx.get_hapd_instance('ssid1.conf').cli,
+                        ctx.get_hapd_instance('ssid2.conf').cli ]
         bss_radio =  [ hwsim.get_radio('rad0'),
                        hwsim.get_radio('rad1') ]
 

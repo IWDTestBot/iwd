@@ -9,7 +9,7 @@ from iwd import IWD
 from iwd import IWD_CONFIG_DIR
 from iwd import PSKAgent
 from iwd import NetworkType
-from hostapd import HostapdCLI
+from config import ctx
 import testutil
 
 class Test(unittest.TestCase):
@@ -17,7 +17,7 @@ class Test(unittest.TestCase):
     def test_connection_success(self):
         wd = self.wd
 
-        hapd = HostapdCLI(config='ssidHotspot.conf')
+        hapd = ctx.get_hapd_instance('ssidHotspot.conf').cli
 
         psk_agent = PSKAgent('abc', ('domain\\user', 'testpasswd'))
         wd.register_psk_agent(psk_agent)

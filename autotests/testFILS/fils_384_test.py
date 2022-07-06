@@ -8,12 +8,12 @@ sys.path.append('../util')
 import iwd
 from iwd import IWD
 from iwd import NetworkType
-from hostapd import HostapdCLI
+from config import ctx
 import testutil
 
 class Test(unittest.TestCase):
     def test_connection_success(self):
-        hapd = HostapdCLI(config='ssidFILS-384.conf')
+        hapd = ctx.get_hapd_instance('ssidFILS-384.conf').cli
 
         wd = IWD(True)
 

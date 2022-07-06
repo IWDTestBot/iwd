@@ -11,7 +11,6 @@ from iwd import PSKAgent
 from hlrauc import AuthCenter
 from ofono import Ofono
 from config import ctx
-from hostapd import HostapdCLI
 
 import testutil
 import traceback
@@ -255,7 +254,7 @@ class Test(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.wd = IWD()
-        cls.hostapd = HostapdCLI()
+        cls.hostapd = ctx.get_hapd_instance().cli
 
     @classmethod
     def tearDownClass(cls):

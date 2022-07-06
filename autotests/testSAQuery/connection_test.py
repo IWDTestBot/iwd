@@ -8,12 +8,12 @@ import iwd
 from iwd import IWD
 from iwd import PSKAgent
 from iwd import NetworkType
-from hostapd import HostapdCLI
+from config import ctx
 
 class Test(unittest.TestCase):
 
     def test_connection_success(self):
-        hostapd = HostapdCLI(config='ssidCCMP.conf')
+        hostapd = ctx.get_hapd_instance('ssidCCMP.conf').cli
 
         wd = IWD()
 

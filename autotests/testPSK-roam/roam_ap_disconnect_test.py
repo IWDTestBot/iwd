@@ -7,7 +7,7 @@ sys.path.append('../util')
 from iwd import IWD
 from iwd import NetworkType
 from hwsim import Hwsim
-from hostapd import HostapdCLI
+from config import ctx
 
 class Test(unittest.TestCase):
     #
@@ -72,8 +72,8 @@ class Test(unittest.TestCase):
 
         IWD.copy_to_storage('TestFT.psk')
 
-        cls.bss_hostapd = [ HostapdCLI(config='ft-psk-ccmp-1.conf'),
-                            HostapdCLI(config='ft-psk-ccmp-2.conf') ]
+        cls.bss_hostapd = [ ctx.get_hapd_instance('ft-psk-ccmp-1.conf').cli,
+                            ctx.get_hapd_instance('ft-psk-ccmp-2.conf').cli ]
         cls.bss_hostapd[1].disable()
 
         cls.bss_hostapd[0].set_value('ocv', '0')
