@@ -284,8 +284,15 @@ static enum cmd_status cmd_show(const char *device_name,
 			device_proxy_find(device_name, IWD_DPP_INTERFACE);
 	char *caption = l_strdup_printf("%s: %s", "DPP", device_name);
 
+	if (!proxy) {
+		display("No DPP interface on device: '%s'\n", device_name);
+		return CMD_STATUS_INVALID_VALUE;
+	}
+
 	proxy_properties_display(proxy, caption, MARGIN, 20, 47);
 	l_free(caption);
+
+	display_table_footer();
 
 	return CMD_STATUS_DONE;
 }
@@ -297,7 +304,7 @@ static const struct command dpp_commands[] = {
 	{ "<wlan>", "start-configurator", NULL, cmd_start_configurator,
 							"Starts a DPP Configurator" },
 	{ "<wlan>", "stop", NULL, cmd_stop, "Aborts DPP operations" },
-	{ "<wlan>", "show", NULL, cmd_show, "Shows the DPP state" },
+	{ "<wlan>", "show", NULL, cmd_show, "Shows the DPP state", true },
 	{ }
 };
 
