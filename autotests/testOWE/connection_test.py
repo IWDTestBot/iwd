@@ -7,13 +7,13 @@ sys.path.append('../util')
 import iwd
 from iwd import IWD
 from iwd import NetworkType
-from hostapd import HostapdCLI
+from config import ctx
 import testutil
 
 class Test(unittest.TestCase):
 
     def test_connection_success(self):
-        hapd = HostapdCLI(config='ssidOWE-1.conf')
+        hapd = ctx.get_hapd_instance('ssidOWE-1.conf').cli
 
         wd = IWD()
 
@@ -33,8 +33,8 @@ class Test(unittest.TestCase):
         device.disconnect()
 
     def test_reassociate(self):
-        hapd0 = HostapdCLI(config='ssidOWE-1.conf')
-        hapd1 = HostapdCLI(config='ssidOWE-2.conf')
+        hapd0 = ctx.get_hapd_instance('ssidOWE-1.conf').cli
+        hapd1 = ctx.get_hapd_instance('ssidOWE-2.conf').cli
 
         wd = IWD()
 

@@ -9,13 +9,12 @@ import iwd
 from iwd import IWD
 from iwd import NetworkType
 import testutil
-
-from hostapd import HostapdCLI
+from config import ctx
 
 class Test(unittest.TestCase):
 
     def validate_connection(self, wd):
-        hostapd = HostapdCLI(config='ssidEAP-PEAPv0-NoISK.conf')
+        hostapd = ctx.get_hapd_instance('ssidEAP-PEAPv0-NoISK.conf').cli
 
         self.assertIsNotNone(hostapd)
 

@@ -8,7 +8,7 @@ import iwd
 from iwd import IWD
 from iwd import PSKAgent
 from iwd import NetworkType
-from hostapd import HostapdCLI
+from config import ctx
 
 class Test(unittest.TestCase):
 
@@ -53,7 +53,7 @@ class Test(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.hostapd = HostapdCLI(config='ssidSAE.conf')
+        cls.hostapd = ctx.get_hapd_instance('ssidSAE.conf').cli
         IWD.copy_to_storage('ssidSAE.psk')
         pass
 

@@ -10,8 +10,6 @@ from iwd import IWD
 from iwd import NetworkType
 import testutil
 
-from hostapd import HostapdCLI
-
 class Test(unittest.TestCase):
 
     def validate_connection(self, wd):

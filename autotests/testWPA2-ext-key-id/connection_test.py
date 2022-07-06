@@ -10,13 +10,11 @@ from iwd import IWD
 from iwd import PSKAgent
 from iwd import NetworkType
 from hwsim import Hwsim
-from hostapd import HostapdCLI
+from config import ctx
 import testutil
 
 class Test(unittest.TestCase):
     def validate(self, wd, resend_m3=False):
-        hapd = HostapdCLI('ssidCCMP.conf')
-
         psk_agent = PSKAgent("secret123")
         wd.register_psk_agent(psk_agent)
 
@@ -42,10 +40,10 @@ class Test(unittest.TestCase):
         # Rekey 5 times just to make sure the key ID can be toggled back and
         # forth without causing problems.
         for i in range(5):
-            hapd.rekey(device.address)
+            self.hapd.rekey(device.address)
 
             if resend_m3:
-                hapd.resend_m3(device.address)
+                self.hapd.resend_m3(device.address)
 
             testutil.test_iface_operstate()
             testutil.test_ifaces_connected()
@@ -101,7 +99,7 @@ class Test(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.hapd = HostapdCLI()
+        cls.hapd = ctx.get_hapd_instance().cli
 
     @classmethod
     def tearDownClass(cls):

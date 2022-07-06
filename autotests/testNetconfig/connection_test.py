@@ -8,7 +8,6 @@ import iwd
 from iwd import IWD
 from iwd import PSKAgent
 from iwd import NetworkType
-from hostapd import HostapdCLI
 import testutil
 from config import ctx
 import os
@@ -195,7 +194,7 @@ class Test(unittest.TestCase):
                 pass
 
         cls.ns1 = ctx.get_namespace('ns1')
-        cls.hapd = HostapdCLI('ap-ns1.conf')
+        cls.hapd = ctx.get_hapd_instance('ap-ns1.conf').cli
         # TODO: This could be moved into test-runner itself if other tests ever
         #       require this functionality (p2p, FILS, etc.). Since its simple
         #       enough it can stay here for now.

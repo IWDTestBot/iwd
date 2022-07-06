@@ -7,15 +7,14 @@ sys.path.append('../util')
 import iwd
 from iwd import IWD
 from iwd import NetworkType
-
-from hostapd import HostapdCLI
+from config import ctx
 
 class Test(unittest.TestCase):
 
     def test_connection_success(self):
-        bss_hostapd = [ HostapdCLI(config='ssid1.conf'),
-                        HostapdCLI(config='ssid2.conf'),
-                        HostapdCLI(config='ssid3.conf') ]
+        bss_hostapd = [ ctx.get_hapd_instance('ssid1.conf').cli,
+                        ctx.get_hapd_instance('ssid2.conf').cli,
+                        ctx.get_hapd_instance('ssid3.conf').cli ]
 
         wd = IWD()
 

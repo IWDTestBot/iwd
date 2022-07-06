@@ -7,8 +7,7 @@ sys.path.append('../util')
 import iwd
 from iwd import IWD
 from iwd import DeviceState
-
-from hostapd import HostapdCLI
+from config import ctx
 
 class Test(unittest.TestCase):
 
@@ -31,7 +30,7 @@ class Test(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.hostapd = HostapdCLI(config='ssid-wps-small-mtu.conf')
+        cls.hostapd = ctx.get_hapd_instance('ssid-wps-small-mtu.conf').cli
 
         cls.hostapd.wps_push_button()
 

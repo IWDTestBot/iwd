@@ -8,7 +8,7 @@ import iwd
 from iwd import IWD
 from iwd import PSKAgent
 from iwd import NetworkType
-from hostapd import HostapdCLI
+from config import ctx
 import testutil
 
 # Table beacon with wildcard BSSID
@@ -25,7 +25,7 @@ beacon_passive_duration = '510b0000c80000ffffffffffff020100'
 class Test(unittest.TestCase):
 
     def test_connection_success(self):
-        hapd = HostapdCLI(config='ssidRRM.conf')
+        hapd = ctx.get_hapd_instance('ssidRRM.conf').cli
         wd = IWD()
 
         psk_agent = PSKAgent("secret123")

@@ -8,7 +8,6 @@ import iwd
 from iwd import IWD
 from iwd import PSKAgent
 from iwd import NetworkType
-from hostapd import HostapdCLI
 import testutil
 from config import ctx
 import os
@@ -117,7 +116,7 @@ class Test(unittest.TestCase):
             except:
                 pass
 
-        hapd = HostapdCLI('ap-main.conf')
+        hapd = ctx.get_hapd_instance('ap-main.conf').cli
         # TODO: This could be moved into test-runner itself if other tests ever
         #       require this functionality (p2p, FILS, etc.). Since it's simple
         #       enough it can stay here for now.

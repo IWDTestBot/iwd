@@ -7,7 +7,6 @@ sys.path.append('../util')
 from iwd import IWD
 from iwd import DeviceProvisioning
 from wpas import Wpas
-from hostapd import HostapdCLI
 from hwsim import Hwsim
 from config import ctx
 
@@ -136,7 +135,7 @@ class Test(unittest.TestCase):
         self.wpas = Wpas('wpas.conf')
         self.wd = IWD(True)
         self.device = self.wd.list_devices(1)[0]
-        self.hapd = HostapdCLI('hostapd.conf')
+        self.hapd = ctx.get_hapd_instance('hostapd.conf').cli
         self.hapd.disable()
         self.hwsim = Hwsim()
 

@@ -9,7 +9,7 @@ from iwd import IWD
 from iwd import IWD_CONFIG_DIR
 from iwd import PSKAgent
 from iwd import NetworkType
-from hostapd import HostapdCLI
+from config import ctx
 import testutil
 
 class Test(unittest.TestCase):
@@ -53,14 +53,14 @@ class Test(unittest.TestCase):
         wd.unregister_psk_agent(psk_agent)
 
     def test_hotspot(self):
-        hapd = HostapdCLI(config='ssidHotspot.conf')
+        hapd = ctx.get_hapd_instance('ssidHotspot.conf').cli
         hapd.set_value('disable_dgaf', '0')
         hapd.reload()
 
         self.validate_connection(self.wd, hapd)
 
     def test_dgaf_disabled(self):
-        hapd = HostapdCLI(config='ssidHotspot.conf')
+        hapd = ctx.get_hapd_instance('ssidHotspot.conf').cli
         hapd.set_value('disable_dgaf', '1')
         hapd.reload()
 

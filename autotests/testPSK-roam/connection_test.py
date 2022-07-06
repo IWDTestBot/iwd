@@ -9,7 +9,7 @@ from iwd import IWD
 from iwd import PSKAgent
 from iwd import NetworkType
 from hwsim import Hwsim
-from hostapd import HostapdCLI
+from config import ctx
 import testutil
 
 class Test(unittest.TestCase):
@@ -146,8 +146,8 @@ class Test(unittest.TestCase):
 
         IWD.copy_to_storage('TestFT.psk')
 
-        cls.bss_hostapd = [ HostapdCLI(config='ft-psk-ccmp-1.conf'),
-                            HostapdCLI(config='ft-psk-ccmp-2.conf') ]
+        cls.bss_hostapd = [ ctx.get_hapd_instance('ft-psk-ccmp-1.conf').cli,
+                            ctx.get_hapd_instance('ft-psk-ccmp-2.conf').cli ]
         rad2 = hwsim.get_radio('rad2')
 
         cls.rule0 = hwsim.rules.create()

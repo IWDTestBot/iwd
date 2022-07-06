@@ -6,7 +6,7 @@ import sys, os
 sys.path.append('../util')
 from iwd import IWD
 from iwd import NetworkType
-from hostapd import HostapdCLI
+from config import ctx
 import testutil
 
 class Test(unittest.TestCase):
@@ -125,8 +125,8 @@ class Test(unittest.TestCase):
         os.system('ip link set lo up')
         IWD.copy_to_storage('TestFT.8021x')
 
-        cls.bss_hostapd = [ HostapdCLI(config='ft-eap-ccmp-1.conf'),
-                            HostapdCLI(config='ft-eap-ccmp-2.conf') ]
+        cls.bss_hostapd = [ ctx.get_hapd_instance('ft-eap-ccmp-1.conf').cli,
+                            ctx.get_hapd_instance('ft-eap-ccmp-2.conf').cli ]
 
         # Set interface addresses to those expected by hostapd config files
         os.system('ip link set dev "' + cls.bss_hostapd[0].ifname + '" down')

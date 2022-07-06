@@ -8,8 +8,7 @@ import iwd
 from iwd import IWD
 from iwd import DeviceState
 from iwd import NetworkType
-
-from hostapd import HostapdCLI
+from config import ctx
 
 class Test(unittest.TestCase):
 
@@ -19,7 +18,7 @@ class Test(unittest.TestCase):
         devices = wd.list_devices(1)
         device = devices[0]
 
-        hostapd = HostapdCLI(config='ssidOpen.conf')
+        hostapd = ctx.get_hapd_instance('ssidOpen.conf').cli
 
         ordered_network = device.get_ordered_network('ssidOpen', full_scan=True)
 

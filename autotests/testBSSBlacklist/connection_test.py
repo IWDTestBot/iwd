@@ -9,8 +9,8 @@ from iwd import IWD
 from iwd import PSKAgent
 from iwd import NetworkType
 from iwd import IWD_CONFIG_DIR
+from config import ctx
 
-from hostapd import HostapdCLI
 from hwsim import Hwsim
 
 import time
@@ -271,9 +271,9 @@ class Test(unittest.TestCase):
     def setUpClass(cls):
         cls.hwsim = Hwsim()
 
-        cls.bss_hostapd = [ HostapdCLI(config='ssid1.conf'),
-                            HostapdCLI(config='ssid2.conf'),
-                            HostapdCLI(config='ssid3.conf') ]
+        cls.bss_hostapd = [ ctx.get_hapd_instance('ssid1.conf').cli,
+                            ctx.get_hapd_instance('ssid2.conf').cli,
+                            ctx.get_hapd_instance('ssid3.conf').cli ]
         cls.bss_radio =  [ cls.hwsim.get_radio('rad0'),
                        cls.hwsim.get_radio('rad1'),
                        cls.hwsim.get_radio('rad2') ]

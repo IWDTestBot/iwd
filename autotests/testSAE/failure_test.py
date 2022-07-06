@@ -8,7 +8,7 @@ import iwd
 from iwd import IWD
 from iwd import PSKAgent
 from iwd import NetworkType
-from hostapd import HostapdCLI
+from config import ctx
 
 class Test(unittest.TestCase):
 
@@ -37,7 +37,7 @@ class Test(unittest.TestCase):
         self.validate_connection(wd, 'InvalidSecret')
 
     def test_no_supported_groups(self):
-        hostapd = HostapdCLI(config='ssidSAE.conf')
+        hostapd = ctx.get_hapd_instance('ssidSAE.conf').cli
         hostapd.set_value('sae_groups', '1')
         hostapd.reload()
 

@@ -8,7 +8,7 @@ import iwd
 from iwd import IWD
 from iwd import PSKAgent
 from iwd import NetworkType
-from hostapd import HostapdCLI
+from config import ctx
 
 class Test(unittest.TestCase):
 
@@ -65,7 +65,7 @@ class Test(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.hostapd = HostapdCLI(config='ssidSAE-Clogging.conf')
+        cls.hostapd = ctx.get_hapd_instance('ssidSAE-Clogging.conf').cli
 
     @classmethod
     def tearDownClass(cls):

@@ -8,7 +8,6 @@ import iwd
 from iwd import IWD
 from iwd import PSKAgent
 from iwd import NetworkType
-from hostapd import HostapdCLI
 import testutil
 from config import ctx
 
@@ -116,9 +115,9 @@ class Test(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.bss_hostapd = [ HostapdCLI(config='ft-sae-1.conf'),
-                            HostapdCLI(config='ft-sae-2.conf'),
-                            HostapdCLI(config='ft-psk-3.conf') ]
+        cls.bss_hostapd = [ ctx.get_hapd_instance('ft-sae-1.conf').cli,
+                            ctx.get_hapd_instance('ft-sae-2.conf').cli,
+                            ctx.get_hapd_instance('ft-psk-3.conf').cli ]
 
         ctx.start_process(['ip', 'link', 'set', 'dev', cls.bss_hostapd[0].ifname, 'down']).wait()
         ctx.start_process(['ip', 'link', 'set', 'dev', cls.bss_hostapd[0].ifname, \

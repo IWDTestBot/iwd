@@ -8,8 +8,6 @@ import iwd
 from iwd import IWD
 from iwd import DeviceState
 
-from hostapd import HostapdCLI
-
 class Test(unittest.TestCase):
 
     def pin_success(self, wd):
@@ -41,7 +39,7 @@ class Test(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.hostapd = HostapdCLI(config='ssidWPS.conf')
+        cls.hostapd = ctx.get_hapd_instance('ssidWPS.conf').cli
 
     @classmethod
     def tearDownClass(cls):
