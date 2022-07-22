@@ -957,7 +957,7 @@ static void wiphy_print_he_capabilities(struct band *band,
 	uint8_t width_set = bit_field(he_cap->he_phy_capa[0], 1, 7);
 
 	for (i = 0; i < 32; i++) {
-		if (!(he_cap->iftypes & (1 << i)))
+		if (!(he_cap->iftypes & (1ULL << i)))
 			continue;
 
 		if (L_WARN_ON(s >= type_buf + sizeof(type_buf)))
