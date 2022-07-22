@@ -122,5 +122,6 @@ void scan_freq_set_constrain(struct scan_freq_set *set,
 bool scan_freq_set_isempty(const struct scan_freq_set *set);
 uint32_t *scan_freq_set_to_fixed_array(const struct scan_freq_set *set,
 					size_t *len_out);
+uint32_t scan_freq_set_max(struct scan_freq_set *freqs);
 
 #endif /* __UTIL_H */

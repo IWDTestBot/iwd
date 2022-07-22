@@ -379,6 +379,25 @@ bool scan_freq_set_remove(struct scan_freq_set *freqs, uint32_t freq)
 	return false;
 }
 
+uint32_t scan_freq_set_max(struct scan_freq_set *freqs)
+{
+	uint32_t channel;
+
+	if (!l_uintset_isempty(freqs->channels_6ghz)) {
+		channel = l_uintset_find_max(freqs->channels_6ghz);
+		return band_channel_to_freq(channel, BAND_FREQ_6_GHZ);
+	}
+
+	if (!l_uintset_isempty(freqs->channels_5ghz)) {
+		channel = l_uintset_find_max(freqs->channels_5ghz);
+		return band_channel_to_freq(channel, BAND_FREQ_5_GHZ);
+	}
+
+	channel = __builtin_popcount(freqs->channels_2ghz);
+
+	return band_channel_to_freq(channel, BAND_FREQ_2_4_GHZ);
+}
+
 bool scan_freq_set_contains(const struct scan_freq_set *freqs, uint32_t freq)
 {
 	enum band_freq band;
