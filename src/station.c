@@ -1352,11 +1352,34 @@ static void station_quick_scan_destroy(void *userdata)
 
 static int station_quick_scan_trigger(struct station *station)
 {
+	uint32_t max_freq;
 	struct scan_freq_set *known_freq_set;
+	const struct scan_freq_set *supported = wiphy_get_supported_freqs(
+								station->wiphy);
+	const struct scan_freq_set *disabled = wiphy_get_disabled_freqs(
+								station->wiphy);
 
 	known_freq_set = known_networks_get_recent_frequencies(5);
 	if (!known_freq_set)
 		return -ENODATA;
+
+	/*
+	 * This means IWD has previously connected to a 6GHz AP before, but now
+	 * the regulatory domain disallows 6GHz likely caused by a reboot or
+	 * the firmware going down. The only way to re-enable 6GHz is to get
+	 * enough beacons via scanning for the firmware to set the regulatory
+	 * domain and open up the frequencies.
+	 */
+	max_freq = scan_freq_set_max(known_freq_set);
+	if (max_freq > 6000 && scan_freq_set_contains(disabled, max_freq)) {
+		l_debug("6GHz may be available, doing full passive scan");
+		station->quick_scan_id = scan_passive(
+					netdev_get_wdev_id(station->netdev),
+					supported, station_quick_scan_triggered,
+					station_quick_scan_results, station,
+					station_quick_scan_destroy);
+		goto done;
+	}
 
 	if (!wiphy_constrain_freq_set(station->wiphy, known_freq_set)) {
 		scan_freq_set_free(known_freq_set);
@@ -1368,6 +1391,7 @@ static int station_quick_scan_trigger(struct station *station)
 						station_quick_scan_triggered,
 						station_quick_scan_results,
 						station_quick_scan_destroy);
+done:
 	scan_freq_set_free(known_freq_set);
 
 	if (!station->quick_scan_id)

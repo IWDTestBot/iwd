@@ -666,6 +666,29 @@ static int manager_wiphy_filtered_dump(uint32_t wiphy_id,
 	return 0;
 }
 
+static unsigned int manager_dump_wiphy(uint32_t wiphy_id)
+{
+	struct l_genl_msg *msg;
+	unsigned int wiphy_dump;
+
+	msg = l_genl_msg_new_sized(NL80211_CMD_GET_WIPHY, 128);
+
+	if (wiphy_id)
+		l_genl_msg_append_attr(msg, NL80211_ATTR_WIPHY, 4, &wiphy_id);
+
+	l_genl_msg_append_attr(msg, NL80211_ATTR_SPLIT_WIPHY_DUMP, 0, NULL);
+	wiphy_dump = l_genl_family_dump(nl80211, msg,
+						manager_wiphy_dump_callback,
+						NULL,
+						manager_wiphy_dump_done);
+	if (!wiphy_dump) {
+		l_error("Wiphy information dump failed");
+		l_genl_msg_unref(msg);
+	}
+
+	return wiphy_dump;
+}
+
 static void manager_config_notify(struct l_genl_msg *msg, void *user_data)
 {
 	uint8_t cmd;
@@ -799,6 +822,25 @@ static void manager_config_notify(struct l_genl_msg *msg, void *user_data)
 	}
 }
 
+static void manager_reg_notify(struct l_genl_msg *msg, void *user_data)
+{
+	uint32_t wiphy_id;
+	uint8_t cmd = l_genl_msg_get_command(msg);
+
+	switch (cmd) {
+	case NL80211_CMD_REG_CHANGE:
+		manager_dump_wiphy(0);
+		break;
+	case NL80211_CMD_WIPHY_REG_CHANGE:
+		if (nl80211_parse_attrs(msg, NL80211_ATTR_WIPHY, &wiphy_id,
+					NL80211_ATTR_UNSPEC) < 0)
+			break;
+
+		manager_dump_wiphy(wiphy_id);
+		break;
+	}
+}
+
 static int manager_init(void)
 {
 	struct l_genl *genl = iwd_get_genl();
@@ -826,17 +868,13 @@ static int manager_init(void)
 		goto error;
 	}
 
-	msg = l_genl_msg_new_sized(NL80211_CMD_GET_WIPHY, 128);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_SPLIT_WIPHY_DUMP, 0, NULL);
-	wiphy_dump = l_genl_family_dump(nl80211, msg,
-						manager_wiphy_dump_callback,
-						NULL,
-						manager_wiphy_dump_done);
-	if (!wiphy_dump) {
-		l_error("Initial wiphy information dump failed");
-		l_genl_msg_unref(msg);
+	if (!l_genl_family_register(nl80211, NL80211_MULTICAST_GROUP_REG,
+					manager_reg_notify, NULL, NULL))
+		l_error("Registering for regulatory notifications failed");
+
+	wiphy_dump = manager_dump_wiphy(0);
+	if (!wiphy_dump)
 		goto error;
-	}
 
 	msg = l_genl_msg_new(NL80211_CMD_GET_INTERFACE);
 	interface_dump = l_genl_family_dump(nl80211, msg,
