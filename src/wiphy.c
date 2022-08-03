@@ -2029,7 +2029,20 @@ static void wiphy_dump_after_regdom(struct wiphy *wiphy)
 static void wiphy_update_reg_domain(struct wiphy *wiphy, bool global,
 					struct l_genl_msg *msg)
 {
-	char *out_country;
+	char out_country[2];
+	char *orig;
+
+	/*
+	 * Write the new country code or XX if the reg domain is not a
+	 * country domain.
+	 */
+	if (nl80211_parse_attrs(msg, NL80211_ATTR_REG_ALPHA2, out_country,
+				NL80211_ATTR_UNSPEC) < 0)
+		out_country[0] = out_country[1] = 'X';
+
+	l_debug("New reg domain country code for %s is %c%c",
+		global ? "(global)" : wiphy->name,
+		out_country[0], out_country[1]);
 
 	if (global)
 		/*
@@ -2043,21 +2056,24 @@ static void wiphy_update_reg_domain(struct wiphy *wiphy, bool global,
 		 * wiphy created (that is not self-managed anyway) and we
 		 * haven't received any REG_CHANGE events yet.
 		 */
-		out_country = regdom_country;
+		orig = regdom_country;
+
 	else
-		out_country = wiphy->regdom_country;
+		orig = wiphy->regdom_country;
 
 	/*
-	 * Write the new country code or XX if the reg domain is not a
-	 * country domain.
+	 * The kernel seems to send regdom updates even if the country didn't
+	 * change. Skip these as there is no reason to re-dump.
 	 */
-	if (nl80211_parse_attrs(msg, NL80211_ATTR_REG_ALPHA2, out_country,
-				NL80211_ATTR_UNSPEC) < 0)
-		out_country[0] = out_country[1] = 'X';
+	if (orig[0] == out_country[0] && orig[1] == out_country[1]) {
+		if (wiphy && wiphy->get_reg_id)
+			wiphy->get_reg_id = 0;
 
-	l_debug("New reg domain country code for %s is %c%c",
-		global ? "(global)" : wiphy->name,
-		out_country[0], out_country[1]);
+		return;
+	}
+
+	orig[0] = out_country[0];
+	orig[1] = out_country[1];
 
 	/* Don't dump wiphy from a GET_REG call */
 	if (wiphy && wiphy->get_reg_id) {
