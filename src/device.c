@@ -282,6 +282,8 @@ static void device_wiphy_state_changed_event(struct wiphy *wiphy,
 			netdev_set_powered(device->netdev, true,
 							NULL, NULL, NULL);
 		break;
+	default:
+		break;
 	}
 }
 
