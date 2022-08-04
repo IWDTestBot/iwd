@@ -71,6 +71,8 @@ struct scan_periodic {
 	void *userdata;
 	uint32_t id;
 	bool needs_active_scan:1;
+	/* Delay periodic scan results until regulatory domain updates */
+	bool wait_on_regdom:1;
 };
 
 struct scan_request {
@@ -108,6 +110,7 @@ struct scan_request {
 
 struct scan_context {
 	uint64_t wdev_id;
+	uint32_t wiphy_watch_id;
 	/*
 	 * Tells us whether a scan, our own or external, is running.
 	 * Set when scan gets triggered, cleared when scan done and
@@ -126,6 +129,8 @@ struct scan_context {
 	 */
 	unsigned int get_fw_scan_cmd_id;
 	struct wiphy *wiphy;
+	/* 6GHz may become available after a regdom update */
+	bool expect_6ghz : 1;
 };
 
 struct scan_results {
@@ -184,24 +189,6 @@ static void scan_request_failed(struct scan_context *sc,
 	wiphy_radio_work_done(sc->wiphy, sr->work.id);
 }
 
-static struct scan_context *scan_context_new(uint64_t wdev_id)
-{
-	struct wiphy *wiphy = wiphy_find_by_wdev(wdev_id);
-	struct scan_context *sc;
-
-	if (!wiphy)
-		return NULL;
-
-	sc = l_new(struct scan_context, 1);
-
-	sc->wdev_id = wdev_id;
-	sc->wiphy = wiphy;
-	sc->state = SCAN_STATE_NOT_RUNNING;
-	sc->requests = l_queue_new();
-
-	return sc;
-}
-
 static void scan_request_cancel(void *data)
 {
 	struct scan_request *sr = data;
@@ -226,6 +213,8 @@ static void scan_context_free(struct scan_context *sc)
 
 	if (sc->get_fw_scan_cmd_id && nl80211)
 		l_genl_family_cancel(nl80211, sc->get_fw_scan_cmd_id);
+
+	wiphy_state_watch_remove(sc->wiphy, sc->wiphy_watch_id);
 
 	l_free(sc);
 }
@@ -475,6 +464,142 @@ static struct l_genl_msg *scan_build_cmd(struct scan_context *sc,
 
 done:
 	return msg;
+}
+
+static void scan_add_6ghz(uint32_t freq, void *user_data)
+{
+	struct scan_freq_set *freqs = user_data;
+
+	if (freq < 6000)
+		return;
+
+	scan_freq_set_add(freqs, freq);
+}
+
+static void scan_wiphy_watch(struct wiphy *wiphy,
+				enum wiphy_state_watch_event event,
+				void *user_data)
+{
+	struct scan_context *sc = user_data;
+	struct scan_request *sr = NULL;
+	struct l_genl_msg *msg;
+	struct scan_parameters params = { 0 };
+	struct scan_freq_set *freqs_6ghz;
+	struct scan_freq_set *allowed;
+	bool allow_6g;
+	const struct scan_freq_set *supported =
+					wiphy_get_supported_freqs(wiphy);
+
+	/* Only care about regulatory events, and if 6GHz capable */
+	if ((event != WIPHY_STATE_WATCH_EVENT_REGDOM_STARTED &&
+			event != WIPHY_STATE_WATCH_EVENT_REGDOM_DONE) ||
+			!(scan_freq_set_get_bands(supported) & BAND_FREQ_6_GHZ))
+		return;
+
+	allowed = scan_get_allowed_freqs(sc);
+	allow_6g = scan_freq_set_get_bands(allowed) & BAND_FREQ_6_GHZ;
+
+	switch (event) {
+	case WIPHY_STATE_WATCH_EVENT_REGDOM_STARTED:
+		if (allow_6g)
+			goto done;
+
+		sc->expect_6ghz = true;
+
+		/*
+		 * If there is a running/queued periodic scan we may need to
+		 * delay the results if 6GHz becomes available.
+		 */
+		if (sc->sp.id)
+			sc->sp.wait_on_regdom = true;
+
+		goto done;
+	case WIPHY_STATE_WATCH_EVENT_REGDOM_DONE:
+		if (!sc->expect_6ghz)
+			goto done;
+
+		sc->expect_6ghz = false;
+
+		if (!sc->sp.id)
+			goto done;
+
+		sr = l_queue_find(sc->requests, scan_request_match,
+						L_UINT_TO_PTR(sc->sp.id));
+		if (!sr)
+			goto done;
+
+		/* This update did not allow 6GHz */
+		if (!allow_6g)
+			goto check_periodic;
+
+		/*
+		 * At this point we know there is an ongoing periodic scan.
+		 * Create a new 6GHz passive scan request and append to the
+		 * command list
+		 */
+		freqs_6ghz = scan_freq_set_new();
+
+		scan_freq_set_foreach(allowed, scan_add_6ghz, freqs_6ghz);
+
+		msg = scan_build_cmd(sc, false, true, &params, freqs_6ghz);
+		l_queue_push_tail(sr->cmds, msg);
+
+		scan_freq_set_free(freqs_6ghz);
+
+check_periodic:
+		if (sc->sp.wait_on_regdom) {
+			/* Periodic scan results delayed until this update */
+			if (sr && l_queue_peek_head(sc->requests) == sr)
+				start_next_scan_request(&sr->work);
+
+			sc->sp.wait_on_regdom = false;
+		}
+
+		break;
+	default:
+		return;
+	}
+
+done:
+	scan_freq_set_free(allowed);
+}
+
+/*
+ * Should only used to initialize 'expect_6ghz'. This is only to cover the case
+ * of a scan context being created during a regulatory update, which means it
+ * would miss the START event. If a DONE event comes, and expect_6ghz is false,
+ * no further action would be taken which may be incorrect.
+ */
+static bool scan_expect_6ghz(struct wiphy *wiphy)
+{
+	const struct scan_freq_set *supported =
+					wiphy_get_supported_freqs(wiphy);
+
+	if (!(scan_freq_set_get_bands(supported) & BAND_FREQ_6_GHZ))
+		return false;
+
+	return wiphy_regdom_is_updating(wiphy);
+}
+
+static struct scan_context *scan_context_new(uint64_t wdev_id)
+{
+	struct wiphy *wiphy = wiphy_find_by_wdev(wdev_id);
+	struct scan_context *sc;
+
+	if (!wiphy)
+		return NULL;
+
+	sc = l_new(struct scan_context, 1);
+
+	sc->wdev_id = wdev_id;
+	sc->wiphy = wiphy;
+	sc->state = SCAN_STATE_NOT_RUNNING;
+	sc->requests = l_queue_new();
+	sc->expect_6ghz = scan_expect_6ghz(wiphy);
+	sc->wiphy_watch_id = wiphy_state_watch_add(wiphy, scan_wiphy_watch,
+							sc, NULL);
+
+	return sc;
 }
 
 struct l_genl_msg *scan_build_trigger_scan_bss(uint32_t ifindex,
@@ -2017,6 +2142,10 @@ static void scan_notify(struct l_genl_msg *msg, void *user_data)
 		/* Was this our own scan or an external scan */
 		if (sr && sr->triggered) {
 			sr->triggered = false;
+
+			/* Regdom changed during a periodic scan */
+			if (sc->sp.id == sr->work.id && sc->sp.wait_on_regdom)
+				return;
 
 			if (!sr->callback) {
 				scan_finished(sc, -ECANCELED, NULL, NULL, sr);
