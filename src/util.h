@@ -123,5 +123,7 @@ void scan_freq_set_subtract(struct scan_freq_set *set,
 bool scan_freq_set_isempty(const struct scan_freq_set *set);
 uint32_t *scan_freq_set_to_fixed_array(const struct scan_freq_set *set,
 					size_t *len_out);
+struct scan_freq_set *scan_freq_set_copy_bands(const struct scan_freq_set *set,
+						uint32_t band_mask);
 
 #endif /* __UTIL_H */
