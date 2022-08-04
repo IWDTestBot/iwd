@@ -110,6 +110,7 @@ struct scan_request {
 
 struct scan_context {
 	uint64_t wdev_id;
+	uint32_t wiphy_watch_id;
 	/*
 	 * Tells us whether a scan, our own or external, is running.
 	 * Set when scan gets triggered, cleared when scan done and
@@ -186,24 +187,6 @@ static void scan_request_failed(struct scan_context *sc,
 	wiphy_radio_work_done(sc->wiphy, sr->work.id);
 }
 
-static struct scan_context *scan_context_new(uint64_t wdev_id)
-{
-	struct wiphy *wiphy = wiphy_find_by_wdev(wdev_id);
-	struct scan_context *sc;
-
-	if (!wiphy)
-		return NULL;
-
-	sc = l_new(struct scan_context, 1);
-
-	sc->wdev_id = wdev_id;
-	sc->wiphy = wiphy;
-	sc->state = SCAN_STATE_NOT_RUNNING;
-	sc->requests = l_queue_new();
-
-	return sc;
-}
-
 static void scan_request_cancel(void *data)
 {
 	struct scan_request *sr = data;
@@ -228,6 +211,8 @@ static void scan_context_free(struct scan_context *sc)
 
 	if (sc->get_fw_scan_cmd_id && nl80211)
 		l_genl_family_cancel(nl80211, sc->get_fw_scan_cmd_id);
+
+	wiphy_state_watch_remove(sc->wiphy, sc->wiphy_watch_id);
 
 	l_free(sc);
 }
@@ -1904,6 +1889,108 @@ static void get_scan_done(void *user)
 	l_free(results);
 }
 
+static void scan_get_results(struct scan_context *sc, struct scan_request *sr)
+{
+	struct scan_results *results;
+	struct l_genl_msg *scan_msg;
+
+	results = l_new(struct scan_results, 1);
+	results->sc = sc;
+	results->time_stamp = l_time_now();
+	results->sr = sr;
+	results->bss_list = l_queue_new();
+
+	scan_msg = l_genl_msg_new_sized(NL80211_CMD_GET_SCAN, 8);
+
+	l_genl_msg_append_attr(scan_msg, NL80211_ATTR_WDEV, 8,
+					&sc->wdev_id);
+	sc->get_scan_cmd_id = l_genl_family_dump(nl80211, scan_msg,
+						get_scan_callback,
+						results, get_scan_done);
+}
+
+static void scan_wiphy_watch(struct wiphy *wiphy,
+				enum wiphy_state_watch_event event,
+				void *user_data)
+{
+	struct scan_context *sc = user_data;
+	struct scan_request *sr = NULL;
+	struct l_genl_msg *msg = NULL;
+	struct scan_parameters params = { 0 };
+	struct scan_freq_set *freqs_6ghz;
+	struct scan_freq_set *allowed;
+	bool allow_6g;
+	const struct scan_freq_set *supported =
+					wiphy_get_supported_freqs(wiphy);
+
+	/* Only care about regulatory events, and if 6GHz capable */
+	if (event != WIPHY_STATE_WATCH_EVENT_REGDOM_DONE ||
+			!(scan_freq_set_get_bands(supported) & BAND_FREQ_6_GHZ))
+		return;
+
+	if (!sc->sp.id)
+		return;
+
+	sr = l_queue_find(sc->requests, scan_request_match,
+						L_UINT_TO_PTR(sc->sp.id));
+	if (!sr)
+		return;
+
+	allowed = scan_get_allowed_freqs(sc);
+	allow_6g = scan_freq_set_get_bands(allowed) & BAND_FREQ_6_GHZ;
+
+	/*
+	 * This update did not allow 6GHz, or the original request was
+	 * not expecting 6GHz. The periodic scan should now be ended.
+	 */
+	if (!allow_6g || !sr->split) {
+		scan_get_results(sc, sr);
+		goto free_allowed;
+	}
+
+	/*
+	 * At this point we know there is an ongoing periodic scan.
+	 * Create a new 6GHz passive scan request and append to the
+	 * command list
+	 */
+	freqs_6ghz = scan_freq_set_copy_bands(allowed, BAND_FREQ_6_GHZ);
+
+	msg = scan_build_cmd(sc, false, true, &params, freqs_6ghz);
+	l_queue_push_tail(sr->cmds, msg);
+
+	scan_freq_set_free(freqs_6ghz);
+
+	/*
+	 * If this periodic scan is at the top of the queue, continue
+	 * running it.
+	 */
+	if (l_queue_peek_head(sc->requests) == sr)
+		start_next_scan_request(&sr->work);
+
+free_allowed:
+	scan_freq_set_free(allowed);
+}
+
+static struct scan_context *scan_context_new(uint64_t wdev_id)
+{
+	struct wiphy *wiphy = wiphy_find_by_wdev(wdev_id);
+	struct scan_context *sc;
+
+	if (!wiphy)
+		return NULL;
+
+	sc = l_new(struct scan_context, 1);
+
+	sc->wdev_id = wdev_id;
+	sc->wiphy = wiphy;
+	sc->state = SCAN_STATE_NOT_RUNNING;
+	sc->requests = l_queue_new();
+	sc->wiphy_watch_id = wiphy_state_watch_add(wiphy, scan_wiphy_watch,
+							sc, NULL);
+
+	return sc;
+}
+
 static bool scan_parse_flush_flag_from_msg(struct l_genl_msg *msg)
 {
 	struct l_genl_attr attr;
@@ -1992,8 +2079,6 @@ static void scan_notify(struct l_genl_msg *msg, void *user_data)
 	switch (cmd) {
 	case NL80211_CMD_NEW_SCAN_RESULTS:
 	{
-		struct l_genl_msg *scan_msg;
-		struct scan_results *results;
 		bool send_next = false;
 		bool retry = false;
 		bool get_results = false;
@@ -2003,6 +2088,14 @@ static void scan_notify(struct l_genl_msg *msg, void *user_data)
 		/* Was this our own scan or an external scan */
 		if (sr && sr->triggered) {
 			sr->triggered = false;
+
+			/* Regdom changed during a periodic scan */
+			if (sc->sp.id == sr->work.id &&
+					wiphy_regdom_is_updating(sc->wiphy)) {
+				scan_parse_result_frequencies(msg,
+							sr->freqs_scanned);
+				return;
+			}
 
 			if (!sr->callback) {
 				scan_finished(sc, -ECANCELED, NULL, NULL, sr);
@@ -2060,20 +2153,9 @@ static void scan_notify(struct l_genl_msg *msg, void *user_data)
 		if (!get_results)
 			break;
 
-		results = l_new(struct scan_results, 1);
-		results->sc = sc;
-		results->time_stamp = l_time_now();
-		results->sr = sr;
-		results->bss_list = l_queue_new();
-
 		scan_parse_result_frequencies(msg, sr->freqs_scanned);
 
-		scan_msg = l_genl_msg_new_sized(NL80211_CMD_GET_SCAN, 8);
-		l_genl_msg_append_attr(scan_msg, NL80211_ATTR_WDEV, 8,
-					&sc->wdev_id);
-		sc->get_scan_cmd_id = l_genl_family_dump(nl80211, scan_msg,
-							get_scan_callback,
-							results, get_scan_done);
+		scan_get_results(sc, sr);
 
 		break;
 	}
