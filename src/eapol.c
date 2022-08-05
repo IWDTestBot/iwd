@@ -1161,6 +1161,25 @@ static void eapol_handle_ptk_1_of_4(struct eapol_sm *sm,
 		return;
 	}
 
+	/*
+	 * Work around buggy OWE APs. Early hostapd implementations for OWE
+	 * incorrectly used SHA256 for the PTK derivation even in groups 20 and
+	 * 21 (should be SHA384/512). If we've already sent two 2/4 messages
+	 * without a response and the AKM is OWE assume this workaround is
+	 * needed and re-derive the PTK.
+	 *
+	 * TODO: This could be improved by checking if 2/4 was ACK'ed. If not
+	 *       this could just be a lost packet.
+	 */
+	if (sm->frame_retry >= 2 &&
+			sm->handshake->akm_suite == IE_RSN_AKM_SUITE_OWE &&
+			!sm->handshake->retry_owe_workaround) {
+		sm->handshake->retry_owe_workaround = true;
+
+		if (!handshake_state_derive_ptk(sm->handshake))
+			goto error_unspecified;
+	}
+
 	pmkid = handshake_util_find_pmkid_kde(EAPOL_KEY_DATA(ek, sm->mic_len),
 					EAPOL_KEY_DATA_LEN(ek, sm->mic_len));
 
@@ -1335,6 +1354,8 @@ static void eapol_handle_ptk_1_of_4(struct eapol_sm *sm,
 
 	l_timeout_remove(sm->eapol_start_timeout);
 	sm->eapol_start_timeout = NULL;
+
+	sm->frame_retry++;
 
 	return;
 
