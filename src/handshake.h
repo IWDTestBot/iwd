@@ -137,6 +137,7 @@ struct handshake_state {
 	bool authenticator_ocvc : 1;
 	bool supplicant_ocvc : 1;
 	bool ext_key_id_capable : 1;
+	bool retry_owe_workaround : 1;
 	uint8_t ssid[32];
 	size_t ssid_len;
 	char *passphrase;

@@ -515,7 +515,8 @@ bool handshake_state_derive_ptk(struct handshake_state *s)
 	s->ptk_complete = false;
 
 	if (s->akm_suite & IE_RSN_AKM_SUITE_OWE) {
-		if (s->pmk_len == 32)
+		/* Work around buggy APs which always use SHA256 for the PTK */
+		if (s->pmk_len == 32 || s->retry_owe_workaround)
 			type = L_CHECKSUM_SHA256;
 		else if (s->pmk_len == 48)
 			type = L_CHECKSUM_SHA384;
