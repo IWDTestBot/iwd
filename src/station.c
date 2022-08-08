@@ -2815,6 +2815,31 @@ static bool station_try_next_bss(struct station *station)
 	return true;
 }
 
+static bool station_retry_owe_default_group(struct station *station)
+{
+	const uint8_t *rsne = station->connected_bss->rsne;
+	struct ie_rsn_info info;
+
+	if (!rsne)
+		return false;
+
+	if (ie_parse_rsne_from_data(rsne, rsne[1] + 2, &info))
+		return false;
+
+	if (!(info.akm_suites & IE_RSN_AKM_SUITE_OWE))
+		return false;
+
+	/* If we already forced group 19, allow the BSS to be blacklisted */
+	if (network_get_force_default_owe_group(station->connected_network))
+		return false;
+
+	l_debug("Buggy OWE AP detected, retrying by forcing group 19!");
+
+	network_set_force_default_owe_group(station->connected_network);
+
+	return true;
+}
+
 static bool station_retry_with_reason(struct station *station,
 					uint16_t reason_code)
 {
@@ -2825,12 +2850,20 @@ static bool station_retry_with_reason(struct station *station,
 	 * Other reason codes can be added here if its decided we want to
 	 * fail in those cases.
 	 */
-	if (reason_code == MMPDU_REASON_CODE_PREV_AUTH_NOT_VALID ||
-			reason_code == MMPDU_REASON_CODE_IEEE8021X_FAILED)
+	switch (reason_code) {
+	case MMPDU_REASON_CODE_PREV_AUTH_NOT_VALID:
+		if (station_retry_owe_default_group(station))
+			goto try_next;
+		/* fall through */
+	case MMPDU_REASON_CODE_IEEE8021X_FAILED:
 		return false;
+	default:
+		break;
+	}
 
 	blacklist_add_bss(station->connected_bss->addr);
 
+try_next:
 	return station_try_next_bss(station);
 }
 
