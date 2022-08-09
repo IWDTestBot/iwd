@@ -139,11 +139,13 @@ struct attr_entry {
 	uint16_t attr;
 	const char *str;
 	enum attr_type type;
+
 	union {
 		const struct attr_entry *nested;
-		enum attr_type array_type;
 		attr_func_t function;
 	};
+
+	enum attr_type array_type;
 };
 
 static void print_attributes(int indent, const struct attr_entry *table,
@@ -6230,11 +6232,9 @@ static const struct attr_entry attr_table[] = {
 	{ NL80211_ATTR_MAX_NUM_SCAN_SSIDS,
 			"Max Number Scan SSIDs", ATTR_U8 },
 	{ NL80211_ATTR_SCAN_FREQUENCIES,
-			"Scan Frequencies", ATTR_ARRAY,
-						{ .array_type = ATTR_U32 } },
+			"Scan Frequencies", ATTR_ARRAY, {}, ATTR_U32 },
 	{ NL80211_ATTR_SCAN_SSIDS,
-			"Scan SSIDs", ATTR_ARRAY,
-					{ .array_type = ATTR_BINARY } },
+			"Scan SSIDs", ATTR_ARRAY, {}, ATTR_BINARY },
 	{ NL80211_ATTR_GENERATION,
 			"Generation", ATTR_U32 },
 	{ NL80211_ATTR_BSS,
@@ -6488,8 +6488,7 @@ static const struct attr_entry attr_table[] = {
 	{ NL80211_ATTR_ACL_POLICY,
 			"ACL Policy", ATTR_U32 },
 	{ NL80211_ATTR_MAC_ADDRS,
-			"MAC Addresses", ATTR_ARRAY,
-					{ .array_type = ATTR_ADDRESS } },
+			"MAC Addresses", ATTR_ARRAY, {}, ATTR_ADDRESS },
 	{ NL80211_ATTR_MAC_ACL_MAX,
 			"MAC ACL Max" },
 	{ NL80211_ATTR_RADAR_EVENT,
@@ -6691,6 +6690,7 @@ static void print_value(int indent, const char *label, enum attr_type type,
 }
 
 static void print_array(int indent, enum attr_type type,
+						const struct attr_entry *entry,
 						const void *buf, uint32_t len)
 {
 	const struct nlattr *nla;
@@ -6700,8 +6700,22 @@ static void print_array(int indent, enum attr_type type,
 		char str[8];
 
 		snprintf(str, sizeof(str), "%u", nla_type);
-		print_value(indent, str, type,
+
+		switch (type) {
+		case ATTR_NESTED:
+			if (entry->nested)
+				print_attributes(indent + 1, entry->nested,
+					NLA_DATA(nla), NLA_PAYLOAD(nla));
+			else
+				printf("missing nested table\n");
+			break;
+		default:
+			print_value(indent, str, type,
 				NLA_DATA(nla), NLA_PAYLOAD(nla));
+			break;
+		}
+
+
 	}
 }
 
@@ -6832,7 +6846,7 @@ static void print_attributes(int indent, const struct attr_entry *table,
 						NLA_PAYLOAD(nla));
 			if (array_type == ATTR_UNSPEC)
 				printf("missing type\n");
-			print_array(indent + 1, array_type,
+			print_array(indent + 1, array_type, &table[i],
 					NLA_DATA(nla), NLA_PAYLOAD(nla));
 			break;
 		case ATTR_FLAG_OR_U16:
