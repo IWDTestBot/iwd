@@ -69,6 +69,7 @@ void command_process_prompt(char **argv, int argc);
 
 void command_noninteractive_trigger(void);
 bool command_is_interactive_mode(void);
+bool command_is_developer_mode(void);
 int command_get_exit_status(void);
 void command_set_exit_status(int status);
 void command_reset_default_entities(void);

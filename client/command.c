@@ -38,6 +38,7 @@ static struct l_queue *command_families;
 static struct l_queue *command_options;
 static int exit_status;
 static bool interactive_mode;
+static bool developer_mode;
 static struct command_noninteractive {
 	char **argv;
 	int argc;
@@ -616,6 +617,11 @@ bool command_is_interactive_mode(void)
 	return interactive_mode;
 }
 
+bool command_is_developer_mode(void)
+{
+	return developer_mode;
+}
+
 void command_set_exit_status(int status)
 {
 	exit_status = status;
@@ -657,6 +663,7 @@ static const struct option command_opts[] = {
 	{ COMMAND_OPTION_PASSPHRASE,	required_argument, NULL, 'P' },
 	{ COMMAND_OPTION_DONTASK,	no_argument,	   NULL, 'd' },
 	{ "help",			no_argument,	   NULL, 'h' },
+	{ "developer",			no_argument,	   NULL, 'E' },
 	{ }
 };
 
@@ -671,17 +678,10 @@ bool command_init(char **argv, int argc)
 	command_families = l_queue_new();
 	command_options = l_queue_new();
 
-	for (desc = __start___command; desc < __stop___command; desc++) {
-		if (!desc->init)
-			continue;
-
-		desc->init();
-	}
-
 	for (;;) {
 		struct command_option *option;
 
-		opt = getopt_long(argc, argv, "u:p:P:dh", command_opts, NULL);
+		opt = getopt_long(argc, argv, "u:p:P:dhE", command_opts, NULL);
 
 		switch (opt) {
 		case 'u':
@@ -715,6 +715,9 @@ bool command_init(char **argv, int argc)
 			l_queue_push_tail(command_options, option);
 
 			break;
+		case 'E':
+			developer_mode = true;
+			break;
 		case 'h':
 			command_display_help();
 
@@ -731,6 +734,13 @@ bool command_init(char **argv, int argc)
 	}
 
 options_parsed:
+	for (desc = __start___command; desc < __stop___command; desc++) {
+		if (!desc->init)
+			continue;
+
+		desc->init();
+	}
+
 	argv += optind;
 	argc -= optind;
 
