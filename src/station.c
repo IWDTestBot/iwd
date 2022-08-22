@@ -2181,13 +2181,14 @@ static void station_preauthenticate_cb(struct netdev *netdev,
 }
 
 static void station_transition_start(struct station *station,
-							struct scan_bss *bss)
+						struct l_queue *candidates)
 {
 	struct handshake_state *hs = netdev_get_handshake(station->netdev);
 	struct network *connected = station->connected_network;
 	enum security security = network_get_security(connected);
 	struct handshake_state *new_hs;
 	struct ie_rsn_info cur_rsne, target_rsne;
+	struct scan_bss *bss = l_queue_peek_head(candidates);
 	int ret;
 
 	l_debug("%u, target %s", netdev_get_ifindex(station->netdev),
@@ -2311,14 +2312,15 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 	struct station *station = userdata;
 	struct network *network = station->connected_network;
 	struct handshake_state *hs = netdev_get_handshake(station->netdev);
-	struct scan_bss *current_bss = station->connected_bss;
+	struct scan_bss *current_bss;
 	struct scan_bss *bss;
-	struct scan_bss *best_bss = NULL;
-	double best_bss_rank = 0.0;
+	struct scan_bss *old_bss = NULL;
+	double cur_bss_rank = 0.0;
 	static const double RANK_FT_FACTOR = 1.3;
 	uint16_t mdid;
 	enum security orig_security, security;
 	bool seen = false;
+	struct l_queue *candidates = NULL;
 
 	if (err) {
 		station_roam_failed(station);
@@ -2336,6 +2338,27 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 	if (hs->mde)
 		ie_parse_mobility_domain_from_data(hs->mde, hs->mde[1] + 2,
 							&mdid, NULL, NULL);
+
+	/* Ranks better than the current BSS will go into the candidates list */
+	current_bss = l_queue_find(bss_list, bss_match_bssid,
+					station->connected_bss->addr);
+	if (!current_bss) {
+		cur_bss_rank = 0;
+		current_bss = station->connected_bss;
+	} else
+		cur_bss_rank = current_bss->rank;
+
+	if (hs->mde)
+		cur_bss_rank *= RANK_FT_FACTOR;
+
+	/*
+	 * TODO: Best to base this check off the actual transition request by
+	 *       looking at disassociation imminent and bss termination bits.
+	 *       For now keep existing behavior by always roaming if there are
+	 *       any candidates.
+	 */
+	if (station->ap_directed_roaming)
+		cur_bss_rank = 0;
 
 	/*
 	 * BSSes in the bss_list come already ranked with their initial
@@ -2387,51 +2410,59 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 		if (hs->mde && bss->mde_present && l_get_le16(bss->mde) == mdid)
 			rank *= RANK_FT_FACTOR;
 
-		if (rank > best_bss_rank) {
-			if (best_bss)
-				scan_bss_free(best_bss);
+		if (rank <= cur_bss_rank)
+			goto next;
 
-			best_bss = bss;
-			best_bss_rank = rank;
+		if (!candidates)
+			candidates = l_queue_new();
 
-			continue;
+		l_queue_insert(candidates, bss, scan_bss_rank_compare, NULL);
+
+		l_debug("Adding BSS "MAC" as roam candidate",
+					MAC_STR(bss->addr));
+		/*
+		 * Should only get here if the rank is better than our current
+		 * BSS. Any BSS's here need to be added to the bss_list in case
+		 * they are chosen to roam to. This also avoids the need to
+		 * free candidates entries separately.
+		 */
+		old_bss = network_bss_find_by_addr(network, bss->addr);
+		if (old_bss) {
+			network_bss_update(network, bss);
+			l_queue_remove(station->bss_list, old_bss);
+			scan_bss_free(old_bss);
+
+			l_queue_insert(station->bss_list, bss,
+					scan_bss_rank_compare, NULL);
+		} else {
+			network_bss_add(network, bss);
+			l_queue_push_tail(station->bss_list, bss);
 		}
 
+		continue;
 next:
 		scan_bss_free(bss);
 	}
 
 	l_queue_destroy(bss_list, NULL);
 
-	if (!seen)
-		goto fail_free_bss;
+	bss = l_queue_peek_head(candidates);
 
 	/* See if we have anywhere to roam to */
-	if (!best_bss || scan_bss_addr_eq(best_bss, station->connected_bss)) {
-		station_debug_event(station, "no-roam-candidates");
+	if (!seen || !bss || scan_bss_addr_eq(bss, station->connected_bss))
 		goto fail_free_bss;
-	}
 
-	bss = network_bss_find_by_addr(network, best_bss->addr);
-	if (bss) {
-		network_bss_update(network, best_bss);
-		l_queue_remove(station->bss_list, bss);
-		scan_bss_free(bss);
+	station_transition_start(station, candidates);
 
-		l_queue_insert(station->bss_list, best_bss,
-				scan_bss_rank_compare, NULL);
-	} else {
-		network_bss_add(network, best_bss);
-		l_queue_push_tail(station->bss_list, best_bss);
-	}
-
-	station_transition_start(station, best_bss);
+	l_queue_destroy(candidates, NULL);
 
 	return true;
 
 fail_free_bss:
-	if (best_bss)
-		scan_bss_free(best_bss);
+	station_debug_event(station, "no-roam-candidates");
+
+	if (candidates)
+		l_queue_destroy(candidates, NULL);
 
 	station_roam_failed(station);
 
@@ -4356,6 +4387,7 @@ static struct l_dbus_message *station_force_roam(struct l_dbus *dbus,
 	struct l_dbus_message_iter iter;
 	uint8_t *mac;
 	uint32_t mac_len;
+	struct l_queue *candidate;
 
 	if (!l_dbus_message_get_arguments(message, "ay", &iter))
 		goto invalid_args;
@@ -4385,7 +4417,12 @@ static struct l_dbus_message *station_force_roam(struct l_dbus *dbus,
 	/* The various roam routines expect this to be set from scanning */
 	station->preparing_roam = true;
 
-	station_transition_start(station, target);
+	candidate = l_queue_new();
+	l_queue_push_head(candidate, target);
+
+	station_transition_start(station, candidate);
+
+	l_queue_destroy(candidate, NULL);
 
 	return l_dbus_message_new_method_return(message);
 
