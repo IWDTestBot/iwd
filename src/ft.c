@@ -233,10 +233,6 @@ static int ft_tx_reassociate(struct ft_sm *ft)
 		rsn_info.num_pmkids = 1;
 		rsn_info.pmkids = hs->pmk_r1_name;
 
-		/* Always set OCVC false for FT-over-DS */
-		if (ft->over_ds)
-			rsn_info.ocvc = false;
-
 		rsne = alloca(256);
 		ie_build_rsne(&rsn_info, rsne);
 
@@ -275,22 +271,6 @@ static int ft_tx_reassociate(struct ft_sm *ft)
 		ft_info.r1khid_present = true;
 		memcpy(ft_info.anonce, hs->anonce, 32);
 		memcpy(ft_info.snonce, hs->snonce, 32);
-
-		/*
-		 * IEEE 802.11-2020 Section 13.7.1 FT reassociation in an RSN
-		 *
-		 * "If dot11RSNAOperatingChannelValidationActivated is true and
-		 *  the FTO indicates OCVC capability, the target AP shall
-		 *  ensure that OCI subelement of the FTE matches by ensuring
-		 *  that all of the following are true:
-		 *      - OCI subelement is present
-		 *      - Channel information in the OCI matches current
-		 *        operating channel parameters (see 12.2.9)"
-		 */
-		if (hs->supplicant_ocvc && hs->chandef) {
-			oci_from_chandef(hs->chandef, ft_info.oci);
-			ft_info.oci_present = true;
-		}
 
 		fte = alloca(256);
 		ie_build_fast_bss_transition(&ft_info, kck_len, fte);
@@ -809,7 +789,7 @@ static bool ft_over_ds_start(struct auth_proto *ap)
 	return ft_tx_reassociate(ft) == 0;
 }
 
-bool ft_build_authenticate_ies(struct handshake_state *hs, bool ocvc,
+bool ft_build_authenticate_ies(struct handshake_state *hs,
 				const uint8_t *new_snonce, uint8_t *buf,
 				size_t *len)
 {
@@ -838,7 +818,6 @@ bool ft_build_authenticate_ies(struct handshake_state *hs, bool ocvc,
 
 		rsn_info.num_pmkids = 1;
 		rsn_info.pmkids = hs->pmk_r0_name;
-		rsn_info.ocvc = ocvc;
 
 		ie_build_rsne(&rsn_info, ptr);
 		ptr += ptr[1] + 2;
@@ -889,8 +868,7 @@ static bool ft_start(struct auth_proto *ap)
 	uint8_t buf[512];
 	size_t len;
 
-	if (!ft_build_authenticate_ies(hs, hs->supplicant_ocvc, hs->snonce,
-					buf, &len))
+	if (!ft_build_authenticate_ies(hs, hs->snonce, buf, &len))
 		return false;
 
 	iov.iov_base = buf;

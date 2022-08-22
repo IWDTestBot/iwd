@@ -43,7 +43,7 @@ struct ft_info {
 
 void ft_info_free(struct ft_info *info);
 
-bool ft_build_authenticate_ies(struct handshake_state *hs, bool ocvc,
+bool ft_build_authenticate_ies(struct handshake_state *hs,
 				const uint8_t *new_snonce, uint8_t *buf,
 				size_t *len);
 
