@@ -479,48 +479,6 @@ ft_error:
 	return false;
 }
 
-static int ft_process_ies(struct handshake_state *hs, const uint8_t *ies,
-			size_t ies_len)
-{
-	const uint8_t *mde = NULL;
-	const uint8_t *fte = NULL;
-	bool is_rsn = hs->supplicant_ie != NULL;
-
-	/* Check 802.11r IEs */
-	if (!ies)
-		goto ft_error;
-
-	if (parse_ies(hs, hs->authenticator_ie, ies, ies_len,
-				&mde, &fte) < 0)
-		goto ft_error;
-
-	if (!mde_equal(hs->mde, mde))
-		goto ft_error;
-
-	if (is_rsn) {
-		struct ie_ft_info ft_info;
-
-		if (!ft_parse_fte(hs, hs->snonce, fte, &ft_info))
-			goto ft_error;
-
-		handshake_state_set_fte(hs, fte);
-
-		handshake_state_set_anonce(hs, ft_info.anonce);
-
-		handshake_state_set_kh_ids(hs, ft_info.r0khid,
-						ft_info.r0khid_len,
-						ft_info.r1khid);
-
-		handshake_state_derive_ptk(hs);
-	} else if (fte)
-		goto ft_error;
-
-	return 0;
-
-ft_error:
-	return -EBADMSG;
-}
-
 int ft_over_ds_parse_action_response(const uint8_t *frame, size_t frame_len,
 					const uint8_t **spa_out,
 					const uint8_t **aa_out,
@@ -595,40 +553,6 @@ void ft_info_free(struct ft_info *info)
 
 	if (destroy)
 		destroy(info);
-}
-
-static int ft_rx_authenticate(struct auth_proto *ap, const uint8_t *frame,
-				size_t frame_len)
-{
-	struct ft_sm *ft = l_container_of(ap, struct ft_sm, ap);
-	uint16_t status_code = MMPDU_STATUS_CODE_UNSPECIFIED;
-	const uint8_t *ies = NULL;
-	size_t ies_len;
-	int ret;
-
-	/*
-	 * Parse the Authentication Response and validate the contents
-	 * according to 12.5.2 / 12.5.4: RSN or non-RSN Over-the-air
-	 * FT Protocol.
-	 */
-	if (!ft_parse_authentication_resp_frame(frame, frame_len, ft->hs->spa,
-						ft->hs->aa, ft->hs->aa,
-						2, &status_code,
-						&ies, &ies_len))
-		goto auth_error;
-
-	/* AP Rejected the authenticate / associate */
-	if (status_code != 0)
-		goto auth_error;
-
-	ret = ft_process_ies(ft->hs, ies, ies_len);
-	if (ret < 0)
-		goto auth_error;
-
-	return ft->get_oci(ft->user_data);
-
-auth_error:
-	return (int)status_code;
 }
 
 static int ft_rx_associate(struct auth_proto *ap, const uint8_t *frame,
@@ -768,13 +692,6 @@ static int ft_rx_associate(struct auth_proto *ap, const uint8_t *frame,
 	return 0;
 }
 
-static int ft_rx_oci(struct auth_proto *ap)
-{
-	struct ft_sm *ft = l_container_of(ap, struct ft_sm, ap);
-
-	return ft_tx_reassociate(ft);
-}
-
 static void ft_sm_free(struct auth_proto *ap)
 {
 	struct ft_sm *ft = l_container_of(ap, struct ft_sm, ap);
@@ -863,41 +780,23 @@ bool ft_build_authenticate_ies(struct handshake_state *hs,
 static bool ft_start(struct auth_proto *ap)
 {
 	struct ft_sm *ft = l_container_of(ap, struct ft_sm, ap);
-	struct handshake_state *hs = ft->hs;
-	struct iovec iov;
-	uint8_t buf[512];
-	size_t len;
 
-	if (!ft_build_authenticate_ies(hs, hs->snonce, buf, &len))
-		return false;
-
-	iov.iov_base = buf;
-	iov.iov_len = len;
-
-	ft->tx_auth(&iov, 1, ft->user_data);
-
-	return true;
+	return ft_tx_reassociate(ft) == 0;
 }
 
 struct auth_proto *ft_over_air_sm_new(struct handshake_state *hs,
-				ft_tx_authenticate_func_t tx_auth,
 				ft_tx_associate_func_t tx_assoc,
-				ft_get_oci get_oci,
 				void *user_data)
 {
 	struct ft_sm *ft = l_new(struct ft_sm, 1);
 
-	ft->tx_auth = tx_auth;
 	ft->tx_assoc = tx_assoc;
-	ft->get_oci = get_oci;
 	ft->hs = hs;
 	ft->user_data = user_data;
 
-	ft->ap.rx_authenticate = ft_rx_authenticate;
 	ft->ap.rx_associate = ft_rx_associate;
 	ft->ap.start = ft_start;
 	ft->ap.free = ft_sm_free;
-	ft->ap.rx_oci = ft_rx_oci;
 
 	return &ft->ap;
 }

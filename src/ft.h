@@ -61,9 +61,7 @@ bool ft_parse_ies(struct ft_info *info, struct handshake_state *hs,
 			const uint8_t *ies, size_t ies_len);
 
 struct auth_proto *ft_over_air_sm_new(struct handshake_state *hs,
-				ft_tx_authenticate_func_t tx_auth,
 				ft_tx_associate_func_t tx_assoc,
-				ft_get_oci get_oci,
 				void *user_data);
 
 struct auth_proto *ft_over_ds_sm_new(struct handshake_state *hs,
