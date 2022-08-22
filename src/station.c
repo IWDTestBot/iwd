@@ -2238,7 +2238,7 @@ static void station_transition_start(struct station *station,
 			}
 		} else {
 try_over_air:
-			if (netdev_fast_transition(station->netdev, bss,
+			if (netdev_fast_transition(station->netdev, candidates,
 					station->connected_bss,
 					station_fast_transition_cb) < 0) {
 				station_roam_failed(station);

@@ -4591,6 +4591,25 @@ static const struct wiphy_radio_work_item_ops ft_work_ops = {
 	.do_work = netdev_ft_work_ready,
 };
 
+static bool netdev_send_ft_authenticate(struct netdev *netdev,
+					struct netdev_ft_info *info);
+
+static bool netdev_ft_try_next_bss(struct netdev *netdev)
+{
+	struct netdev_ft_info *info;
+
+	info = l_queue_pop_head(netdev->ft_list);
+	netdev_ft_entry_free(info);
+
+	/* No more candidates */
+	if (l_queue_isempty(netdev->ft_list))
+		return false;
+
+	info = l_queue_peek_head(netdev->ft_list);
+
+	return netdev_send_ft_authenticate(netdev, info);
+}
+
 static void netdev_authenticate_response_ft_cb(const struct mmpdu_header *hdr,
 						const void *body,
 						size_t body_len, int rssi,
@@ -4607,13 +4626,13 @@ static void netdev_authenticate_response_ft_cb(const struct mmpdu_header *hdr,
 					info->super.spa, info->super.aa,
 					info->super.aa, 2, &status,
 					&ies, &ies_len))
-		goto failed;
+		goto next;
 
 	if (status != 0)
-		goto failed;
+		goto next;
 
 	if (!ft_parse_ies(&info->super, netdev->handshake, ies, ies_len))
-		goto failed;
+		goto next;
 
 	/* If we got here authentication was successful, continue with FT */
 	netdev->ap = ft_over_air_sm_new(netdev->handshake,
@@ -4627,11 +4646,17 @@ static void netdev_authenticate_response_ft_cb(const struct mmpdu_header *hdr,
 	wiphy_radio_work_insert(netdev->wiphy, &netdev->work,
 				WIPHY_WORK_PRIORITY_CONNECT, &ft_work_ops);
 
+	l_queue_destroy(netdev->ft_list, netdev_ft_entry_free);
+	netdev->ft_list = NULL;
+
 	return;
 
-failed:
-	netdev_connect_failed(netdev, NETDEV_RESULT_ABORTED,
-					MMPDU_STATUS_CODE_UNSPECIFIED);
+next:
+	if (netdev_ft_try_next_bss(netdev))
+		return;
+
+	netdev_connect_failed(netdev, NETDEV_RESULT_AUTHENTICATION_FAILED,
+				MMPDU_STATUS_CODE_UNSPECIFIED);
 }
 
 static const struct frame_xchg_prefix ft_prefix = {
@@ -4644,9 +4669,14 @@ static void netdev_cmd_authenticate_ft_cb(int err, void *user_data)
 {
 	struct netdev_ft_info *info = user_data;
 
-	if (err < 0)
-		netdev_connect_failed(info->netdev,
-					NETDEV_RESULT_AUTHENTICATION_FAILED,
+	if (err == 0)
+		return;
+
+	if (netdev_ft_try_next_bss(info->netdev))
+		return;
+
+	netdev_connect_failed(info->netdev, NETDEV_RESULT_AUTHENTICATION_FAILED,
+					MMPDU_STATUS_CODE_UNSPECIFIED);
 }
 
 static bool netdev_send_ft_authenticate(struct netdev *netdev,
@@ -4728,26 +4758,48 @@ static struct netdev_ft_info *netdev_ft_info_new(struct netdev *netdev,
 }
 
 int netdev_fast_transition(struct netdev *netdev,
-				const struct scan_bss *target_bss,
+				struct l_queue *candidates,
 				const struct scan_bss *orig_bss,
 				netdev_connect_cb_t cb)
 {
 	struct netdev_ft_info *info;
+	const struct l_queue_entry *entry;
 
 	if (!netdev->operational)
 		return -ENOTCONN;
 
-	if (!netdev->handshake->mde || !target_bss->mde_present ||
-			l_get_le16(netdev->handshake->mde + 2) !=
-			l_get_le16(target_bss->mde))
+	if (!netdev->handshake->mde)
 		return -EINVAL;
+
+	/* Initialize info for all candidates */
+	for (entry = l_queue_get_entries(candidates); entry;
+						entry = entry->next) {
+		struct scan_bss *bss = entry->data;
+
+		if (!bss->mde_present ||
+				l_get_le16(netdev->handshake->mde + 2) !=
+				l_get_le16(bss->mde))
+			continue;
+
+		info = netdev_ft_info_new(netdev, bss);
+
+		if (!netdev->ft_list)
+			netdev->ft_list = l_queue_new();
+
+		l_queue_push_tail(netdev->ft_list, info);
+	}
+
+	if (l_queue_isempty(netdev->ft_list))
+		return -EINVAL;
+
+	/* Begin with first candidate */
+	info = l_queue_peek_head(netdev->ft_list);
 
 	netdev->connect_cb = cb;
 
-	info = netdev_ft_info_new(netdev, target_bss);
-
 	if (!netdev_send_ft_authenticate(netdev, info)) {
-		netdev_ft_entry_free(info);
+		l_queue_destroy(netdev->ft_list, netdev_ft_entry_free);
+		netdev->ft_list = NULL;
 		return -EBADMSG;
 	}
 
