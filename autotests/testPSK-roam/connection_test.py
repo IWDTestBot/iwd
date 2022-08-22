@@ -181,7 +181,7 @@ class Test(unittest.TestCase):
         cls.bss_hostapd = [ HostapdCLI(config='ft-psk-ccmp-1.conf'),
                             HostapdCLI(config='ft-psk-ccmp-2.conf') ]
         rad0 = hwsim.get_radio('rad0')
-        rad2 = hwsim.get_radio('rad2')
+        rad2 = hwsim.get_radio('rad3')
 
         cls.rule0 = hwsim.rules.create()
         cls.rule0.source = rad2.addresses[0]
