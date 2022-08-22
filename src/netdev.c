@@ -96,8 +96,8 @@ struct netdev_handshake_state {
 	enum connection_type type;
 };
 
-struct netdev_ft_over_ds_info {
-	struct ft_ds_info super;
+struct netdev_ft_info {
+	struct ft_info super;
 	struct netdev *netdev;
 
 	bool parsed : 1;
@@ -176,7 +176,7 @@ struct netdev {
 	struct l_genl_msg *auth_cmd;
 	struct wiphy_radio_work_item work;
 
-	struct l_queue *ft_ds_list;
+	struct l_queue *ft_list;
 
 	struct netdev_ext_key_info *ext_key_info;
 
@@ -752,11 +752,11 @@ static void netdev_preauth_destroy(void *data)
 	l_free(state);
 }
 
-static void netdev_ft_ds_entry_free(void *data)
+static void netdev_ft_entry_free(void *data)
 {
-	struct netdev_ft_over_ds_info *info = data;
+	struct netdev_ft_info *info = data;
 
-	ft_ds_info_free(&info->super);
+	ft_info_free(&info->super);
 }
 
 static void netdev_connect_free(struct netdev *netdev)
@@ -848,9 +848,9 @@ static void netdev_connect_free(struct netdev *netdev)
 		netdev->get_oci_cmd_id = 0;
 	}
 
-	if (netdev->ft_ds_list) {
-		l_queue_destroy(netdev->ft_ds_list, netdev_ft_ds_entry_free);
-		netdev->ft_ds_list = NULL;
+	if (netdev->ft_list) {
+		l_queue_destroy(netdev->ft_list, netdev_ft_entry_free);
+		netdev->ft_list = NULL;
 	}
 }
 
@@ -962,9 +962,9 @@ static void netdev_free(void *data)
 	if (netdev->fw_roam_bss)
 		scan_bss_free(netdev->fw_roam_bss);
 
-	if (netdev->ft_ds_list) {
-		l_queue_destroy(netdev->ft_ds_list, netdev_ft_ds_entry_free);
-		netdev->ft_ds_list = NULL;
+	if (netdev->ft_list) {
+		l_queue_destroy(netdev->ft_list, netdev_ft_entry_free);
+		netdev->ft_list = NULL;
 	}
 
 	scan_wdev_remove(netdev->wdev_id);
@@ -1415,9 +1415,9 @@ static void netdev_connect_ok(struct netdev *netdev)
 		netdev->fw_roam_bss = NULL;
 	}
 
-	if (netdev->ft_ds_list) {
-		l_queue_destroy(netdev->ft_ds_list, netdev_ft_ds_entry_free);
-		netdev->ft_ds_list = NULL;
+	if (netdev->ft_list) {
+		l_queue_destroy(netdev->ft_list, netdev_ft_entry_free);
+		netdev->ft_list = NULL;
 	}
 
 	if (netdev->connect_cb) {
@@ -4508,22 +4508,22 @@ static void prepare_ft(struct netdev *netdev, const struct scan_bss *target_bss)
 	}
 }
 
-static void netdev_ft_over_ds_auth_failed(struct netdev_ft_over_ds_info *info,
+static void netdev_ft_over_ds_auth_failed(struct netdev_ft_info *info,
 						uint16_t status)
 {
-	l_queue_remove(info->netdev->ft_ds_list, info);
-	ft_ds_info_free(&info->super);
+	l_queue_remove(info->netdev->ft_list, info);
+	ft_info_free(&info->super);
 }
 
-struct ft_ds_finder {
+struct ft_finder {
 	const uint8_t *spa;
 	const uint8_t *aa;
 };
 
-static bool match_ft_ds_info(const void *a, const void *b)
+static bool match_ft_info(const void *a, const void *b)
 {
-	const struct netdev_ft_over_ds_info *info = a;
-	const struct ft_ds_finder *finder = b;
+	const struct netdev_ft_info *info = a;
+	const struct ft_finder *finder = b;
 
 	if (memcmp(info->super.spa, finder->spa, 6))
 		return false;
@@ -4538,14 +4538,14 @@ static void netdev_ft_response_frame_event(const struct mmpdu_header *hdr,
 					int rssi, void *user_data)
 {
 	struct netdev *netdev = user_data;
-	struct netdev_ft_over_ds_info *info;
+	struct netdev_ft_info *info;
 	int ret;
 	uint16_t status_code = MMPDU_STATUS_CODE_UNSPECIFIED;
 	const uint8_t *aa;
 	const uint8_t *spa;
 	const uint8_t *ies;
 	size_t ies_len;
-	struct ft_ds_finder finder;
+	struct ft_finder finder;
 
 	if (!netdev->connected)
 		return;
@@ -4558,7 +4558,7 @@ static void netdev_ft_response_frame_event(const struct mmpdu_header *hdr,
 	finder.spa = spa;
 	finder.aa = aa;
 
-	info = l_queue_find(netdev->ft_ds_list, match_ft_ds_info, &finder);
+	info = l_queue_find(netdev->ft_list, match_ft_info, &finder);
 	if (!info)
 		return;
 
@@ -4568,8 +4568,7 @@ static void netdev_ft_response_frame_event(const struct mmpdu_header *hdr,
 		goto ft_error;
 	}
 
-	if (!ft_over_ds_parse_action_ies(&info->super, netdev->handshake,
-						ies, ies_len))
+	if (!ft_parse_ies(&info->super, netdev->handshake, ies, ies_len))
 		goto ft_error;
 
 	info->parsed = true;
@@ -4661,8 +4660,8 @@ int netdev_fast_transition_over_ds(struct netdev *netdev,
 					const struct scan_bss *orig_bss,
 					netdev_connect_cb_t cb)
 {
-	struct netdev_ft_over_ds_info *info;
-	struct ft_ds_finder finder;
+	struct netdev_ft_info *info;
+	struct ft_finder finder;
 
 	if (!netdev->operational)
 		return -ENOTCONN;
@@ -4675,14 +4674,14 @@ int netdev_fast_transition_over_ds(struct netdev *netdev,
 	finder.spa = netdev->addr;
 	finder.aa = target_bss->addr;
 
-	info = l_queue_find(netdev->ft_ds_list, match_ft_ds_info, &finder);
+	info = l_queue_find(netdev->ft_list, match_ft_info, &finder);
 
 	if (!info || !info->parsed)
 		return -ENOENT;
 
 	prepare_ft(netdev, target_bss);
 
-	ft_over_ds_prepare_handshake(&info->super, netdev->handshake);
+	ft_prepare_handshake(&info->super, netdev->handshake);
 
 	netdev->connect_cb = cb;
 
@@ -4699,7 +4698,7 @@ int netdev_fast_transition_over_ds(struct netdev *netdev,
 
 static void netdev_ft_request_cb(struct l_genl_msg *msg, void *user_data)
 {
-	struct netdev_ft_over_ds_info *info = user_data;
+	struct netdev_ft_info *info = user_data;
 
 	if (l_genl_msg_get_error(msg) < 0) {
 		l_error("Could not send CMD_FRAME for FT-over-DS");
@@ -4708,10 +4707,10 @@ static void netdev_ft_request_cb(struct l_genl_msg *msg, void *user_data)
 	}
 }
 
-static void netdev_ft_ds_info_free(struct ft_ds_info *ft)
+static void netdev_ft_info_free(struct ft_info *ft)
 {
-	struct netdev_ft_over_ds_info *info = l_container_of(ft,
-					struct netdev_ft_over_ds_info, super);
+	struct netdev_ft_info *info = l_container_of(ft,
+					struct netdev_ft_info, super);
 
 	l_free(info);
 }
@@ -4719,7 +4718,7 @@ static void netdev_ft_ds_info_free(struct ft_ds_info *ft)
 int netdev_fast_transition_over_ds_action(struct netdev *netdev,
 					const struct scan_bss *target_bss)
 {
-	struct netdev_ft_over_ds_info *info;
+	struct netdev_ft_info *info;
 	uint8_t ft_req[14];
 	struct handshake_state *hs = netdev->handshake;
 	struct iovec iovs[5];
@@ -4736,7 +4735,7 @@ int netdev_fast_transition_over_ds_action(struct netdev *netdev,
 
 	l_debug("");
 
-	info = l_new(struct netdev_ft_over_ds_info, 1);
+	info = l_new(struct netdev_ft_info, 1);
 	info->netdev = netdev;
 
 	memcpy(info->super.spa, hs->spa, ETH_ALEN);
@@ -4748,7 +4747,7 @@ int netdev_fast_transition_over_ds_action(struct netdev *netdev,
 						target_bss->rsne[1] + 2);
 
 	l_getrandom(info->super.snonce, 32);
-	info->super.free = netdev_ft_ds_info_free;
+	info->super.free = netdev_ft_info_free;
 
 	ft_req[0] = 6; /* FT category */
 	ft_req[1] = 1; /* FT Request action */
@@ -4767,10 +4766,10 @@ int netdev_fast_transition_over_ds_action(struct netdev *netdev,
 
 	iovs[2].iov_base = NULL;
 
-	if (!netdev->ft_ds_list)
-		netdev->ft_ds_list = l_queue_new();
+	if (!netdev->ft_list)
+		netdev->ft_list = l_queue_new();
 
-	l_queue_push_head(netdev->ft_ds_list, info);
+	l_queue_push_head(netdev->ft_list, info);
 
 	netdev_send_action_framev(netdev, netdev->handshake->aa, iovs, 2,
 					netdev->frequency,

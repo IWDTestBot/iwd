@@ -348,7 +348,7 @@ static bool ft_verify_rsne(const uint8_t *rsne, const uint8_t *pmk_r0_name,
 	return true;
 }
 
-static int ft_parse_ies(struct handshake_state *hs,
+static int parse_ies(struct handshake_state *hs,
 			const uint8_t *authenticator_ie,
 			const uint8_t *ies, size_t ies_len,
 			const uint8_t **mde_out,
@@ -471,16 +471,14 @@ static bool mde_equal(const uint8_t *mde1, const uint8_t *mde2)
 	return memcmp(mde1, mde1, mde1[1] + 2) == 0;
 }
 
-bool ft_over_ds_parse_action_ies(struct ft_ds_info *info,
-					struct handshake_state *hs,
-					const uint8_t *ies,
-					size_t ies_len)
+bool ft_parse_ies(struct ft_info *info, struct handshake_state *hs,
+			const uint8_t *ies, size_t ies_len)
 {
 	const uint8_t *mde = NULL;
 	const uint8_t *fte = NULL;
 	bool is_rsn = hs->supplicant_ie != NULL;
 
-	if (ft_parse_ies(hs, info->authenticator_ie, ies, ies_len,
+	if (parse_ies(hs, info->authenticator_ie, ies, ies_len,
 				&mde, &fte) < 0)
 		return false;
 
@@ -512,7 +510,7 @@ static int ft_process_ies(struct handshake_state *hs, const uint8_t *ies,
 	if (!ies)
 		goto ft_error;
 
-	if (ft_parse_ies(hs, hs->authenticator_ie, ies, ies_len,
+	if (parse_ies(hs, hs->authenticator_ie, ies, ies_len,
 				&mde, &fte) < 0)
 		goto ft_error;
 
@@ -585,8 +583,7 @@ int ft_over_ds_parse_action_response(const uint8_t *frame, size_t frame_len,
 	return 0;
 }
 
-bool ft_over_ds_prepare_handshake(struct ft_ds_info *info,
-					struct handshake_state *hs)
+bool ft_prepare_handshake(struct ft_info *info, struct handshake_state *hs)
 {
 	if (!hs->supplicant_ie)
 		return true;
@@ -606,7 +603,7 @@ bool ft_over_ds_prepare_handshake(struct ft_ds_info *info,
 	return true;
 }
 
-void ft_ds_info_free(struct ft_ds_info *info)
+void ft_info_free(struct ft_info *info)
 {
 	__typeof__(info->free) destroy = info->free;
 
