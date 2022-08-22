@@ -52,6 +52,11 @@ int ft_over_ds_parse_action_response(const uint8_t *frame, size_t frame_len,
 					const uint8_t **aa_out,
 					const uint8_t **ies_out,
 					size_t *ies_len);
+bool ft_parse_authentication_resp_frame(const uint8_t *data, size_t len,
+				const uint8_t *addr1, const uint8_t *addr2,
+				const uint8_t *addr3, uint16_t auth_seq,
+				uint16_t *out_status, const uint8_t **out_ies,
+				size_t *out_ies_len);
 bool ft_parse_ies(struct ft_info *info, struct handshake_state *hs,
 			const uint8_t *ies, size_t ies_len);
 

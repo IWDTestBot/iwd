@@ -116,7 +116,7 @@ static bool ft_calculate_fte_mic(struct handshake_state *hs, uint8_t seq_num,
  * the start of the IE array (RSN, MD, FT, TI and RIC).
  * See 8.3.3.1 for the header and 8.3.3.11 for the body format.
  */
-static bool ft_parse_authentication_resp_frame(const uint8_t *data, size_t len,
+bool ft_parse_authentication_resp_frame(const uint8_t *data, size_t len,
 				const uint8_t *addr1, const uint8_t *addr2,
 				const uint8_t *addr3, uint16_t auth_seq,
 				uint16_t *out_status, const uint8_t **out_ies,
