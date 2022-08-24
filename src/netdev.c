@@ -1395,8 +1395,7 @@ static void netdev_connect_ok(struct netdev *netdev)
 		netdev->fw_roam_bss = NULL;
 	}
 
-	/* TODO: Create only for over-DS. Over-air still uses auth-proto */
-	if (netdev->handshake->mde && (netdev->handshake->mde[4] & 1)) {
+	if (netdev->handshake->mde) {
 		if (netdev->ft_sm)
 			ft_sm_free(netdev->ft_sm);
 
@@ -4369,48 +4368,6 @@ static int netdev_tx_ft_action_frame(uint32_t ifindex, const uint8_t *dest,
 	return 0;
 }
 
-static void netdev_cmd_authenticate_ft_cb(struct l_genl_msg *msg,
-						void *user_data)
-{
-	struct netdev *netdev = user_data;
-
-	netdev->connect_cmd_id = 0;
-
-	if (l_genl_msg_get_error(msg) < 0)
-		netdev_connect_failed(netdev,
-					NETDEV_RESULT_AUTHENTICATION_FAILED,
-					MMPDU_STATUS_CODE_UNSPECIFIED);
-}
-
-static void netdev_ft_tx_authenticate(struct iovec *iov,
-					size_t iov_len, void *user_data)
-{
-	struct netdev *netdev = user_data;
-	struct l_genl_msg *cmd_authenticate;
-
-	cmd_authenticate = netdev_build_cmd_authenticate(netdev,
-							NL80211_AUTHTYPE_FT);
-	l_genl_msg_append_attrv(cmd_authenticate, NL80211_ATTR_IE, iov,
-					iov_len);
-
-	netdev->connect_cmd_id = l_genl_family_send(nl80211,
-						cmd_authenticate,
-						netdev_cmd_authenticate_ft_cb,
-						netdev, NULL);
-	if (!netdev->connect_cmd_id) {
-		l_genl_msg_unref(cmd_authenticate);
-		goto restore_snonce;
-	}
-
-	return;
-
-restore_snonce:
-	memcpy(netdev->handshake->snonce, netdev->prev_snonce, 32);
-
-	netdev_connect_failed(netdev, NETDEV_RESULT_AUTHENTICATION_FAILED,
-					MMPDU_STATUS_CODE_UNSPECIFIED);
-}
-
 static int netdev_ft_tx_associate(uint32_t ifindex, const uint8_t *prev_bssid,
 					struct iovec *ft_iov, size_t n_ft_iov)
 {
@@ -4450,7 +4407,8 @@ static int netdev_ft_tx_associate(uint32_t ifindex, const uint8_t *prev_bssid,
 	return 0;
 }
 
-static void prepare_ft(struct netdev *netdev, const struct scan_bss *target_bss)
+static void prepare_ft(struct netdev *netdev, const uint8_t *addr,
+			uint32_t frequency)
 {
 	struct netdev_handshake_state *nhs;
 
@@ -4461,15 +4419,9 @@ static void prepare_ft(struct netdev *netdev, const struct scan_bss *target_bss)
 	 */
 	memcpy(netdev->prev_snonce, netdev->handshake->snonce, 32);
 
-	netdev->frequency = target_bss->frequency;
+	handshake_state_set_authenticator_address(netdev->handshake, addr);
 
-	handshake_state_set_authenticator_address(netdev->handshake,
-							target_bss->addr);
-
-	if (target_bss->rsne)
-		handshake_state_set_authenticator_ie(netdev->handshake,
-							target_bss->rsne);
-	memcpy(netdev->handshake->mde + 2, target_bss->mde, 3);
+	netdev->frequency = frequency;
 
 	netdev->handshake->active_tk_index = 0;
 	netdev->associated = false;
@@ -4543,15 +4495,10 @@ static bool netdev_ft_work_ready(struct wiphy_radio_work_item *item)
 {
 	struct netdev *netdev = l_container_of(item, struct netdev, work);
 
-	if (netdev->ft_sm) {
-		if (ft_associate(netdev->ft_sm, netdev->handshake->aa))
-			goto assoc_failed;
+	if (ft_associate(netdev->ft_sm, netdev->handshake->aa))
+		goto assoc_failed;
 
-		return false;
-	}
-
-	if (auth_proto_start(netdev->ap))
-		return false;
+	return false;
 
 assoc_failed:
 	/* Restore original nonce */
@@ -4566,6 +4513,27 @@ static const struct wiphy_radio_work_item_ops ft_work_ops = {
 	.do_work = netdev_ft_work_ready,
 };
 
+static void netdev_ft_authenticate_cb(int err, const uint8_t *addr,
+					uint32_t frequency,
+					void *user_data)
+{
+	struct netdev *netdev = user_data;
+
+	if (err < 0)
+		goto ft_failed;
+
+	prepare_ft(netdev, addr, frequency);
+
+	wiphy_radio_work_insert(netdev->wiphy, &netdev->work,
+				WIPHY_WORK_PRIORITY_CONNECT, &ft_work_ops);
+
+	return;
+
+ft_failed:
+	netdev_connect_failed(netdev, NETDEV_RESULT_AUTHENTICATION_FAILED,
+					MMPDU_STATUS_CODE_UNSPECIFIED);
+}
+
 int netdev_fast_transition(struct netdev *netdev,
 				const struct scan_bss *target_bss,
 				const struct scan_bss *orig_bss,
@@ -4574,25 +4542,20 @@ int netdev_fast_transition(struct netdev *netdev,
 	if (!netdev->operational)
 		return -ENOTCONN;
 
-	if (!netdev->handshake->mde || !target_bss->mde_present ||
+	if (!netdev->ft_sm || !netdev->handshake->mde ||
+			!target_bss->mde_present ||
 			l_get_le16(netdev->handshake->mde + 2) !=
 			l_get_le16(target_bss->mde))
 		return -EINVAL;
 
 	netdev->connect_cb = cb;
 
-	netdev->ap = ft_over_air_sm_new(netdev->handshake,
-					netdev_ft_tx_authenticate,
-					netdev_ft_tx_associate,
-					netdev_get_oci, netdev);
-	prepare_ft(netdev, target_bss);
-
-	handshake_state_new_snonce(netdev->handshake);
-
-	wiphy_radio_work_insert(netdev->wiphy, &netdev->work,
-				WIPHY_WORK_PRIORITY_CONNECT, &ft_work_ops);
-
-	return 0;
+	/*
+	 * ft_authenticate uses offchannel so we cant start a wiphy work item
+	 * until that completes
+	 */
+	return ft_authenticate(netdev->ft_sm, target_bss,
+				netdev_ft_authenticate_cb, netdev);
 }
 
 int netdev_fast_transition_over_ds(struct netdev *netdev,
@@ -4611,7 +4574,7 @@ int netdev_fast_transition_over_ds(struct netdev *netdev,
 
 	netdev->connect_cb = cb;
 
-	prepare_ft(netdev, target_bss);
+	prepare_ft(netdev, target_bss->addr, target_bss->frequency);
 
 	wiphy_radio_work_insert(netdev->wiphy, &netdev->work,
 				WIPHY_WORK_PRIORITY_CONNECT, &ft_work_ops);

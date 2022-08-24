@@ -1114,6 +1114,12 @@ static void ft_prepare_handshake(struct ft_info *info,
 	if (!hs->supplicant_ie)
 		return;
 
+	if (info->authenticator_ie)
+		handshake_state_set_authenticator_ie(hs,
+						info->authenticator_ie);
+
+	memcpy(hs->mde + 2, info->mde, 3);
+
 	memcpy(hs->snonce, info->snonce, sizeof(hs->snonce));
 
 	handshake_state_set_fte(hs, info->fte);
