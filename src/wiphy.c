@@ -118,7 +118,6 @@ struct wiphy {
 	uint8_t extended_capabilities[EXT_CAP_LEN + 2]; /* max bitmap size + IE header */
 	uint8_t *iftype_extended_capabilities[NUM_NL80211_IFTYPES];
 	uint8_t rm_enabled_capabilities[7]; /* 5 size max + header */
-	struct l_genl_family *nl80211;
 	char regdom_country[2];
 	/* Work queue for this radio */
 	struct l_queue *work;
@@ -375,7 +374,6 @@ static void wiphy_free(void *data)
 	l_free(wiphy->model_str);
 	l_free(wiphy->vendor_str);
 	l_free(wiphy->driver_str);
-	l_genl_family_free(wiphy->nl80211);
 	l_queue_destroy(wiphy->work, destroy_work);
 	l_free(wiphy);
 }
@@ -1756,11 +1754,9 @@ static void wiphy_register(struct wiphy *wiphy)
 struct wiphy *wiphy_create(uint32_t wiphy_id, const char *name)
 {
 	struct wiphy *wiphy;
-	struct l_genl *genl = iwd_get_genl();
 
 	wiphy = wiphy_new(wiphy_id);
 	l_strlcpy(wiphy->name, name, sizeof(wiphy->name));
-	wiphy->nl80211 = l_genl_family_new(genl, NL80211_GENL_NAME);
 	l_queue_push_head(wiphy_list, wiphy);
 
 	if (!wiphy_is_managed(name))
@@ -2099,8 +2095,8 @@ static void wiphy_get_reg_domain(struct wiphy *wiphy)
 	msg = l_genl_msg_new(NL80211_CMD_GET_REG);
 	l_genl_msg_append_attr(msg, NL80211_ATTR_WIPHY, 4, &wiphy->id);
 
-	wiphy->get_reg_id = l_genl_family_send(wiphy->nl80211, msg,
-						wiphy_get_reg_cb, wiphy, NULL);
+	wiphy->get_reg_id = l_genl_family_send(nl80211, msg, wiphy_get_reg_cb,
+						wiphy, NULL);
 	if (!wiphy->get_reg_id) {
 		l_error("Error sending NL80211_CMD_GET_REG for %s", wiphy->name);
 		l_genl_msg_unref(msg);
