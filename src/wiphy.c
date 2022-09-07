@@ -65,7 +65,9 @@ static char **whitelist_filter;
 static char **blacklist_filter;
 static int mac_randomize_bytes = 6;
 static unsigned int get_reg_id;
+static unsigned int set_reg_id;
 static char regdom_country[2];
+static char regdom_override[2];
 static uint32_t work_ids;
 static unsigned int wiphy_dump_id;
 
@@ -2090,6 +2092,14 @@ static void wiphy_get_reg_cb(struct l_genl_msg *msg, void *user_data)
 				NL80211_ATTR_UNSPEC) < 0;
 
 	wiphy_update_reg_domain(wiphy, global, msg);
+
+	if (global && regdom_override[0] && regdom_override[1]) {
+		if (regdom_override[0] != regdom_country[0] ||
+				regdom_override[1] != regdom_country[1])
+			l_warn("Regdom %c%c does not match override %c%c",
+				regdom_country[0], regdom_country[1],
+				regdom_override[0], regdom_override[1]);
+	}
 }
 
 static void wiphy_get_reg_domain(struct wiphy *wiphy)
@@ -2119,6 +2129,69 @@ static void wiphy_get_reg_domain(struct wiphy *wiphy)
 		get_reg_id = id;
 }
 
+static void wiphy_set_reg_cb(struct l_genl_msg *msg, void *user_data)
+{
+	int err = l_genl_msg_get_error(msg);
+
+	set_reg_id = 0;
+
+	/* Just warn if the CC was invalid, can't do much else here... */
+	if (err < 0)
+		l_warn("Error setting regulatory domain (%d)", err);
+
+	/*
+	 * Always get the regdom to see if the override actually worked. The
+	 * kernel may choose to ignore REQ_SET_REG requests. If so this will be
+	 * logged. Since this only applies to the global regdom do a global
+	 * GET_REG with wiphy set to NULL
+	 */
+	wiphy_get_reg_domain(NULL);
+}
+
+static void wiphy_set_reg_domain(const char *cc)
+{
+	struct l_genl_msg *msg;
+
+	regdom_override[0] = cc[0];
+	regdom_override[1] = cc[1];
+
+	msg = l_genl_msg_new(NL80211_CMD_REQ_SET_REG);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_REG_ALPHA2, 2, cc);
+
+	set_reg_id = l_genl_family_send(nl80211, msg, wiphy_set_reg_cb,
+					NULL, NULL);
+	/* Could try getting the regdom, but that likely wouldn't work either */
+	if (L_WARN_ON(!set_reg_id))
+		return;
+
+	l_debug("Trying to set country to %s", cc);
+}
+
+static void wiphy_setup_reg_domain(struct wiphy *wiphy)
+{
+	const struct l_settings *config = iwd_get_config();
+	const char *cc = l_settings_get_value(config, "General", "Country");
+
+	/*
+	 * At least do basic validation. If this fails force a GET_REG but do
+	 * not try setting the domain.
+	 */
+	if (cc) {
+		if (strlen(cc) != 2 || !l_ascii_isalpha(cc[0]) ||
+					!l_ascii_isalpha(cc[1])) {
+			l_error("Invalid setting [General].Country=%s", cc);
+			cc = NULL;
+		}
+	}
+
+	if (!cc || wiphy->self_managed) {
+		wiphy_get_reg_domain(wiphy->self_managed ? wiphy : NULL);
+		return;
+	}
+
+	wiphy_set_reg_domain(cc);
+}
+
 void wiphy_create_complete(struct wiphy *wiphy)
 {
 	wiphy_register(wiphy);
@@ -2133,7 +2206,7 @@ void wiphy_create_complete(struct wiphy *wiphy)
 
 	wiphy_set_station_capability_bits(wiphy);
 	wiphy_setup_rm_enabled_capabilities(wiphy);
-	wiphy_get_reg_domain(wiphy->self_managed ? wiphy : NULL);
+	wiphy_setup_reg_domain(wiphy);
 
 	wiphy_print_basic_info(wiphy);
 }
@@ -2538,6 +2611,11 @@ static void wiphy_exit(void)
 	if (get_reg_id) {
 		l_genl_family_cancel(nl80211, get_reg_id);
 		get_reg_id = 0;
+	}
+
+	if (set_reg_id) {
+		l_genl_family_cancel(nl80211, set_reg_id);
+		set_reg_id = 0;
 	}
 
 	l_queue_destroy(wiphy_list, wiphy_free);
