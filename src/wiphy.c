@@ -64,6 +64,7 @@ static struct l_hwdb *hwdb;
 static char **whitelist_filter;
 static char **blacklist_filter;
 static int mac_randomize_bytes = 6;
+static unsigned int get_reg_id;
 static char regdom_country[2];
 static uint32_t work_ids;
 static unsigned int wiphy_dump_id;
@@ -2076,7 +2077,10 @@ static void wiphy_get_reg_cb(struct l_genl_msg *msg, void *user_data)
 	uint32_t tmp;
 	bool global;
 
-	wiphy->get_reg_id = 0;
+	if (wiphy)
+		wiphy->get_reg_id = 0;
+	else
+		get_reg_id = 0;
 
 	/*
 	 * NL80211_CMD_GET_REG contains an NL80211_ATTR_WIPHY iff the wiphy
@@ -2091,16 +2095,28 @@ static void wiphy_get_reg_cb(struct l_genl_msg *msg, void *user_data)
 static void wiphy_get_reg_domain(struct wiphy *wiphy)
 {
 	struct l_genl_msg *msg;
+	unsigned int id;
+
+	/* Already doing a global dump */
+	if (!wiphy && get_reg_id)
+		return;
 
 	msg = l_genl_msg_new(NL80211_CMD_GET_REG);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_WIPHY, 4, &wiphy->id);
 
-	wiphy->get_reg_id = l_genl_family_send(nl80211, msg, wiphy_get_reg_cb,
-						wiphy, NULL);
-	if (!wiphy->get_reg_id) {
-		l_error("Error sending NL80211_CMD_GET_REG for %s", wiphy->name);
+	if (wiphy)
+		l_genl_msg_append_attr(msg, NL80211_ATTR_WIPHY, 4, &wiphy->id);
+
+	id = l_genl_family_send(nl80211, msg, wiphy_get_reg_cb, wiphy, NULL);
+	if (!id) {
+		l_error("Error sending NL80211_CMD_GET_REG for %s",
+				wiphy ? wiphy->name : "(global)");
 		l_genl_msg_unref(msg);
 	}
+
+	if (wiphy)
+		wiphy->get_reg_id = id;
+	else
+		get_reg_id = id;
 }
 
 void wiphy_create_complete(struct wiphy *wiphy)
@@ -2117,7 +2133,7 @@ void wiphy_create_complete(struct wiphy *wiphy)
 
 	wiphy_set_station_capability_bits(wiphy);
 	wiphy_setup_rm_enabled_capabilities(wiphy);
-	wiphy_get_reg_domain(wiphy);
+	wiphy_get_reg_domain(wiphy->self_managed ? wiphy : NULL);
 
 	wiphy_print_basic_info(wiphy);
 }
@@ -2517,6 +2533,11 @@ static void wiphy_exit(void)
 	if (wiphy_dump_id) {
 		l_genl_family_cancel(nl80211, wiphy_dump_id);
 		wiphy_dump_id = 0;
+	}
+
+	if (get_reg_id) {
+		l_genl_family_cancel(nl80211, get_reg_id);
+		get_reg_id = 0;
 	}
 
 	l_queue_destroy(wiphy_list, wiphy_free);
