@@ -152,7 +152,7 @@ jobs:
 
     - name: Tar files
       run: |
-        FILES="iwd ell cibase iwd-ci cache"
+        FILES="iwd ell cibase iwd-ci"
 
         if [ "${{ steps.cache-uml-kernel.outputs.cache-hit }}" == 'true' ]
         then
