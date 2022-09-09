@@ -44,8 +44,6 @@ class Test(unittest.TestCase):
         if pkt_loss:
             # Drop all data frames
             self.rule1.enabled = True
-            # Set the current BSS signal lower so we have roam candidates
-            self.rule2.enabled = True
             # Send 100 packets (to be dropped), should trigger beacon loss
             testutil.tx_packets(device.name, self.bss_hostapd[0].ifname, 100)
             device.wait_for_event('packet-loss-roam', timeout=30)
@@ -147,6 +145,9 @@ class Test(unittest.TestCase):
 
     def test_roam_packet_loss(self):
         wd = IWD(True)
+
+        # Set the current BSS signal lower so we have roam candidates
+        self.rule2.enabled = True
 
         self.bss_hostapd[0].set_value('wpa_key_mgmt', 'FT-PSK')
         self.bss_hostapd[0].set_value('ft_over_ds', '0')
