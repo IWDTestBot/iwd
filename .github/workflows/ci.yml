@@ -30,7 +30,7 @@ on:
         default: all
       kernel:
         description: Kernel version
-        default: '5.16'
+        default: '5.19'
       hostapd_version:
         description: Hostapd and wpa_supplicant version
         default: '09a281e52a25b5461c4b08d261f093181266a554'
@@ -74,14 +74,14 @@ jobs:
         elif [ ${{ github.event_name }} == 'repository_dispatch' ]
         then
           TESTS=all
-          KERNEL=5.16
+          KERNEL=5.19
           HOSTAPD_VERSION=09a281e52a25b5461c4b08d261f093181266a554
           ELL_REF=${{ github.event.client_payload.ref }}
           REF=$ELL_REF
           REPO=${{ github.event.client_payload.repo }}
         else
           TESTS=all
-          KERNEL=5.16
+          KERNEL=5.19
           HOSTAPD_VERSION=09a281e52a25b5461c4b08d261f093181266a554
           ELL_REF="refs/heads/workflow"
           REF="$GITHUB_REF"
