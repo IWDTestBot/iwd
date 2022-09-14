@@ -30,7 +30,7 @@ on:
         default: all
       kernel:
         description: Kernel version
-        default: '5.16'
+        default: '5.19'
       hostapd_version:
         description: Hostapd and wpa_supplicant version
         default: '09a281e52a25b5461c4b08d261f093181266a554'
