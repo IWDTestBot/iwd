@@ -2113,21 +2113,23 @@ static void station_fast_transition_cb(struct netdev *netdev,
 static void station_netdev_event(struct netdev *netdev, enum netdev_event event,
 					void *event_data, void *user_data);
 
-static void station_transition_reassociate(struct station *station,
+static int station_transition_reassociate(struct station *station,
 						struct scan_bss *bss,
 						struct handshake_state *new_hs)
 {
-	if (netdev_reassociate(station->netdev, bss, station->connected_bss,
+	int ret;
+
+	ret = netdev_reassociate(station->netdev, bss, station->connected_bss,
 				new_hs, station_netdev_event,
-				station_reassociate_cb, station) < 0) {
-		handshake_state_free(new_hs);
-		station_roam_failed(station);
-		return;
-	}
+				station_reassociate_cb, station);
+	if (ret < 0)
+		return ret;
 
 	station->connected_bss = bss;
 	station->preparing_roam = false;
 	station_enter_state(station, STATION_STATE_ROAMING);
+
+	return 0;
 }
 
 static bool bss_match_bssid(const void *a, const void *b)
@@ -2199,10 +2201,14 @@ static void station_preauthenticate_cb(struct netdev *netdev,
 		handshake_state_set_supplicant_ie(new_hs, rsne_buf);
 	}
 
-	station_transition_reassociate(station, bss, new_hs);
+	if (station_transition_reassociate(station, bss, new_hs) < 0) {
+		handshake_state_free(new_hs);
+		station_roam_failed(station);
+	}
 }
 
-static void station_transition_start(struct station *station)
+static bool station_try_next_transition(struct station *station,
+					struct scan_bss *bss)
 {
 	struct handshake_state *hs = netdev_get_handshake(station->netdev);
 	struct network *connected = station->connected_network;
@@ -2210,7 +2216,6 @@ static void station_transition_start(struct station *station)
 	struct handshake_state *new_hs;
 	struct ie_rsn_info cur_rsne, target_rsne;
 	int ret;
-	struct scan_bss *bss = l_queue_peek_head(station->roam_bss_list);
 
 	l_debug("%u, target %s", netdev_get_ifindex(station->netdev),
 			util_address_to_string(bss->addr));
@@ -2226,11 +2231,8 @@ static void station_transition_start(struct station *station)
 
 		/* Rebuild handshake RSN for target AP */
 		if (station_build_handshake_rsn(hs, station->wiphy,
-				station->connected_network, bss) < 0) {
-			l_error("rebuilding handshake rsne failed");
-			station_roam_failed(station);
-			return;
-		}
+				station->connected_network, bss) < 0)
+			return false;
 
 		/* Reset the vendor_ies in case they're different */
 		vendor_ies = network_info_get_extra_ies(info, bss, &iov_elems);
@@ -2243,29 +2245,23 @@ static void station_transition_start(struct station *station)
 			/* No action responses from this BSS, try over air */
 			if (ret == -ENOENT)
 				goto try_over_air;
-			else if (ret < 0) {
-				/*
-				 * If we are here FT-over-air will not work
-				 * either (identical checks) so try again later.
-				 */
-				station_roam_retry(station);
-				return;
-			}
+			else if (ret < 0)
+				return false;
+
+			station->connected_bss = bss;
+			station->preparing_roam = false;
+			station_enter_state(station, STATION_STATE_ROAMING);
+
+			return true;
 		} else {
 try_over_air:
 			if (netdev_fast_transition(station->netdev, bss,
 					station->connected_bss,
-					station_fast_transition_cb) < 0) {
-				station_roam_failed(station);
-				return;
-			}
+					station_fast_transition_cb) < 0)
+				return false;
+
+			return true;
 		}
-
-		station->connected_bss = bss;
-		station->preparing_roam = false;
-		station_enter_state(station, STATION_STATE_ROAMING);
-
-		return;
 	}
 
 	/* Non-FT transition */
@@ -2296,17 +2292,42 @@ try_over_air:
 		if (netdev_preauthenticate(station->netdev, bss,
 						station_preauthenticate_cb,
 						station) >= 0)
-			return;
+			return true;
 	}
 
 	new_hs = station_handshake_setup(station, connected, bss);
 	if (!new_hs) {
 		l_error("station_handshake_setup failed in reassociation");
-		station_roam_failed(station);
-		return;
+		return false;
 	}
 
-	station_transition_reassociate(station, bss, new_hs);
+	if (station_transition_reassociate(station, bss, new_hs) < 0) {
+		handshake_state_free(new_hs);
+		return false;
+	}
+
+	return true;
+}
+
+static void station_transition_start(struct station *station)
+{
+	struct scan_bss *bss;
+	bool roaming = false;
+
+	/*
+	 * For each failed attempt pop the BSS leaving the head of the queue
+	 * with the current roam candidate.
+	 */
+	while ((bss = l_queue_peek_head(station->roam_bss_list))) {
+		roaming = station_try_next_transition(station, bss);
+		if (roaming)
+			break;
+
+		l_queue_pop_head(station->roam_bss_list);
+	}
+
+	if (!roaming)
+		station_roam_failed(station);
 }
 
 static void station_roam_scan_triggered(int err, void *user_data)
