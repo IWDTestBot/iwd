@@ -4578,6 +4578,9 @@ int netdev_fast_transition_over_ds(struct netdev *netdev,
 			l_get_le16(target_bss->mde))
 		return -EINVAL;
 
+	if (!ft_sm_can_associate(netdev->ft_sm, target_bss))
+		return -ENOENT;
+
 	netdev->connect_cb = cb;
 
 	prepare_ft(netdev, target_bss->addr, target_bss->frequency);
