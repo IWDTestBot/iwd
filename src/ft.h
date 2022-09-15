@@ -41,6 +41,8 @@ int __ft_rx_associate(uint32_t ifindex, const uint8_t *frame,
 struct ft_sm *ft_sm_new(struct handshake_state *hs);
 void ft_sm_free(struct ft_sm *sm);
 
+bool ft_sm_can_associate(struct ft_sm *sm, const struct scan_bss *target);
+
 int ft_action(struct ft_sm *sm, const struct scan_bss *target);
 int ft_associate(struct ft_sm *sm, const uint8_t *addr);
 int ft_authenticate(struct ft_sm *sm, const struct scan_bss *target,

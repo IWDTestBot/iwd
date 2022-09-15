@@ -1119,6 +1119,19 @@ int ft_associate(struct ft_sm *sm, const uint8_t *addr)
 	return ft_tx_reassociate(sm);
 }
 
+bool ft_sm_can_associate(struct ft_sm *sm, const struct scan_bss *target)
+{
+	struct ft_info *info;
+	struct ft_info_finder finder;
+
+	finder.spa = sm->hs->spa;
+	finder.aa = target->addr;
+
+	info = l_queue_find(sm->ft_auths, match_ft_info, &finder);
+
+	return (info && info->parsed);
+}
+
 static int ft_init(void)
 {
 	sm_list = l_queue_new();
