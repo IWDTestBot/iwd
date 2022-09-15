@@ -4525,19 +4525,17 @@ static void netdev_ft_authenticate_cb(int err, const uint8_t *addr,
 {
 	struct netdev *netdev = user_data;
 
+	if (netdev->event_filter)
+		netdev->event_filter(netdev, NETDEV_EVENT_FT_AUTHENTICATE,
+					&err, netdev->user_data);
+
 	if (err < 0)
-		goto ft_failed;
+		return;
 
 	prepare_ft(netdev, addr, frequency);
 
 	wiphy_radio_work_insert(netdev->wiphy, &netdev->work,
 				WIPHY_WORK_PRIORITY_CONNECT, &ft_work_ops);
-
-	return;
-
-ft_failed:
-	netdev_connect_failed(netdev, NETDEV_RESULT_AUTHENTICATION_FAILED,
-					MMPDU_STATUS_CODE_UNSPECIFIED);
 }
 
 int netdev_fast_transition(struct netdev *netdev,

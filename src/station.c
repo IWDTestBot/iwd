@@ -3134,6 +3134,21 @@ static void station_packets_lost(struct station *station, uint32_t num_pkts)
 	station_start_roam(station);
 }
 
+static void station_ft_authenticate_event(struct station *station, int err)
+{
+	struct scan_bss *target = l_queue_pop_head(station->roam_bss_list);
+
+	if (err) {
+		/* Failed target popped, continue trying more targets */
+		station_transition_start(station);
+		return;
+	}
+
+	station->connected_bss = target;
+	station->preparing_roam = false;
+	station_enter_state(station, STATION_STATE_ROAMING);
+}
+
 static void station_netdev_event(struct netdev *netdev, enum netdev_event event,
 					void *event_data, void *user_data)
 {
@@ -3171,6 +3186,9 @@ static void station_netdev_event(struct netdev *netdev, enum netdev_event event,
 		break;
 	case NETDEV_EVENT_PACKET_LOSS_NOTIFY:
 		station_packets_lost(station, l_get_u32(event_data));
+		break;
+	case NETDEV_EVENT_FT_AUTHENTICATE:
+		station_ft_authenticate_event(station, *((int *)event_data));
 		break;
 	}
 }
