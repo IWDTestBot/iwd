@@ -35,6 +35,9 @@ typedef int (*ft_get_oci)(void *user_data);
 
 typedef void (*ft_ds_free_func_t)(void *user_data);
 
+typedef void (*ft_authenticate_cb_t)(int err, const uint8_t *addr,
+					uint32_t freq, void *user_data);
+
 struct ft_ds_info {
 	uint8_t spa[6];
 	uint8_t aa[6];
@@ -87,3 +90,5 @@ void ft_sm_free(struct ft_sm *sm);
 
 int ft_action(struct ft_sm *sm, const struct scan_bss *target);
 int ft_associate(struct ft_sm *sm, const uint8_t *addr);
+int ft_authenticate(struct ft_sm *sm, const struct scan_bss *target,
+			ft_authenticate_cb_t cb, void *user_data);

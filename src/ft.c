@@ -50,6 +50,7 @@ struct ft_info {
 	uint8_t mde[3];
 	uint8_t *fte;
 	uint8_t *authenticator_ie;
+	uint32_t frequency;
 
 	struct ie_ft_info ft_info;
 
@@ -69,6 +70,7 @@ struct ft_sm {
 	ft_tx_associate_func_t tx_assoc;
 	ft_get_oci get_oci;
 
+	ft_authenticate_cb_t auth_cb;
 	void *user_data;
 
 	bool over_ds : 1;
@@ -1082,6 +1084,8 @@ static struct ft_info *ft_info_new(struct handshake_state *hs,
 	memcpy(info->aa, target_bss->addr, 6);
 	memcpy(info->mde, target_bss->mde, sizeof(info->mde));
 
+	info->frequency = target_bss->frequency;
+
 	if (target_bss->rsne)
 		info->authenticator_ie = l_memdup(target_bss->rsne,
 						target_bss->rsne[1] + 2);
@@ -1189,6 +1193,136 @@ int ft_action(struct ft_sm *sm, const struct scan_bss *target)
 	ret = tx_action(sm->hs->ifindex, sm->hs->aa, iov, 2);
 	if (ret < 0)
 		goto failed;
+
+	l_queue_push_tail(sm->ft_auths, info);
+
+	return 0;
+
+failed:
+	l_free(info);
+	return ret;
+}
+
+static void ft_authenticate_cb(int err, void *user_data)
+{
+	if (err < 0)
+		l_debug("Failed to send FT-Authenticate");
+}
+
+static void ft_authenticate_destroy(void *user_data)
+{
+	struct ft_sm *sm = user_data;
+	struct ft_info *info = l_queue_peek_head(sm->ft_auths);
+
+	if (L_WARN_ON(!info))
+		return;
+
+	if (!info->parsed)
+		goto failed;
+
+	sm->auth_cb(0, info->aa, info->frequency, sm->user_data);
+
+	return;
+
+failed:
+	l_queue_pop_head(sm->ft_auths);
+	ft_info_destroy(info);
+
+	sm->auth_cb(-EINVAL, info->aa, info->frequency, sm->user_data);
+}
+
+static void ft_authenticate_response_cb(const struct mmpdu_header *hdr,
+					const void *body, size_t body_len,
+					int rssi, void *user_data)
+{
+	struct ft_sm *sm = user_data;
+	struct ft_info *info = l_queue_peek_head(sm->ft_auths);
+	uint16_t status;
+	const uint8_t *ies;
+	size_t ies_len;
+
+	if (!ft_parse_authentication_resp_frame((const uint8_t *)hdr,
+					mmpdu_header_len(hdr) + body_len,
+					info->spa, info->aa, info->aa, 2,
+					&status, &ies, &ies_len))
+		return;
+
+	if (status != 0)
+		return;
+
+	if (!ft_parse_ies(info, sm->hs, ies, ies_len))
+		return;
+
+	info->parsed = true;
+
+	return;
+}
+
+static const struct frame_xchg_prefix ft_prefix = {
+	.frame_type = 0x0000 | (MPDU_MANAGEMENT_SUBTYPE_AUTHENTICATION << 4),
+	.data = (uint8_t []) { 0x02, 0x00 },
+	.len = 2,
+};
+
+static bool ft_send_authenticate(struct ft_sm *sm, struct ft_info *info)
+{
+	uint64_t wdev_id = netdev_get_wdev_id(netdev_find(sm->hs->ifindex));
+	uint8_t header[28 + sizeof(struct mmpdu_authentication)];
+	uint8_t ies[256];
+	size_t len;
+	struct iovec iov[3];
+	struct mmpdu_header *mpdu = (struct mmpdu_header *) header;
+	struct mmpdu_authentication *auth;
+	struct handshake_state *hs = sm->hs;
+
+	memset(mpdu, 0, sizeof(*mpdu));
+
+	/* Header */
+	mpdu->fc.protocol_version = 0;
+	mpdu->fc.type = MPDU_TYPE_MANAGEMENT;
+	mpdu->fc.subtype = MPDU_MANAGEMENT_SUBTYPE_AUTHENTICATION;
+	memcpy(mpdu->address_1, info->aa, 6);
+	memcpy(mpdu->address_2, info->spa, 6);
+	memcpy(mpdu->address_3, info->aa, 6);
+
+	/* Authentication body */
+	auth = (void *) mmpdu_body(mpdu);
+	auth->algorithm = L_CPU_TO_LE16(MMPDU_AUTH_ALGO_FT);
+	auth->transaction_sequence = L_CPU_TO_LE16(1);
+	auth->status = L_CPU_TO_LE16(0);
+
+	iov[0].iov_base = mpdu;
+	iov[0].iov_len = mmpdu_header_len(mpdu) +
+				sizeof(struct mmpdu_authentication);
+
+	if (!ft_build_authenticate_ies(hs, info->snonce, ies, &len))
+		return false;
+
+	iov[1].iov_base = ies;
+	iov[1].iov_len = len;
+
+	iov[2].iov_base = NULL;
+
+	return frame_xchg_start(wdev_id, iov, info->frequency, 0,
+				300, 0, FRAME_GROUP_FT,
+				ft_authenticate_cb, sm,
+				ft_authenticate_destroy, &ft_prefix,
+				ft_authenticate_response_cb, NULL) != 0;
+}
+
+int ft_authenticate(struct ft_sm *sm, const struct scan_bss *target,
+			ft_authenticate_cb_t cb, void *user_data)
+{
+	struct ft_info *info = ft_info_new(sm->hs, target);
+	int ret = -EINVAL;
+
+	if (!ft_send_authenticate(sm, info))
+		goto failed;
+
+	l_queue_clear(sm->ft_auths, ft_info_destroy);
+
+	sm->auth_cb = cb;
+	sm->user_data = user_data;
 
 	l_queue_push_tail(sm->ft_auths, info);
 
