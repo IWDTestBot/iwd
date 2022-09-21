@@ -37,6 +37,8 @@
 #include "src/util.h"
 #include "src/netdev.h"
 #include "src/module.h"
+#include "src/offchannel.h"
+#include "src/wiphy.h"
 
 static ft_tx_frame_func_t tx_frame = NULL;
 static ft_tx_associate_func_t tx_assoc = NULL;
@@ -52,6 +54,7 @@ struct ft_info {
 	uint8_t *authenticator_ie;
 	uint8_t prev_bssid[6];
 	uint32_t frequency;
+	uint32_t offchannel_id;
 
 	struct ie_ft_info ft_info;
 
@@ -1168,6 +1171,92 @@ int ft_action(uint32_t ifindex, uint32_t freq, const struct scan_bss *target)
 failed:
 	l_free(info);
 	return ret;
+}
+
+void __ft_rx_authenticate(uint32_t ifindex, const uint8_t *frame,
+				size_t frame_len)
+{
+	struct netdev *netdev = netdev_find(ifindex);
+	struct handshake_state *hs = netdev_get_handshake(netdev);
+	struct ft_info *info;
+	uint16_t status;
+	const uint8_t *ies;
+	size_t ies_len;
+
+	info = ft_info_find(ifindex, NULL);
+	if (!info)
+		return;
+
+	if (!ft_parse_authentication_resp_frame(frame, frame_len,
+					info->spa, info->aa, info->aa, 2,
+					&status, &ies, &ies_len))
+		return;
+
+	if (status != 0)
+		return;
+
+	if (!ft_parse_ies(info, hs, ies, ies_len))
+		return;
+
+	info->parsed = true;
+
+	return;
+}
+
+static void ft_send_authenticate(void *user_data)
+{
+	struct ft_info *info = user_data;
+	struct netdev *netdev = netdev_find(info->ifindex);
+	struct handshake_state *hs = netdev_get_handshake(netdev);
+	uint8_t ies[256];
+	size_t len;
+	struct iovec iov[2];
+	struct mmpdu_authentication auth;
+
+	/* Authentication body */
+	auth.algorithm = L_CPU_TO_LE16(MMPDU_AUTH_ALGO_FT);
+	auth.transaction_sequence = L_CPU_TO_LE16(1);
+	auth.status = L_CPU_TO_LE16(0);
+
+	iov[0].iov_base = &auth;
+	iov[0].iov_len = sizeof(struct mmpdu_authentication);
+
+	if (!ft_build_authenticate_ies(hs, hs->supplicant_ocvc, info->snonce,
+					ies, &len))
+		return;
+
+	iov[1].iov_base = ies;
+	iov[1].iov_len = len;
+
+	tx_frame(info->ifindex, 0x00b0, info->frequency, info->aa, iov, 2);
+}
+
+static void ft_authenticate_destroy(int error, void *user_data)
+{
+	if (error == 0)
+		return;
+
+	l_debug("Error in authentication offchannel (%d)", error);
+
+	l_queue_clear(info_list, ft_info_destroy);
+}
+
+int ft_authenticate(uint32_t ifindex, const struct scan_bss *target)
+{
+	struct netdev *netdev = netdev_find(ifindex);
+	struct handshake_state *hs = netdev_get_handshake(netdev);
+	struct ft_info *info = ft_info_new(hs, target);
+
+	info->offchannel_id = offchannel_start(netdev_get_wdev_id(netdev),
+						WIPHY_WORK_PRIORITY_FT,
+						target->frequency,
+						200, ft_send_authenticate, info,
+						ft_authenticate_destroy);
+	l_queue_clear(info_list, ft_info_destroy);
+
+	l_queue_push_tail(info_list, info);
+
+	return 0;
 }
 
 int ft_associate(uint32_t ifindex, const uint8_t *addr)
