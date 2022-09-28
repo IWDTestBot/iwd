@@ -50,9 +50,6 @@ class Test(unittest.TestCase):
         else:
             device.roam(self.bss_hostapd[1].bssid)
 
-        condition = 'obj.state == DeviceState.roaming'
-        wd.wait_for_object_condition(device, condition)
-
         # Check that iwd is on BSS 1 once out of roaming state and doesn't
         # go through 'disconnected', 'autoconnect', 'connecting' in between
         from_condition = 'obj.state == DeviceState.roaming'
@@ -73,9 +70,6 @@ class Test(unittest.TestCase):
         self.bss_hostapd[1].rekey(device.address)
 
         device.roam(self.bss_hostapd[0].bssid)
-
-        condition = 'obj.state == DeviceState.roaming'
-        wd.wait_for_object_condition(device, condition)
 
         # Check that iwd is on BSS 0 once out of roaming state and doesn't
         # go through 'disconnected', 'autoconnect', 'connecting' in between
