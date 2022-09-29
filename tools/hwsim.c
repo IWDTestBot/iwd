@@ -2825,6 +2825,11 @@ error:
 	l_main_quit();
 }
 
+static void unicast_destroy(void *user_data)
+{
+	l_info("MAC80211_HWSIM socket destroyed");
+}
+
 static void hwsim_ready(void)
 {
 	struct l_genl_msg *msg;
@@ -2917,7 +2922,8 @@ static void hwsim_ready(void)
 		}
 
 		if (!l_genl_add_unicast_watch(genl, "MAC80211_HWSIM",
-						unicast_handler, NULL, NULL)) {
+						unicast_handler, NULL,
+						unicast_destroy)) {
 			l_error("Failed to set unicast handler");
 			goto error;
 		}
