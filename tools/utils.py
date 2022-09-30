@@ -512,6 +512,7 @@ class Namespace:
 				else:
 					return
 
+			sleep(0.1)
 			context.iteration(may_block=True)
 
 	def __str__(self):
