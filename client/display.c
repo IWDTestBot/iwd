@@ -30,6 +30,7 @@
 #include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <wchar.h>
 
 #include <readline/history.h>
 #include <readline/readline.h>
@@ -401,18 +402,27 @@ static char* next_line(char *s, unsigned int *max, char **color_out)
 	unsigned int i;
 	int last_space = -1;
 	int last_color = -1;
+	int s_len = strlen(s);
 
 	/* Find the last space before 'max', as well as any color */
-	for (i = 0; i <= *max && s[i] != '\0'; i++) {
+	for (i = 0; i <= *max && i != s_len; i++) {
 		if (s[i] == ' ')
 			last_space = i;
 		else if (s[i] == 0x1b) {
 			/* color escape won't count for column width */
 			*max += color_end(s + i);
 			last_color = i;
-		/* Add width for non-codepoint UTF-8 bytes */
-		} else if (((uint8_t)s[i] >> 6) == 2)
-			*max += 1;
+		/* Non-ASCII */
+		} else if (s[i] & 0x80) {
+			wchar_t w;
+			int w_mblen = l_utf8_get_codepoint(&s[i], s_len - i, &w);
+			if (w_mblen > 0) {
+				/* Compensate max bytes */
+				*max += w_mblen - wcwidth(w);
+				/* Skip other bytes of this codepoint */
+				i += w_mblen - 1;
+			}
+		}
 	}
 
 	/* Reached the end of the string within the column bounds */
