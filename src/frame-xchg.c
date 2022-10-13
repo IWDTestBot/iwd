@@ -316,7 +316,7 @@ static bool frame_watch_group_io_read(struct l_io *io, void *user_data)
 	unsigned char control[32];
 	ssize_t bytes_read;
 	struct nlmsghdr *nlmsg;
-	size_t nlmsg_len;
+	int nlmsg_len;
 	uint32_t nlmsg_group = 0;
 
 	memset(&iov, 0, sizeof(iov));
