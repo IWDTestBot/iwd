@@ -15,7 +15,7 @@ name: IWD CI
 #          as test-runner
 #       * 'musl' uses an alpine docker image to test the build on musl-libc
 #
-#     Both CI's use the 'iwd-ci-v2' repo which calls into 'ci-docker'. The
+#     Both CI's use the 'iwd-ci' repo which calls into 'ci-docker'. The
 #     'ci-docker' action essentially re-implements the native Github docker
 #     action but allows arbitrary options to be passed in (e.g. privileged or
 #     mounting non-standard directories)
@@ -147,7 +147,7 @@ jobs:
     - name: Checkout CI
       uses: actions/checkout@v3
       with:
-        repository: IWDTestBot/iwd-ci-v2
+        repository: IWDTestBot/iwd-ci
         path: iwd-ci
 
     - name: Tar files
@@ -196,7 +196,7 @@ jobs:
         sudo modprobe pkcs8_key_parser
 
     - name: Alpine CI
-      uses: IWDTestBot/iwd-ci-v2@master
+      uses: IWDTestBot/iwd-ci@master
       with:
         ref_branch: ${{ needs.setup.outputs.ref_branch }}
         repository: ${{ needs.setup.outputs.repository }}
@@ -249,7 +249,7 @@ jobs:
         echo ${{ needs.setup.outputs.repository }}
 
     - name: Run CI
-      uses: IWDTestBot/iwd-ci-v2@master
+      uses: IWDTestBot/iwd-ci@master
       with:
         ref_branch: ${{ needs.setup.outputs.ref_branch }}
         repository: ${{ needs.setup.outputs.repository }}
