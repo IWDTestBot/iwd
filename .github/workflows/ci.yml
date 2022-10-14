@@ -92,12 +92,12 @@ jobs:
         # Now that the inputs are sorted, set the output of this step to these
         # values so future jobs can refer to them.
         #
-        echo ::set-output name=tests::$TESTS
-        echo ::set-output name=kernel::$KERNEL
-        echo ::set-output name=hostapd_version::$HOSTAPD_VERSION
-        echo ::set-output name=ell_ref::$ELL_REF
-        echo ::set-output name=repository::$REPO
-        echo ::set-output name=ref_branch::$REF
+        echo "tests=$TESTS" >> $GITHUB_OUTPUT
+        echo "kernel=$KERNEL" >> $GITHUB_OUTPUT
+        echo "hostapd_version=$HOSTAPD_VERSION" >> $GITHUB_OUTPUT
+        echo "ell_ref=$ELL_REF" >> $GITHUB_OUTPUT
+        echo "repository=$REPO" >> $GITHUB_OUTPUT
+        echo "ref_branch=$REF" >> $GITHUB_OUTPUT
 
     - name: Cache UML Kernel
       id: cache-uml-kernel
