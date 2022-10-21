@@ -1167,7 +1167,7 @@ build_ie:
 	 * also indicates support.
 	 */
 	if (wiphy_supports_ext_key_id(wiphy) && bss_info.extended_key_id &&
-			info.pairwise_ciphers == IE_RSN_CIPHER_SUITE_CCMP)
+			IE_CIPHER_IS_GCMP_CCMP(info.pairwise_ciphers))
 		info.extended_key_id = true;
 
 	/* RSN takes priority */
@@ -4507,6 +4507,21 @@ static void station_get_diagnostic_cb(
 	dbus_append_dict_basic(builder, "Security", 's',
 				diagnostic_akm_suite_to_security(hs->akm_suite,
 								hs->wpa_ie));
+
+	if (hs->pairwise_cipher) {
+		const char *str;
+
+		if (hs->pairwise_cipher ==
+				IE_RSN_CIPHER_SUITE_USE_GROUP_CIPHER)
+			str = ie_rsn_cipher_suite_to_string(hs->group_cipher);
+		else
+			str = ie_rsn_cipher_suite_to_string(
+							hs->pairwise_cipher);
+
+		if (str)
+			dbus_append_dict_basic(builder, "PairwiseCipher",
+						's', str);
+	}
 
 	diagnostic_info_to_dict(info, builder);
 
