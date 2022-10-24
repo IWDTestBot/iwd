@@ -3303,7 +3303,15 @@ struct ap_state *ap_start(struct netdev *netdev, struct l_settings *config,
 	err = -EINVAL;
 
 	/* TODO: Add all ciphers supported by wiphy */
-	ap->ciphers = wiphy_select_cipher(wiphy, 0xffff);
+	ap->ciphers = wiphy_select_cipher(wiphy,
+				~(IE_RSN_CIPHER_SUITE_USE_GROUP_CIPHER |
+				IE_RSN_CIPHER_SUITE_TKIP));
+	if (!ap->ciphers) {
+		l_error("Hardware does not support required pairwise ciphers!");
+		err = -ENOTSUP;
+		goto error;
+	}
+
 	ap->group_cipher = wiphy_select_cipher(wiphy, 0xffff);
 	ap->beacon_interval = 100;
 	ap->networks = l_queue_new();
