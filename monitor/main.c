@@ -586,7 +586,7 @@ static int process_pcap(struct pcap *pcap, uint16_t id)
 		return EXIT_FAILURE;
 	}
 
-	nlmon = nlmon_create(id);
+	nlmon = nlmon_create(id, true);
 
 	while (pcap_read(pcap, &tv, buf, snaplen, &len, &real_len)) {
 		uint16_t arphrd_type;
