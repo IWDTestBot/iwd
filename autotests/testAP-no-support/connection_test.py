@@ -41,9 +41,19 @@ class Test(unittest.TestCase):
 
         wd.unregister_psk_agent(psk_agent)
 
+    def test_no_ccmp_support(self):
+        wd = IWD(True)
+
+        dev = wd.list_devices(2)[1]
+
+        # Should fail to start since the radio doesn't support CCMP but the
+        # profile only lists CCMP as allowed.
+        with self.assertRaises(iwd.NotSupportedEx):
+            dev.start_ap('TestAP2')
+
     @classmethod
     def setUpClass(cls):
-        pass
+        IWD.copy_to_ap('TestAP2.ap')
 
     @classmethod
     def tearDownClass(cls):
