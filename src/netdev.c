@@ -1635,7 +1635,7 @@ static void netdev_set_gtk(struct handshake_state *hs, uint16_t key_index,
 
 	nhs->gtk_installed = false;
 
-	l_debug("%d", netdev->index);
+	l_debug("ifindex=%d key_idx=%u", netdev->index, key_index);
 
 	if (crypto_cipher_key_len(cipher) != gtk_len) {
 		l_error("Unexpected key length: %d", gtk_len);
@@ -1643,7 +1643,7 @@ static void netdev_set_gtk(struct handshake_state *hs, uint16_t key_index,
 		return;
 	}
 
-	if (!netdev_copy_tk(gtk_buf, gtk, cipher, false)) {
+	if (!netdev_copy_tk(gtk_buf, gtk, cipher, hs->authenticator)) {
 		netdev_setting_keys_failed(nhs, -ENOENT);
 		return;
 	}
@@ -1680,7 +1680,7 @@ static void netdev_set_igtk(struct handshake_state *hs, uint16_t key_index,
 
 	nhs->igtk_installed = false;
 
-	l_debug("%d", netdev->index);
+	l_debug("ifindex=%d key_idx=%u", netdev->index, key_index);
 
 	if (crypto_cipher_key_len(cipher) != igtk_len) {
 		l_error("Unexpected key length: %d", igtk_len);
@@ -2054,10 +2054,10 @@ static void netdev_set_tk(struct handshake_state *hs, uint8_t key_index,
 		return;
 	}
 
-	l_debug("%d", netdev->index);
+	l_debug("ifindex=%d key_idx=%u", netdev->index, key_index);
 
 	err = -ENOENT;
-	if (!netdev_copy_tk(tk_buf, tk, cipher, false))
+	if (!netdev_copy_tk(tk_buf, tk, cipher, hs->authenticator))
 		goto invalid_key;
 
 	msg = netdev_build_cmd_new_key_pairwise(netdev, cipher, addr, tk_buf,
@@ -2091,7 +2091,7 @@ static void netdev_set_ext_tk(struct handshake_state *hs, uint8_t key_idx,
 				L_BE16_TO_CPU(step4->header.packet_len);
 
 	err = -ENOENT;
-	if (!netdev_copy_tk(tk_buf, tk, cipher, false))
+	if (!netdev_copy_tk(tk_buf, tk, cipher, hs->authenticator))
 		goto error;
 
 	msg = netdev_build_cmd_new_rx_key_pairwise(netdev, cipher, addr, tk_buf,
@@ -5174,6 +5174,20 @@ static void netdev_channel_switch_event(struct l_genl_msg *msg,
 				&netdev->frequency, netdev->user_data);
 }
 
+static void netdev_michael_mic_failure(struct l_genl_msg *msg,
+					struct netdev *netdev)
+{
+	uint8_t idx;
+	uint32_t type;
+
+	if (nl80211_parse_attrs(msg, NL80211_ATTR_KEY_IDX, &idx,
+				NL80211_ATTR_KEY_TYPE, &type,
+				NL80211_ATTR_UNSPEC) < 0)
+		return;
+
+	l_debug("ifindex=%u key_idx=%u type=%u", netdev->index, idx, type);
+}
+
 static void netdev_mlme_notify(struct l_genl_msg *msg, void *user_data)
 {
 	struct netdev *netdev = NULL;
@@ -5223,6 +5237,9 @@ static void netdev_mlme_notify(struct l_genl_msg *msg, void *user_data)
 		break;
 	case NL80211_CMD_DEL_STATION:
 		netdev_station_event(msg, netdev, false);
+		break;
+	case NL80211_CMD_MICHAEL_MIC_FAILURE:
+		netdev_michael_mic_failure(msg, netdev);
 		break;
 	}
 }

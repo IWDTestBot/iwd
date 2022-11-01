@@ -1234,6 +1234,8 @@ static void p2p_group_start(struct p2p_device *dev)
 		((uint64_t) pdt->oui[2] << 24) |
 		((uint64_t) pdt->oui_type << 16) |
 		pdt->subcategory;
+	char *ciphers[] = { "TKIP", "CCMP", NULL };
+	uint16_t cipher;
 
 	l_settings_set_string(config, "General", "SSID", dev->go_group_id.ssid);
 	l_settings_set_uint(config, "General", "Channel", dev->listen_channel);
@@ -1272,6 +1274,19 @@ static void p2p_group_start(struct p2p_device *dev)
 
 	/* Enable netconfig, set maximum usable DHCP lease time */
 	l_settings_set_uint(config, "IPv4", "LeaseTime", 0x7fffffff);
+
+	l_settings_set_string_list(config, "Security", "PairwiseCiphers",
+					ciphers, ',');
+
+	/* TODO: P2P only plays nice with CCMP or TKIP ciphers currently */
+	cipher = wiphy_select_cipher(dev->wiphy, IE_RSN_CIPHER_SUITE_TKIP |
+						IE_RSN_CIPHER_SUITE_CCMP);
+	if (cipher == IE_RSN_CIPHER_SUITE_CCMP)
+		l_settings_set_string(config, "Security", "GroupCipher",
+					"CCMP");
+	else
+		l_settings_set_string(config, "Security", "GroupCipher",
+					"TKIP");
 
 	dev->capability.group_caps |= P2P_GROUP_CAP_GO;
 	dev->capability.group_caps |= P2P_GROUP_CAP_GROUP_FORMATION;
