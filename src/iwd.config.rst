@@ -249,6 +249,25 @@ The group ``[Network]`` contains network configuration related settings.
        If ``none`` is specified, then DNS and domain name information is
        ignored.
 
+   * - MulticastDNS
+     - Values: true, false, resolve
+
+       When ``NameResolvingService`` is set to ``systemd``, **iwd** can tell
+       **systemd-resolved** to enable multicast DNS for a given interface.
+       This setting configures the default for all the interfaces.
+
+       If ``EnableNetworkConfiguration`` is enabled and no other network
+       manager is configured, mDNS will be completely governed by this
+       option, assuming that MulticastDNS is enabled in ``resolved.conf``.
+
+       Note that individual network profiles can override this global value;
+       also see ``man 5 iwd.network``.
+
+       When no value is set, systemd-resolved's per-link setting will remain
+       untouched.
+
+       See ``man 5 resolved.conf`` for details.
+
    * - RoutePriorityOffset
      - Values: uint32 value (default: **300**)
 

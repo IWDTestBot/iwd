@@ -330,8 +330,8 @@ file.
      - Values: true, false, resolve
 
        Configures multicast DNS for this network. If not specified,
-       systemd-resolved's default value will remain untouched.
-       See ``man 5 systemd.network`` for details.
+       the global iwd default will be used instead.
+       See ``man 5 iwd.config`` for details.
 
        Only applies when ``NameResolvingService=systemd``.
 
