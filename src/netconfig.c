@@ -56,6 +56,7 @@
  */
 static uint32_t ROUTE_PRIORITY_OFFSET;
 static bool ipv6_enabled;
+static char *mdns_global;
 
 static void do_debug(const char *str, void *user_data)
 {
@@ -396,13 +397,16 @@ send_hostname:
 	}
 
 mdns:
-	if (l_settings_has_key(active_settings, "Network", "MulticastDNS") &&
-			!(mdns = l_settings_get_string(active_settings,
-							"Network",
-							"MulticastDNS"))) {
-		l_error("netconfig: Can't load Network.MulticastDNS");
-		success = false;
-	}
+	/* If the networks has this set take that over the global */
+	if (l_settings_has_key(active_settings, "Network", "MulticastDNS")) {
+		mdns = l_settings_get_string(active_settings, "Network",
+							"MulticastDNS");
+		if (!mdns) {
+			l_error("netconfig: Can't load Network.MulticastDNS");
+			success = false;
+		}
+	} else if (mdns_global)
+		mdns = l_strdup(mdns_global);
 
 	if (mdns && !L_IN_STRSET(mdns, "true", "false", "resolve")) {
 		l_error("netconfig: Bad Network.MulticastDNS value '%s'", mdns);
@@ -753,11 +757,15 @@ static int netconfig_init(void)
 					&ipv6_enabled))
 		ipv6_enabled = false;
 
+	mdns_global = l_settings_get_string(iwd_get_config(), "Network",
+						"MulticastDNS");
+
 	return 0;
 }
 
 static void netconfig_exit(void)
 {
+	l_free(mdns_global);
 }
 
 IWD_MODULE(netconfig, netconfig_init, netconfig_exit)
