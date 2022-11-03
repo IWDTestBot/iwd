@@ -3666,6 +3666,28 @@ bool ap_push_button(struct ap_state *ap)
 	return true;
 }
 
+static void ap_properties_changed(struct ap_if_data *ap_if)
+{
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(ap_if->netdev),
+				IWD_AP_INTERFACE, "Started");
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(ap_if->netdev),
+				IWD_AP_INTERFACE, "Name");
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(ap_if->netdev),
+				IWD_AP_INTERFACE, "Frequency");
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(ap_if->netdev),
+				IWD_AP_INTERFACE, "PairwiseCiphers");
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(ap_if->netdev),
+				IWD_AP_INTERFACE, "GroupCipher");
+	l_dbus_property_changed(dbus_get_bus(),
+				netdev_get_path(ap_if->netdev),
+				IWD_AP_INTERFACE, "Scanning");
+}
+
 struct ap_if_data {
 	struct netdev *netdev;
 	struct ap_state *ap;
@@ -3703,21 +3725,8 @@ static void ap_if_event_func(enum ap_event_type type, const void *event_data,
 
 		reply = l_dbus_message_new_method_return(ap_if->pending);
 		dbus_pending_reply(&ap_if->pending, reply);
-		l_dbus_property_changed(dbus_get_bus(),
-					netdev_get_path(ap_if->netdev),
-					IWD_AP_INTERFACE, "Started");
-		l_dbus_property_changed(dbus_get_bus(),
-					netdev_get_path(ap_if->netdev),
-					IWD_AP_INTERFACE, "Name");
-		l_dbus_property_changed(dbus_get_bus(),
-					netdev_get_path(ap_if->netdev),
-					IWD_AP_INTERFACE, "Frequency");
-		l_dbus_property_changed(dbus_get_bus(),
-					netdev_get_path(ap_if->netdev),
-					IWD_AP_INTERFACE, "PairwiseCiphers");
-		l_dbus_property_changed(dbus_get_bus(),
-					netdev_get_path(ap_if->netdev),
-					IWD_AP_INTERFACE, "GroupCipher");
+
+		ap_properties_changed(ap_if);
 
 		l_rtnl_set_linkmode_and_operstate(rtnl,
 					netdev_get_ifindex(ap_if->netdev),
@@ -3730,21 +3739,7 @@ static void ap_if_event_func(enum ap_event_type type, const void *event_data,
 						netdev_get_path(ap_if->netdev),
 						IWD_AP_DIAGNOSTIC_INTERFACE);
 
-		l_dbus_property_changed(dbus_get_bus(),
-					netdev_get_path(ap_if->netdev),
-					IWD_AP_INTERFACE, "Started");
-		l_dbus_property_changed(dbus_get_bus(),
-					netdev_get_path(ap_if->netdev),
-					IWD_AP_INTERFACE, "Name");
-		l_dbus_property_changed(dbus_get_bus(),
-					netdev_get_path(ap_if->netdev),
-					IWD_AP_INTERFACE, "Frequency");
-		l_dbus_property_changed(dbus_get_bus(),
-					netdev_get_path(ap_if->netdev),
-					IWD_AP_INTERFACE, "PairwiseCiphers");
-		l_dbus_property_changed(dbus_get_bus(),
-					netdev_get_path(ap_if->netdev),
-					IWD_AP_INTERFACE, "GroupCipher");
+		ap_properties_changed(ap_if);
 
 		l_rtnl_set_linkmode_and_operstate(rtnl,
 					netdev_get_ifindex(ap_if->netdev),
