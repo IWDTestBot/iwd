@@ -4933,13 +4933,12 @@ static void netdev_station_event(struct l_genl_msg *msg,
 					struct netdev *netdev, bool added)
 {
 	struct l_genl_attr attr;
+	struct l_genl_attr nested;
 	uint16_t type;
 	uint16_t len;
 	const void *data;
 	const uint8_t *mac = NULL;
-
-	if (netdev_get_iftype(netdev) != NETDEV_IFTYPE_ADHOC)
-		return;
+	uint32_t connected_time = 0;
 
 	if (!l_genl_attr_init(&attr, msg))
 		return;
@@ -4949,6 +4948,22 @@ static void netdev_station_event(struct l_genl_msg *msg,
 		case NL80211_ATTR_MAC:
 			mac = data;
 			break;
+		case NL80211_ATTR_STA_INFO:
+			if (!l_genl_attr_recurse(&attr, &nested))
+				continue;
+
+			while (l_genl_attr_next(&nested, &type, &len, &data)) {
+				if (type != NL80211_STA_INFO_CONNECTED_TIME)
+					continue;
+
+				if (len != 4)
+					continue;
+
+				connected_time = l_get_u32(data);
+				break;
+			}
+
+			break;
 		}
 	}
 
@@ -4957,6 +4972,49 @@ static void netdev_station_event(struct l_genl_msg *msg,
 				added ? "new" : "del");
 		return;
 	}
+
+	/*
+	 * Check in case buggy drivers never send the events we expect. This
+	 * has been seen on iwlwifi where a 'connection loss' in the firmware
+	 * results in no events after authentication. The only indication of
+	 * failure we see is a DEL_STATION after the successful authenticate
+	 * event.
+	 *
+	 * Any protocol using CMD_AUTHENTICATE/CMD_ASSOCIATE could end up in
+	 * this situation:
+	 *  - SAE, during auth or assoc
+	 *  - FILS, during auth or assoc
+	 *  - FT, during associate (since CMD_AUTH is not used)
+	 *  - Reassociation, during assoc
+	 *
+	 * It should be noted that protocols such as SAE and OWE may reject
+	 * authentication with the intent of retrying (status 77) which does
+	 * result in a DEL_STATION event. In these cases the connection time is
+	 * zero, and the event can be ignored.
+	 *
+	 * If the following conditions are met we can assume this is a buggy
+	 * driver:
+	 *  - Current handshake exists
+	 *  - Handshake is not for an authenticator
+	 *  - Connected time is non-zero
+	 *  - The STA address matches our handshake authenticator address
+	 *  - Currently running auth/assoc protocol (auth-proto, ft, or reassoc)
+	 */
+	if (netdev->handshake && !netdev->handshake->authenticator &&
+			!added && connected_time &&
+			!memcmp(mac, netdev->handshake->aa, 6) &&
+			(netdev->ap || netdev->in_ft || netdev->in_reassoc)) {
+		l_warn("Kernel never sent a connect event to indicate failure! "
+			"This is a kernel bug and needs to be fixed");
+		netdev_connect_failed(netdev, netdev->associated ?
+					NETDEV_RESULT_ASSOCIATION_FAILED :
+					NETDEV_RESULT_AUTHENTICATION_FAILED,
+					MMPDU_STATUS_CODE_UNSPECIFIED);
+		return;
+	}
+
+	if (netdev_get_iftype(netdev) != NETDEV_IFTYPE_ADHOC)
+		return;
 
 	WATCHLIST_NOTIFY(&netdev->station_watches,
 			netdev_station_watch_func_t, netdev, mac, added);
