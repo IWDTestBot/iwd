@@ -2770,6 +2770,9 @@ void eapol_register(struct eapol_sm *sm)
 bool eapol_start(struct eapol_sm *sm)
 {
 	if (sm->handshake->settings_8021x) {
+		const uint8_t *addr = sm->handshake->authenticator ?
+			sm->handshake->spa : sm->handshake->aa;
+
 		sm->eap = eap_new(eapol_eap_msg_cb, eapol_eap_complete_cb, sm);
 
 		if (!sm->eap)
@@ -2785,6 +2788,7 @@ bool eapol_start(struct eapol_sm *sm)
 
 		eap_set_key_material_func(sm->eap, eapol_eap_results_cb);
 		eap_set_event_func(sm->eap, eapol_eap_event_cb);
+		eap_set_peer_id(sm->eap, util_address_to_string(addr));
 	}
 
 	sm->started = true;

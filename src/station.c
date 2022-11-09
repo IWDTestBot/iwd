@@ -60,6 +60,9 @@
 #include "src/sysfs.h"
 #include "src/band.h"
 #include "src/ft.h"
+#include "src/eap.h"
+#include "src/eap-tls-common.h"
+#include "src/storage.h"
 
 static struct l_queue *station_list;
 static uint32_t netdev_watch;
@@ -5138,6 +5141,9 @@ static int station_init(void)
 						"ndisc_evict_nocarrier");
 
 	watchlist_init(&event_watches, NULL);
+
+	eap_tls_set_session_cache_ops(storage_tls_session_cache_load,
+					storage_tls_session_cache_sync);
 
 	return 0;
 }
