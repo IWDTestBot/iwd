@@ -427,7 +427,6 @@ unit_test_eap_sim_SOURCES = unit/test-eap-sim.c \
 		src/crypto.h src/crypto.c src/simutil.h src/simutil.c \
 		src/ie.h src/ie.c \
 		src/watchlist.h src/watchlist.c \
-		src/eapol.h src/eapol.c \
 		src/eapolutil.h src/eapolutil.c \
 		src/handshake.h src/handshake.c \
 		src/eap.h src/eap.c src/eap-private.h \
@@ -497,7 +496,9 @@ unit_test_eapol_SOURCES = unit/test-eapol.c \
 				src/eap-tls-common.h src/eap-tls-common.c \
 				src/erp.h src/erp.c \
 				src/band.h src/band.c \
-				src/mschaputil.h src/mschaputil.c
+				src/mschaputil.h src/mschaputil.c \
+				src/common.h src/common.c \
+				src/storage.h src/storage.c
 unit_test_eapol_LDADD = $(ell_ldadd)
 unit_test_eapol_DEPENDENCIES = $(ell_dependencies) \
 				unit/cert-server.pem \
@@ -525,7 +526,9 @@ unit_test_wsc_SOURCES = unit/test-wsc.c src/wscutil.h src/wscutil.c \
 				src/util.h src/util.c \
 				src/erp.h src/erp.c \
 				src/band.h src/band.c \
-				src/eap-wsc.h src/eap-wsc.c
+				src/eap-wsc.h src/eap-wsc.c \
+				src/common.h src/common.c \
+				src/storage.h src/storage.c
 unit_test_wsc_LDADD = $(ell_ldadd)
 
 unit_test_eap_mschapv2_SOURCES = src/eap-mschapv2.h src/eap-mschapv2.c \
