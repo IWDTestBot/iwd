@@ -90,7 +90,7 @@ static bool secret_from_file(const char *file)
 	if (data == MAP_FAILED)
 		return false;
 
-	r = storage_init(data, st.st_size);
+	r = storage_key_init(data, st.st_size);
 
 	munmap(data, st.st_size);
 
@@ -168,7 +168,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (pass) {
-		if (!storage_init((const uint8_t *)pass, strlen(pass)))
+		if (!storage_key_init((const uint8_t *)pass, strlen(pass)))
 			goto failed;
 	} else if (!secret_from_file(file))
 		goto failed;
