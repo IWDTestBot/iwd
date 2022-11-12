@@ -44,6 +44,8 @@
 #include "src/erp.h"
 #include "src/iwd.h"
 #include "src/band.h"
+#include "src/common.h"
+#include "src/storage.h"
 
 static struct l_queue *state_machines;
 static struct l_queue *preauths;
@@ -2770,6 +2772,9 @@ void eapol_register(struct eapol_sm *sm)
 bool eapol_start(struct eapol_sm *sm)
 {
 	if (sm->handshake->settings_8021x) {
+		char ssid[sm->handshake->ssid_len + 1];
+		_auto_(l_free) char *network_id = NULL;
+
 		sm->eap = eap_new(eapol_eap_msg_cb, eapol_eap_complete_cb, sm);
 
 		if (!sm->eap)
@@ -2785,6 +2790,12 @@ bool eapol_start(struct eapol_sm *sm)
 
 		eap_set_key_material_func(sm->eap, eapol_eap_results_cb);
 		eap_set_event_func(sm->eap, eapol_eap_event_cb);
+
+		memcpy(ssid, sm->handshake->ssid, sm->handshake->ssid_len);
+		ssid[sm->handshake->ssid_len] = 0;
+		network_id =
+			storage_get_network_file_path(SECURITY_8021X, ssid);
+		eap_set_peer_id(sm->eap, network_id);
 	}
 
 	sm->started = true;
