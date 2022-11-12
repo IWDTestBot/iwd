@@ -451,7 +451,7 @@ static bool setup_system_key(void)
 		goto unmap;
 	}
 
-	r = storage_init(key, st.st_size);
+	r = storage_key_init(key, st.st_size);
 	munlock(key, st.st_size);
 
 unmap:
@@ -600,7 +600,6 @@ int main(int argc, char *argv[])
 	exit_status = l_main_run_with_signal(signal_handler, NULL);
 
 	iwd_modules_exit();
-	storage_exit();
 
 failed_storage:
 	dbus_exit();

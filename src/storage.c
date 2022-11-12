@@ -46,6 +46,9 @@
 
 #include "src/missing.h"
 #include "src/common.h"
+#include "src/module.h"
+#include "src/scan.h"
+#include "src/knownnetworks.h"
 #include "src/storage.h"
 #include "src/crypto.h"
 
@@ -53,12 +56,13 @@
 #define STORAGE_FILE_MODE (S_IRUSR | S_IWUSR)
 
 #define KNOWN_FREQ_FILENAME ".known_network.freq"
-#define TLS_CACHE_FILENAME ".tls-session-cache"
+#define TLS_SESSION_CACHE_FILENAME ".tls-session-cache"
 
 static char *storage_path = NULL;
 static char *storage_hotspot_path = NULL;
 static uint8_t system_key[32];
 static bool system_key_set = false;
+static struct l_settings *tls_session_cache;
 
 static int create_dirs(const char *filename)
 {
@@ -653,14 +657,40 @@ void storage_network_sync(enum security type, const char *ssid,
 	write_file(data, length, true, "%s", path);
 }
 
+static void storage_network_remove_tls_sessions(const char *path)
+{
+	_auto_(l_strv_free) char **groups = NULL;
+	char **group;
+	size_t group_len;
+	size_t path_len;
+	bool changed = false;
+
+	if (!tls_session_cache)
+		return;
+
+	groups = l_settings_get_groups(tls_session_cache);
+	path_len = strlen(path);
+
+	for (group = groups; *group; group++)
+		if ((group_len = strlen(*group)) > path_len &&
+				!memcmp(*group + group_len - path_len, path,
+					path_len)) {
+			l_settings_remove_group(tls_session_cache, *group);
+			changed = true;
+		}
+
+	if (changed)
+		storage_tls_session_cache_sync();
+}
+
 int storage_network_remove(enum security type, const char *ssid)
 {
-	char *path;
+	_auto_(l_free) char *path = storage_get_network_file_path(type, ssid);
 	int ret;
 
-	path = storage_get_network_file_path(type, ssid);
 	ret = unlink(path);
-	l_free(path);
+
+	storage_network_remove_tls_sessions(path);
 
 	return ret < 0 ? -errno : 0;
 }
@@ -702,29 +732,42 @@ void storage_known_frequencies_sync(struct l_settings *known_freqs)
 	l_free(known_freq_file_path);
 }
 
-struct l_settings *storage_tls_session_cache_load(void)
+struct l_settings *storage_tls_session_cache_get(void)
 {
-	_auto_(l_settings_free) struct l_settings *cache = l_settings_new();
-	_auto_(l_free) char *tls_cache_file_path =
-		storage_get_path("%s", TLS_CACHE_FILENAME);
+	_auto_(l_free) char *cache_file_path = NULL;
 
-	if (unlikely(!l_settings_load_from_file(cache, tls_cache_file_path)))
-		return NULL;
+	if (tls_session_cache)
+		return tls_session_cache;
 
-	return l_steal_ptr(cache);
+	cache_file_path = storage_get_path("%s", TLS_SESSION_CACHE_FILENAME);
+	tls_session_cache = l_settings_new();
+
+	if (!l_settings_load_from_file(tls_session_cache, cache_file_path))
+		l_debug("No session cache loaded from %s, starting with an "
+			"empty cache", cache_file_path);
+
+	return tls_session_cache;
 }
 
-void storage_tls_session_cache_sync(struct l_settings *cache)
+void storage_tls_session_cache_sync(void)
 {
-	_auto_(l_free) char *tls_cache_file_path = NULL;
+	_auto_(l_free) char *cache_file_path = NULL;
+	_auto_(l_free) char *settings_data = NULL;
 	_auto_(l_free) char *data = NULL;
 	size_t len;
+	static const char comment[] =
+		"# External changes to this file are not tracked by IWD "
+		"and will be overwritten.\n\n";
+	static const size_t comment_len = L_ARRAY_SIZE(comment) - 1;
 
-	if (!cache)
+	if (L_WARN_ON(!tls_session_cache))
 		return;
 
-	tls_cache_file_path = storage_get_path("%s", TLS_CACHE_FILENAME);
-	data = l_settings_to_data(cache, &len);
+	cache_file_path = storage_get_path("%s", TLS_SESSION_CACHE_FILENAME);
+	settings_data = l_settings_to_data(tls_session_cache, &len);
+	data = l_malloc(comment_len + len);
+	memcpy(data, comment, comment_len);
+	memcpy(data + comment_len, settings_data, len);
 
 	/*
 	 * Note this data contains cryptographic secrets.  write_file()
@@ -732,7 +775,8 @@ void storage_tls_session_cache_sync(struct l_settings *cache)
 	 *
 	 * TODO: consider encrypting with system_key.
 	 */
-	write_file(data, len, false, "%s", tls_cache_file_path);
+	write_file(data, comment_len + len, false, "%s", cache_file_path);
+	explicit_bzero(settings_data, len);
 	explicit_bzero(data, len);
 }
 
@@ -768,7 +812,7 @@ bool storage_is_file(const char *filename)
  *	TK = HKDF-Extract(<zero>, IKM)
  *	OKM = HKDF-Expand(TK, "System Key", 32)
  */
-bool storage_init(const uint8_t *key, size_t key_len)
+bool storage_key_init(const uint8_t *key, size_t key_len)
 {
 	uint8_t tmp[32];
 
@@ -786,10 +830,20 @@ bool storage_init(const uint8_t *key, size_t key_len)
 	return system_key_set;
 }
 
-void storage_exit(void)
+static int storage_init(void)
+{
+	return 0;
+}
+
+static void storage_exit(void)
 {
 	if (system_key_set) {
 		explicit_bzero(system_key, sizeof(system_key));
 		munlock(system_key, sizeof(system_key));
 	}
+
+	l_settings_free(tls_session_cache);
+	tls_session_cache = NULL;
 }
+
+IWD_MODULE(storage, storage_init, storage_exit)
