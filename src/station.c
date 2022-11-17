@@ -3845,7 +3845,7 @@ static void station_dbus_scan_triggered(int err, void *user_data)
 			dbus_pending_reply(&station->scan_pending, reply);
 		}
 
-		station_dbus_scan_done(station, true);
+		station_dbus_scan_done(station, false);
 		return;
 	}
 

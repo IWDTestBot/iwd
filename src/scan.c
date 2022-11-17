@@ -229,12 +229,6 @@ static void scan_request_triggered(struct l_genl_msg *msg, void *userdata)
 
 	err = l_genl_msg_get_error(msg);
 	if (err < 0) {
-		/* Scan in progress, assume another scan is running */
-		if (err == -EBUSY) {
-			sc->state = SCAN_STATE_PASSIVE;
-			return;
-		}
-
 		scan_request_failed(sc, sr, err);
 
 		l_error("Received error during CMD_TRIGGER_SCAN: %s (%d)",
@@ -2094,7 +2088,6 @@ static void scan_notify(struct l_genl_msg *msg, void *user_data)
 	{
 		struct scan_freq_set *freqs;
 		bool send_next = false;
-		bool retry = false;
 		bool get_results = false;
 
 		sc->state = SCAN_STATE_NOT_RUNNING;
@@ -2138,24 +2131,17 @@ static void scan_notify(struct l_genl_msg *msg, void *user_data)
 
 			/*
 			 * Drop the ongoing scan if an external scan flushed
-			 * our results.  Otherwise, try to retry the trigger
-			 * request if it failed with an -EBUSY.
+			 * our results.
 			 */
 			if (sr && sr->started &&
 					scan_parse_flush_flag_from_msg(msg))
 				scan_finished(sc, -EAGAIN, NULL, NULL, sr);
-			else
-				retry = true;
 
 			sr = NULL;
 		}
 
-		/*
-		 * Send the next command of an ongoing request, or continue
-		 * with a previously busy scan attempt due to an external
-		 * scan.
-		 */
-		if (send_next || retry) {
+		/* Send the next command of an ongoing request */
+		if (send_next) {
 			struct scan_request *next = l_queue_peek_head(
 								sc->requests);
 
@@ -2220,7 +2206,7 @@ static void scan_notify(struct l_genl_msg *msg, void *user_data)
 			 * we may be able to now queue our own scan although
 			 * the abort could also have been triggered by the
 			 * hardware or the driver because of another activity
-			 * starting in which case we should just get an EBUSY.
+			 * starting in which case we should get an EBUSY.
 			 */
 			start_next_scan_request(&sr->work);
 		}
