@@ -151,6 +151,22 @@ static bool scan_context_match(const void *a, const void *b)
 	return sc->wdev_id == *wdev_id;
 }
 
+static bool scan_context_match_retry(const void *a, const void *b)
+{
+	const struct scan_context *sc = a;
+	const struct scan_request *sr;
+	const uint32_t *wiphy_id = b;
+
+	if (wiphy_get_id(sc->wiphy) != *wiphy_id)
+		return false;
+
+	sr = l_queue_peek_head(sc->requests);
+	if (!sr)
+		return false;
+
+	return wiphy_radio_work_is_running(sc->wiphy, sr->work.id);
+}
+
 static bool scan_request_match(const void *a, const void *b)
 {
 	const struct scan_request *sr = a;
@@ -231,6 +247,7 @@ static void scan_request_triggered(struct l_genl_msg *msg, void *userdata)
 	if (err < 0) {
 		/* Scan in progress, assume another scan is running */
 		if (err == -EBUSY) {
+			l_debug("XXX busy");
 			sc->state = SCAN_STATE_PASSIVE;
 			return;
 		}
@@ -2044,6 +2061,29 @@ static void scan_parse_result_frequencies(struct l_genl_msg *msg,
 	}
 }
 
+static void scan_retry_pending(uint32_t wiphy_id)
+{
+	struct scan_context *sc = l_queue_find(scan_contexts,
+					       scan_context_match_retry,
+					       &wiphy_id);
+	struct scan_request *sr;
+
+	l_debug("");
+
+	if (!sc)
+		return;
+
+	sr = l_queue_peek_head(sc->requests);
+
+	if (L_WARN_ON(!sr))
+		return;
+
+	l_debug("XXX retry pending request");
+
+	sc->state = SCAN_STATE_NOT_RUNNING;
+	start_next_scan_request(&sr->work);
+}
+
 static void scan_notify(struct l_genl_msg *msg, void *user_data)
 {
 	struct l_genl_attr attr;
@@ -2065,8 +2105,13 @@ static void scan_notify(struct l_genl_msg *msg, void *user_data)
 		return;
 
 	sc = l_queue_find(scan_contexts, scan_context_match, &wdev_id);
-	if (!sc)
+	if (!sc) {
+		if (cmd == NL80211_CMD_NEW_SCAN_RESULTS ||
+		    cmd == NL80211_CMD_SCAN_ABORTED)
+			scan_retry_pending(wiphy_id);
+
 		return;
+	}
 
 	l_debug("Scan notification %s(%u)", nl80211cmd_to_string(cmd), cmd);
 
