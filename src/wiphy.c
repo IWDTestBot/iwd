@@ -106,7 +106,9 @@ struct wiphy {
 	uint16_t supported_ciphers;
 	struct scan_freq_set *supported_freqs;
 	struct scan_freq_set *disabled_freqs;
-	struct scan_freq_set *pending_freqs;
+	struct scan_freq_set *no_ir_freqs;
+	struct scan_freq_set *pending_disabled_freqs;
+	struct scan_freq_set *pending_no_ir_freqs;
 	struct band *band_2g;
 	struct band *band_5g;
 	struct band *band_6g;
@@ -346,6 +348,7 @@ static struct wiphy *wiphy_new(uint32_t id)
 	wiphy->id = id;
 	wiphy->supported_freqs = scan_freq_set_new();
 	wiphy->disabled_freqs = scan_freq_set_new();
+	wiphy->no_ir_freqs = scan_freq_set_new();
 	watchlist_init(&wiphy->state_watches, NULL);
 	wiphy->extended_capabilities[0] = IE_TYPE_EXTENDED_CAPABILITIES;
 	wiphy->extended_capabilities[1] = EXT_CAP_LEN;
@@ -951,7 +954,7 @@ int wiphy_estimate_data_rate(struct wiphy *wiphy,
 
 bool wiphy_regdom_is_updating(struct wiphy *wiphy)
 {
-	return wiphy->pending_freqs != NULL;
+	return wiphy->pending_disabled_freqs != NULL;
 }
 
 uint32_t wiphy_state_watch_add(struct wiphy *wiphy,
@@ -1515,7 +1518,7 @@ static void parse_supported_bands(struct wiphy *wiphy,
 				nl80211_parse_supported_frequencies(&attr,
 							wiphy->supported_freqs,
 							wiphy->disabled_freqs,
-							NULL);
+							wiphy->no_ir_freqs);
 				break;
 
 			case NL80211_BAND_ATTR_RATES:
@@ -1921,6 +1924,16 @@ static void wiphy_setup_rm_enabled_capabilities(struct wiphy *wiphy)
 	 */
 }
 
+static void wiphy_set_pending_freqs(struct wiphy *wiphy)
+{
+	scan_freq_set_free(wiphy->disabled_freqs);
+	scan_freq_set_free(wiphy->no_ir_freqs);
+	wiphy->disabled_freqs = wiphy->pending_disabled_freqs;
+	wiphy->no_ir_freqs = wiphy->pending_no_ir_freqs;
+	wiphy->pending_disabled_freqs = NULL;
+	wiphy->pending_no_ir_freqs = NULL;
+}
+
 static void wiphy_dump_done(void *user_data)
 {
 	struct wiphy *wiphy = user_data;
@@ -1932,9 +1945,8 @@ static void wiphy_dump_done(void *user_data)
 
 	if (wiphy) {
 		wiphy->dump_id = 0;
-		scan_freq_set_free(wiphy->disabled_freqs);
-		wiphy->disabled_freqs = wiphy->pending_freqs;
-		wiphy->pending_freqs = NULL;
+
+		wiphy_set_pending_freqs(wiphy);
 
 		WATCHLIST_NOTIFY(&wiphy->state_watches,
 				wiphy_state_watch_func_t, wiphy,
@@ -1948,12 +1960,10 @@ static void wiphy_dump_done(void *user_data)
 	for (e = l_queue_get_entries(wiphy_list); e; e = e->next) {
 		wiphy = e->data;
 
-		if (!wiphy->pending_freqs || wiphy->self_managed)
+		if (!wiphy->pending_disabled_freqs || wiphy->self_managed)
 			continue;
 
-		scan_freq_set_free(wiphy->disabled_freqs);
-		wiphy->disabled_freqs = wiphy->pending_freqs;
-		wiphy->pending_freqs = NULL;
+		wiphy_set_pending_freqs(wiphy);
 
 		WATCHLIST_NOTIFY(&wiphy->state_watches,
 				wiphy_state_watch_func_t, wiphy,
@@ -1989,8 +1999,8 @@ static void wiphy_dump_callback(struct l_genl_msg *msg,
 				continue;
 
 			nl80211_parse_supported_frequencies(&attr, NULL,
-						wiphy->pending_freqs,
-						NULL);
+						wiphy->pending_disabled_freqs,
+						wiphy->pending_no_ir_freqs);
 		}
 	}
 }
@@ -2002,15 +2012,18 @@ static bool wiphy_cancel_last_dump(struct wiphy *wiphy)
 
 	/*
 	 * Zero command ID to signal that wiphy_dump_done doesn't need to do
-	 * anything. For a self-managed wiphy just free/NULL pending_freqs. For
-	 * a global dump each wiphy needs to be checked and dealt with.
+	 * anything. For a self-managed wiphy just free/NULL
+	 * pending_disabled_freqs. For a global dump each wiphy needs to be
+	 * checked and dealt with.
 	 */
 	if (wiphy && wiphy->dump_id) {
 		id = wiphy->dump_id;
 		wiphy->dump_id = 0;
 
-		scan_freq_set_free(wiphy->pending_freqs);
-		wiphy->pending_freqs = NULL;
+		scan_freq_set_free(wiphy->pending_disabled_freqs);
+		scan_freq_set_free(wiphy->pending_no_ir_freqs);
+		wiphy->pending_disabled_freqs = NULL;
+		wiphy->pending_no_ir_freqs = NULL;
 	} else if (!wiphy && wiphy_dump_id) {
 		id = wiphy_dump_id;
 		wiphy_dump_id = 0;
@@ -2018,11 +2031,13 @@ static bool wiphy_cancel_last_dump(struct wiphy *wiphy)
 		for (e = l_queue_get_entries(wiphy_list); e; e = e->next) {
 			struct wiphy *w = e->data;
 
-			if (!w->pending_freqs || w->self_managed)
+			if (!w->pending_disabled_freqs || w->self_managed)
 				continue;
 
-			scan_freq_set_free(w->pending_freqs);
-			w->pending_freqs = NULL;
+			scan_freq_set_free(w->pending_disabled_freqs);
+			scan_freq_set_free(w->pending_no_ir_freqs);
+			w->pending_disabled_freqs = NULL;
+			w->pending_no_ir_freqs = NULL;
 		}
 	}
 
@@ -2068,7 +2083,8 @@ static void wiphy_dump_after_regdom(struct wiphy *wiphy)
 	/* Limited dump so just emit the event for this wiphy */
 	if (wiphy) {
 		wiphy->dump_id = id;
-		wiphy->pending_freqs = scan_freq_set_new();
+		wiphy->pending_disabled_freqs = scan_freq_set_new();
+		wiphy->pending_no_ir_freqs = scan_freq_set_new();
 
 		if (no_start_event)
 			return;
@@ -2088,7 +2104,8 @@ static void wiphy_dump_after_regdom(struct wiphy *wiphy)
 		if (w->self_managed)
 			continue;
 
-		w->pending_freqs = scan_freq_set_new();
+		w->pending_disabled_freqs = scan_freq_set_new();
+		w->pending_no_ir_freqs = scan_freq_set_new();
 
 		if (no_start_event)
 			continue;
