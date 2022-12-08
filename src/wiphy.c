@@ -499,6 +499,11 @@ const struct scan_freq_set *wiphy_get_disabled_freqs(const struct wiphy *wiphy)
 	return wiphy->disabled_freqs;
 }
 
+const struct scan_freq_set *wiphy_get_no_ir_freqs(const struct wiphy *wiphy)
+{
+	return wiphy->no_ir_freqs;
+}
+
 bool wiphy_supports_probe_resp_offload(struct wiphy *wiphy)
 {
 	return wiphy->ap_probe_resp_offload;
