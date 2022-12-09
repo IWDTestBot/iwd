@@ -502,7 +502,8 @@ int nl80211_parse_chandef(struct l_genl_msg *msg, struct band_chandef *out)
 
 int nl80211_parse_supported_frequencies(struct l_genl_attr *band_freqs,
 					struct scan_freq_set *supported_list,
-					struct scan_freq_set *disabled_list)
+					struct scan_freq_set *disabled_list,
+					struct scan_freq_set *no_ir_list)
 {
 	uint16_t type, len;
 	const void *data;
@@ -515,6 +516,7 @@ int nl80211_parse_supported_frequencies(struct l_genl_attr *band_freqs,
 	while (l_genl_attr_next(&nested, NULL, NULL, NULL)) {
 		uint32_t freq = 0;
 		bool disabled = false;
+		bool no_ir = false;
 
 		if (!l_genl_attr_recurse(&nested, &attr))
 			continue;
@@ -527,6 +529,9 @@ int nl80211_parse_supported_frequencies(struct l_genl_attr *band_freqs,
 			case NL80211_FREQUENCY_ATTR_DISABLED:
 				disabled = true;
 				break;
+			case NL80211_FREQUENCY_ATTR_NO_IR:
+				no_ir = true;
+				break;
 			}
 		}
 
@@ -538,6 +543,10 @@ int nl80211_parse_supported_frequencies(struct l_genl_attr *band_freqs,
 
 		if (disabled && disabled_list)
 			scan_freq_set_add(disabled_list, freq);
+
+		if (no_ir && no_ir_list)
+			scan_freq_set_add(no_ir_list, freq);
+
 	}
 
 	return 0;
