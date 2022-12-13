@@ -745,8 +745,33 @@ void wiphy_generate_address_from_ssid(struct wiphy *wiphy, const char *ssid,
 bool wiphy_constrain_freq_set(const struct wiphy *wiphy,
 						struct scan_freq_set *set)
 {
+	struct band *bands[3] = { wiphy->band_2g,
+					wiphy->band_5g, wiphy->band_6g };
+	unsigned int b;
+	unsigned int i;
+
 	scan_freq_set_constrain(set, wiphy->supported_freqs);
-	scan_freq_set_subtract(set, wiphy->disabled_freqs);
+
+	for (b = 0; b < L_ARRAY_SIZE(bands); b++) {
+		struct band *band = bands[b];
+
+		if (!band)
+			continue;
+
+		for (i = 0; i < band->freqs_len; i++) {
+			uint32_t freq;
+
+			if (!(band->frequencies[i] & BAND_FREQ_ATTR_SUPPORTED))
+				continue;
+
+			freq = band_channel_to_freq(i, band->freq);
+			if (!freq)
+				continue;
+
+			if (band->frequencies[i] & BAND_FREQ_ATTR_DISABLED)
+				scan_freq_set_remove(set, freq);
+		}
+	}
 
 	if (!scan_freq_set_get_bands(set))
 		/* The set is empty. */
@@ -952,7 +977,7 @@ int wiphy_estimate_data_rate(struct wiphy *wiphy,
 
 bool wiphy_regdom_is_updating(struct wiphy *wiphy)
 {
-	return wiphy->pending_freqs != NULL;
+	return wiphy->dump_id || (!wiphy->self_managed && wiphy_dump_id);
 }
 
 uint32_t wiphy_state_watch_add(struct wiphy *wiphy,
@@ -1471,19 +1496,23 @@ static void parse_supported_bands(struct wiphy *wiphy,
 		struct band **bandp;
 		struct band *band;
 		enum band_freq freq;
+		size_t num_channels;
 
 		switch (type) {
 		case NL80211_BAND_2GHZ:
 			bandp = &wiphy->band_2g;
 			freq = BAND_FREQ_2_4_GHZ;
+			num_channels = 14;
 			break;
 		case NL80211_BAND_5GHZ:
 			bandp = &wiphy->band_5g;
 			freq = BAND_FREQ_5_GHZ;
+			num_channels = 196;
 			break;
 		case NL80211_BAND_6GHZ:
 			bandp = &wiphy->band_6g;
 			freq = BAND_FREQ_6_GHZ;
+			num_channels = 233;
 			break;
 		default:
 			continue;
@@ -1498,6 +1527,8 @@ static void parse_supported_bands(struct wiphy *wiphy,
 				continue;
 
 			band->freq = freq;
+			band->frequencies = l_new(uint16_t, num_channels);
+			band->freqs_len = num_channels;
 
 			/* Reset iter to beginning */
 			if (!l_genl_attr_recurse(bands, &attr)) {
@@ -1507,15 +1538,14 @@ static void parse_supported_bands(struct wiphy *wiphy,
 		} else
 			band = *bandp;
 
-
 		while (l_genl_attr_next(&attr, &type, &len, &data)) {
 			struct l_genl_attr nested;
 
 			switch (type) {
 			case NL80211_BAND_ATTR_FREQS:
 				nl80211_parse_supported_frequencies(&attr,
-							wiphy->supported_freqs,
-							wiphy->disabled_freqs);
+							band->frequencies,
+							band->freqs_len);
 				break;
 
 			case NL80211_BAND_ATTR_RATES:
@@ -1970,6 +2000,7 @@ static void wiphy_dump_callback(struct l_genl_msg *msg,
 	struct l_genl_attr bands;
 	struct l_genl_attr attr;
 	uint16_t type;
+	struct band *band;
 
 	if (nl80211_parse_attrs(msg, NL80211_ATTR_WIPHY, &id,
 					NL80211_ATTR_WIPHY_BANDS, &bands,
@@ -1980,7 +2011,28 @@ static void wiphy_dump_callback(struct l_genl_msg *msg,
 	if (L_WARN_ON(!wiphy))
 		return;
 
-	while (l_genl_attr_next(&bands, NULL, NULL, NULL)) {
+	/* Unregistered means the wiphy is blacklisted, don't bother parsing */
+	if (!wiphy->registered)
+		return;
+
+	while (l_genl_attr_next(&bands, &type, NULL, NULL)) {
+		switch (type) {
+		case NL80211_BAND_2GHZ:
+			band = wiphy->band_2g;
+			break;
+		case NL80211_BAND_5GHZ:
+			band = wiphy->band_5g;
+			break;
+		case NL80211_BAND_6GHZ:
+			band = wiphy->band_6g;
+			break;
+		default:
+			continue;
+		}
+
+		if (L_WARN_ON(!band))
+			continue;
+
 		if (!l_genl_attr_recurse(&bands, &attr))
 			return;
 
@@ -1988,8 +2040,14 @@ static void wiphy_dump_callback(struct l_genl_msg *msg,
 			if (type != NL80211_BAND_ATTR_FREQS)
 				continue;
 
-			nl80211_parse_supported_frequencies(&attr, NULL,
-							wiphy->pending_freqs);
+			/*
+			 * Just write over the old list for each frequency. In
+			 * theory no new frequencies should be added so there
+			 * should never be any stale values.
+			 */
+			nl80211_parse_supported_frequencies(&attr,
+							band->frequencies,
+							band->freqs_len);
 		}
 	}
 }
@@ -2178,6 +2236,36 @@ static void wiphy_get_reg_domain(struct wiphy *wiphy)
 	}
 }
 
+static void setup_supported_freqs(struct wiphy *wiphy)
+{
+	struct band *bands[3] = { wiphy->band_2g,
+					wiphy->band_5g, wiphy->band_6g };
+	unsigned int b;
+	unsigned int i;
+
+	wiphy->supported_freqs = scan_freq_set_new();
+
+	for (b = 0; b < L_ARRAY_SIZE(bands); b++) {
+		struct band *band = bands[b];
+
+		if (!band)
+			continue;
+
+		for (i = 0; i < band->freqs_len; i++) {
+			uint32_t freq;
+
+			if (!(band->frequencies[i] & BAND_FREQ_ATTR_SUPPORTED))
+				continue;
+
+			freq = band_channel_to_freq(i, band->freq);
+			if (!freq)
+				continue;
+
+			scan_freq_set_add(wiphy->supported_freqs, freq);
+		}
+	}
+}
+
 void wiphy_create_complete(struct wiphy *wiphy)
 {
 	wiphy_register(wiphy);
@@ -2193,6 +2281,7 @@ void wiphy_create_complete(struct wiphy *wiphy)
 	wiphy_set_station_capability_bits(wiphy);
 	wiphy_setup_rm_enabled_capabilities(wiphy);
 	wiphy_get_reg_domain(wiphy);
+	setup_supported_freqs(wiphy);
 
 	wiphy_print_basic_info(wiphy);
 }
