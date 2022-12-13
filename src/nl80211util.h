@@ -58,5 +58,4 @@ struct l_genl_msg *nl80211_build_cmd_frame(uint32_t ifindex,
 
 int nl80211_parse_chandef(struct l_genl_msg *msg, struct band_chandef *out);
 int nl80211_parse_supported_frequencies(struct l_genl_attr *band_freqs,
-					struct scan_freq_set *supported,
-					struct scan_freq_set *disabled);
+					uint16_t *list, size_t num_channels);
