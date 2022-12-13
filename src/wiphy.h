@@ -100,6 +100,10 @@ uint32_t wiphy_get_supported_bands(struct wiphy *wiphy);
 const struct scan_freq_set *wiphy_get_supported_freqs(
 						const struct wiphy *wiphy);
 const struct scan_freq_set *wiphy_get_disabled_freqs(const struct wiphy *wiphy);
+bool wiphy_check_frequency(const struct wiphy *wiphy, uint32_t freq,
+				uint16_t flags);
+bool wiphy_check_band(const struct wiphy *wiphy, enum band_freq band,
+				uint16_t flags);
 bool wiphy_supports_probe_resp_offload(struct wiphy *wiphy);
 bool wiphy_can_transition_disable(struct wiphy *wiphy);
 bool wiphy_can_offload(struct wiphy *wiphy);

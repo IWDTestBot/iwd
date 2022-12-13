@@ -496,6 +496,95 @@ const struct scan_freq_set *wiphy_get_disabled_freqs(const struct wiphy *wiphy)
 	return wiphy->disabled_freqs;
 }
 
+static struct band *wiphy_get_band(const struct wiphy *wiphy, enum band_freq band)
+{
+	switch (band) {
+	case BAND_FREQ_2_4_GHZ:
+		return wiphy->band_2g;
+	case BAND_FREQ_5_GHZ:
+		return wiphy->band_5g;
+	case BAND_FREQ_6_GHZ:
+		return wiphy->band_6g;
+	default:
+		return NULL;
+	}
+}
+
+bool wiphy_check_frequency(const struct wiphy *wiphy, uint32_t freq,
+				uint16_t flags)
+{
+	enum band_freq band;
+	struct band *bandp;
+	uint8_t channel;
+	uint16_t mask;
+
+	channel = band_freq_to_channel(freq, &band);
+	if (!channel)
+		return false;
+
+	bandp = wiphy_get_band(wiphy, band);
+	if (!bandp)
+		return false;
+
+	if (L_WARN_ON(channel > bandp->freqs_len))
+		return false;
+
+
+	mask = bandp->frequencies[channel];
+
+	if ((flags & mask) != flags)
+		return false;
+
+	return true;
+}
+
+bool wiphy_check_band(const struct wiphy *wiphy, enum band_freq band,
+				uint16_t flags)
+{
+	unsigned int i;
+	bool supported = false;
+	bool disabled = true;
+	bool ret = false;
+	struct band *bandp = wiphy_get_band(wiphy, band);
+
+	/*
+	 * Caller should either include the SUPPORTED flag, or verify support
+	 * before calling otherwise this return could be misleading i.e.
+	 * checking a band for only DISABLED that isn't supported would
+	 * return false which could be interpreted that the band is enabled.
+	 */
+	if ((flags & BAND_FREQ_ATTR_SUPPORTED) && !bandp)
+		return false;
+
+	if (L_WARN_ON(!bandp))
+		return false;
+
+	/*
+	 * This should only be used with SUPPORTED/DISABLED flags. For supported
+	 * only ONE frequency needs to be supported. And for DISABLED ALL
+	 * frequencies must be disabled.
+	 */
+	for (i = 0; i < bandp->freqs_len; i++) {
+		uint16_t mask = bandp->frequencies[i];
+
+		if (!(mask & BAND_FREQ_ATTR_SUPPORTED))
+			continue;
+
+		supported = true;
+
+		if (!(mask & BAND_FREQ_ATTR_DISABLED))
+			disabled = false;
+	}
+
+	if (supported && (flags & BAND_FREQ_ATTR_SUPPORTED))
+		ret = true;
+
+	if (disabled && (flags & BAND_FREQ_ATTR_DISABLED))
+		ret &= true;
+
+	return ret;
+}
+
 bool wiphy_supports_probe_resp_offload(struct wiphy *wiphy)
 {
 	return wiphy->ap_probe_resp_offload;
