@@ -496,6 +496,69 @@ const struct scan_freq_set *wiphy_get_disabled_freqs(const struct wiphy *wiphy)
 	return wiphy->disabled_freqs;
 }
 
+static struct band *wiphy_get_band(const struct wiphy *wiphy, enum band_freq band)
+{
+	switch (band) {
+	case BAND_FREQ_2_4_GHZ:
+		return wiphy->band_2g;
+	case BAND_FREQ_5_GHZ:
+		return wiphy->band_5g;
+	case BAND_FREQ_6_GHZ:
+		return wiphy->band_6g;
+	default:
+		return NULL;
+	}
+}
+
+bool wiphy_get_frequency_info(const struct wiphy *wiphy, uint32_t freq,
+				struct band_freq_attrs *attr_out)
+{
+	struct band_freq_attrs attr;
+	enum band_freq band;
+	uint8_t channel;
+	struct band *bandp;
+
+	channel = band_freq_to_channel(freq, &band);
+	if (!channel)
+		return false;
+
+	bandp = wiphy_get_band(wiphy, band);
+	if (!bandp)
+		return false;
+
+	attr = bandp->freq_attrs[channel];
+	if (!attr.supported)
+		return false;
+
+	if (attr_out)
+		*attr_out = attr;
+
+	return true;
+}
+
+bool wiphy_band_is_disabled(const struct wiphy *wiphy, enum band_freq band)
+{
+	struct band_freq_attrs attr;
+	unsigned int i;
+	struct band *bandp;
+
+	bandp = wiphy_get_band(wiphy, band);
+	if (!bandp)
+		return false;
+
+	for (i = 0; i < bandp->freqs_len; i++) {
+		attr = bandp->freq_attrs[i];
+
+		if (!attr.supported)
+			continue;
+
+		if (!attr.disabled)
+			return false;
+	}
+
+	return true;
+}
+
 bool wiphy_supports_probe_resp_offload(struct wiphy *wiphy)
 {
 	return wiphy->ap_probe_resp_offload;
