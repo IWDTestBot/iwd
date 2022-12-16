@@ -105,8 +105,6 @@ struct wiphy {
 	uint16_t supported_iftypes;
 	uint16_t supported_ciphers;
 	struct scan_freq_set *supported_freqs;
-	struct scan_freq_set *disabled_freqs;
-	struct scan_freq_set *pending_freqs;
 	struct band *band_2g;
 	struct band *band_5g;
 	struct band *band_6g;
@@ -345,7 +343,6 @@ static struct wiphy *wiphy_new(uint32_t id)
 
 	wiphy->id = id;
 	wiphy->supported_freqs = scan_freq_set_new();
-	wiphy->disabled_freqs = scan_freq_set_new();
 	watchlist_init(&wiphy->state_watches, NULL);
 	wiphy->extended_capabilities[0] = IE_TYPE_EXTENDED_CAPABILITIES;
 	wiphy->extended_capabilities[1] = EXT_CAP_LEN;
@@ -393,7 +390,6 @@ static void wiphy_free(void *data)
 	}
 
 	scan_freq_set_free(wiphy->supported_freqs);
-	scan_freq_set_free(wiphy->disabled_freqs);
 	watchlist_destroy(&wiphy->state_watches);
 	l_free(wiphy->model_str);
 	l_free(wiphy->vendor_str);
@@ -491,9 +487,67 @@ const struct scan_freq_set *wiphy_get_supported_freqs(
 	return wiphy->supported_freqs;
 }
 
-const struct scan_freq_set *wiphy_get_disabled_freqs(const struct wiphy *wiphy)
+static struct band *wiphy_get_band(const struct wiphy *wiphy, enum band_freq band)
 {
-	return wiphy->disabled_freqs;
+	switch (band) {
+	case BAND_FREQ_2_4_GHZ:
+		return wiphy->band_2g;
+	case BAND_FREQ_5_GHZ:
+		return wiphy->band_5g;
+	case BAND_FREQ_6_GHZ:
+		return wiphy->band_6g;
+	default:
+		return NULL;
+	}
+}
+
+bool wiphy_get_frequency_info(const struct wiphy *wiphy, uint32_t freq,
+				struct band_freq_attrs *attr_out)
+{
+	struct band_freq_attrs attr;
+	enum band_freq band;
+	uint8_t channel;
+	struct band *bandp;
+
+	channel = band_freq_to_channel(freq, &band);
+	if (!channel)
+		return false;
+
+	bandp = wiphy_get_band(wiphy, band);
+	if (!bandp)
+		return false;
+
+	attr = bandp->freq_attrs[channel];
+	if (!attr.supported)
+		return false;
+
+	if (attr_out)
+		*attr_out = attr;
+
+	return true;
+}
+
+bool wiphy_band_is_disabled(const struct wiphy *wiphy, enum band_freq band)
+{
+	struct band_freq_attrs attr;
+	unsigned int i;
+	struct band *bandp;
+
+	bandp = wiphy_get_band(wiphy, band);
+	if (!bandp)
+		return false;
+
+	for (i = 0; i < bandp->freqs_len; i++) {
+		attr = bandp->freq_attrs[i];
+
+		if (!attr.supported)
+			continue;
+
+		if (!attr.disabled)
+			return false;
+	}
+
+	return true;
 }
 
 bool wiphy_supports_probe_resp_offload(struct wiphy *wiphy)
@@ -745,8 +799,35 @@ void wiphy_generate_address_from_ssid(struct wiphy *wiphy, const char *ssid,
 bool wiphy_constrain_freq_set(const struct wiphy *wiphy,
 						struct scan_freq_set *set)
 {
+	struct band *bands[3] = { wiphy->band_2g,
+					wiphy->band_5g, wiphy->band_6g };
+	unsigned int b;
+	unsigned int i;
+
 	scan_freq_set_constrain(set, wiphy->supported_freqs);
-	scan_freq_set_subtract(set, wiphy->disabled_freqs);
+
+	for (b = 0; b < L_ARRAY_SIZE(bands); b++) {
+		struct band *band = bands[b];
+
+		if (!band)
+			continue;
+
+		for (i = 0; i < band->freqs_len; i++) {
+			uint32_t freq;
+
+			if (!band->freq_attrs[i].supported)
+				continue;
+
+			if (!band->freq_attrs[i].disabled)
+				continue;
+
+			freq = band_channel_to_freq(i, band->freq);
+			if (!freq)
+				continue;
+
+			scan_freq_set_remove(set, freq);
+		}
+	}
 
 	if (!scan_freq_set_get_bands(set))
 		/* The set is empty. */
@@ -952,7 +1033,7 @@ int wiphy_estimate_data_rate(struct wiphy *wiphy,
 
 bool wiphy_regdom_is_updating(struct wiphy *wiphy)
 {
-	return wiphy->pending_freqs != NULL;
+	return wiphy->dump_id || (!wiphy->self_managed && wiphy_dump_id);
 }
 
 uint32_t wiphy_state_watch_add(struct wiphy *wiphy,
@@ -1471,19 +1552,23 @@ static void parse_supported_bands(struct wiphy *wiphy,
 		struct band **bandp;
 		struct band *band;
 		enum band_freq freq;
+		size_t num_channels;
 
 		switch (type) {
 		case NL80211_BAND_2GHZ:
 			bandp = &wiphy->band_2g;
 			freq = BAND_FREQ_2_4_GHZ;
+			num_channels = 14;
 			break;
 		case NL80211_BAND_5GHZ:
 			bandp = &wiphy->band_5g;
 			freq = BAND_FREQ_5_GHZ;
+			num_channels = 196;
 			break;
 		case NL80211_BAND_6GHZ:
 			bandp = &wiphy->band_6g;
 			freq = BAND_FREQ_6_GHZ;
+			num_channels = 233;
 			break;
 		default:
 			continue;
@@ -1498,6 +1583,9 @@ static void parse_supported_bands(struct wiphy *wiphy,
 				continue;
 
 			band->freq = freq;
+			band->freq_attrs = l_new(struct band_freq_attrs,
+							num_channels);
+			band->freqs_len = num_channels;
 
 			/* Reset iter to beginning */
 			if (!l_genl_attr_recurse(bands, &attr)) {
@@ -1507,7 +1595,6 @@ static void parse_supported_bands(struct wiphy *wiphy,
 		} else
 			band = *bandp;
 
-
 		while (l_genl_attr_next(&attr, &type, &len, &data)) {
 			struct l_genl_attr nested;
 
@@ -1515,7 +1602,8 @@ static void parse_supported_bands(struct wiphy *wiphy,
 			case NL80211_BAND_ATTR_FREQS:
 				nl80211_parse_supported_frequencies(&attr,
 							wiphy->supported_freqs,
-							wiphy->disabled_freqs);
+							band->freq_attrs,
+							band->freqs_len);
 				break;
 
 			case NL80211_BAND_ATTR_RATES:
@@ -1932,9 +2020,6 @@ static void wiphy_dump_done(void *user_data)
 
 	if (wiphy) {
 		wiphy->dump_id = 0;
-		scan_freq_set_free(wiphy->disabled_freqs);
-		wiphy->disabled_freqs = wiphy->pending_freqs;
-		wiphy->pending_freqs = NULL;
 
 		WATCHLIST_NOTIFY(&wiphy->state_watches,
 				wiphy_state_watch_func_t, wiphy,
@@ -1948,12 +2033,8 @@ static void wiphy_dump_done(void *user_data)
 	for (e = l_queue_get_entries(wiphy_list); e; e = e->next) {
 		wiphy = e->data;
 
-		if (!wiphy->pending_freqs || wiphy->self_managed)
+		if (wiphy->self_managed)
 			continue;
-
-		scan_freq_set_free(wiphy->disabled_freqs);
-		wiphy->disabled_freqs = wiphy->pending_freqs;
-		wiphy->pending_freqs = NULL;
 
 		WATCHLIST_NOTIFY(&wiphy->state_watches,
 				wiphy_state_watch_func_t, wiphy,
@@ -1970,6 +2051,7 @@ static void wiphy_dump_callback(struct l_genl_msg *msg,
 	struct l_genl_attr bands;
 	struct l_genl_attr attr;
 	uint16_t type;
+	struct band *band;
 
 	if (nl80211_parse_attrs(msg, NL80211_ATTR_WIPHY, &id,
 					NL80211_ATTR_WIPHY_BANDS, &bands,
@@ -1980,7 +2062,28 @@ static void wiphy_dump_callback(struct l_genl_msg *msg,
 	if (L_WARN_ON(!wiphy))
 		return;
 
-	while (l_genl_attr_next(&bands, NULL, NULL, NULL)) {
+	/* Unregistered means the wiphy is blacklisted, don't bother parsing */
+	if (!wiphy->registered)
+		return;
+
+	while (l_genl_attr_next(&bands, &type, NULL, NULL)) {
+		switch (type) {
+		case NL80211_BAND_2GHZ:
+			band = wiphy->band_2g;
+			break;
+		case NL80211_BAND_5GHZ:
+			band = wiphy->band_5g;
+			break;
+		case NL80211_BAND_6GHZ:
+			band = wiphy->band_6g;
+			break;
+		default:
+			continue;
+		}
+
+		if (L_WARN_ON(!band))
+			continue;
+
 		if (!l_genl_attr_recurse(&bands, &attr))
 			return;
 
@@ -1988,41 +2091,32 @@ static void wiphy_dump_callback(struct l_genl_msg *msg,
 			if (type != NL80211_BAND_ATTR_FREQS)
 				continue;
 
+			/*
+			 * Just write over the old list for each frequency. In
+			 * theory no new frequencies should be added so there
+			 * should never be any stale values.
+			 */
 			nl80211_parse_supported_frequencies(&attr, NULL,
-							wiphy->pending_freqs);
+							band->freq_attrs,
+							band->freqs_len);
 		}
 	}
 }
 
 static bool wiphy_cancel_last_dump(struct wiphy *wiphy)
 {
-	const struct l_queue_entry *e;
 	unsigned int id = 0;
 
 	/*
 	 * Zero command ID to signal that wiphy_dump_done doesn't need to do
-	 * anything. For a self-managed wiphy just free/NULL pending_freqs. For
-	 * a global dump each wiphy needs to be checked and dealt with.
+	 * anything.
 	 */
 	if (wiphy && wiphy->dump_id) {
 		id = wiphy->dump_id;
 		wiphy->dump_id = 0;
-
-		scan_freq_set_free(wiphy->pending_freqs);
-		wiphy->pending_freqs = NULL;
 	} else if (!wiphy && wiphy_dump_id) {
 		id = wiphy_dump_id;
 		wiphy_dump_id = 0;
-
-		for (e = l_queue_get_entries(wiphy_list); e; e = e->next) {
-			struct wiphy *w = e->data;
-
-			if (!w->pending_freqs || w->self_managed)
-				continue;
-
-			scan_freq_set_free(w->pending_freqs);
-			w->pending_freqs = NULL;
-		}
 	}
 
 	if (id) {
@@ -2067,7 +2161,6 @@ static void wiphy_dump_after_regdom(struct wiphy *wiphy)
 	/* Limited dump so just emit the event for this wiphy */
 	if (wiphy) {
 		wiphy->dump_id = id;
-		wiphy->pending_freqs = scan_freq_set_new();
 
 		if (no_start_event)
 			return;
@@ -2086,8 +2179,6 @@ static void wiphy_dump_after_regdom(struct wiphy *wiphy)
 
 		if (w->self_managed)
 			continue;
-
-		w->pending_freqs = scan_freq_set_new();
 
 		if (no_start_event)
 			continue;

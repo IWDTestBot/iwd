@@ -28,6 +28,7 @@ struct scan_bss;
 struct scan_freq_set;
 struct wiphy_radio_work_item;
 struct ie_rsn_info;
+struct band_freq_attrs;
 enum security;
 enum band_freq;
 
@@ -99,7 +100,11 @@ const char *wiphy_get_path(struct wiphy *wiphy);
 uint32_t wiphy_get_supported_bands(struct wiphy *wiphy);
 const struct scan_freq_set *wiphy_get_supported_freqs(
 						const struct wiphy *wiphy);
-const struct scan_freq_set *wiphy_get_disabled_freqs(const struct wiphy *wiphy);
+
+bool wiphy_get_frequency_info(const struct wiphy *wiphy, uint32_t freq,
+				struct band_freq_attrs *attr_out);
+bool wiphy_band_is_disabled(const struct wiphy *wiphy, enum band_freq band);
+
 bool wiphy_supports_probe_resp_offload(struct wiphy *wiphy);
 bool wiphy_can_transition_disable(struct wiphy *wiphy);
 bool wiphy_can_offload(struct wiphy *wiphy);
