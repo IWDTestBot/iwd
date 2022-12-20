@@ -72,6 +72,7 @@ struct ap_state {
 	uint8_t psk[32];
 	enum band_freq band;
 	uint8_t channel;
+	struct band_chandef chandef;
 	uint8_t *authorized_macs;
 	unsigned int authorized_macs_num;
 	char wsc_name[33];
@@ -2556,8 +2557,6 @@ static struct l_genl_msg *ap_build_cmd_start_ap(struct ap_state *ap)
 	uint32_t nl_akm = CRYPTO_AKM_PSK;
 	uint32_t wpa_version = NL80211_WPA_VERSION_2;
 	uint32_t auth_type = NL80211_AUTHTYPE_OPEN_SYSTEM;
-	uint32_t ch_freq = band_channel_to_freq(ap->channel, ap->band);
-	uint32_t ch_width = NL80211_CHAN_WIDTH_20;
 	unsigned int i;
 
 	static const uint8_t bcast_addr[6] = {
@@ -2605,8 +2604,13 @@ static struct l_genl_msg *ap_build_cmd_start_ap(struct ap_state *ap)
 	l_genl_msg_append_attr(cmd, NL80211_ATTR_WPA_VERSIONS, 4, &wpa_version);
 	l_genl_msg_append_attr(cmd, NL80211_ATTR_AKM_SUITES, 4, &nl_akm);
 	l_genl_msg_append_attr(cmd, NL80211_ATTR_AUTH_TYPE, 4, &auth_type);
-	l_genl_msg_append_attr(cmd, NL80211_ATTR_WIPHY_FREQ, 4, &ch_freq);
-	l_genl_msg_append_attr(cmd, NL80211_ATTR_CHANNEL_WIDTH, 4, &ch_width);
+	l_genl_msg_append_attr(cmd, NL80211_ATTR_WIPHY_FREQ, 4,
+				&ap->chandef.frequency);
+	l_genl_msg_append_attr(cmd, NL80211_ATTR_CHANNEL_WIDTH, 4,
+				&ap->chandef.channel_width);
+	if (ap->chandef.center1_frequency)
+		l_genl_msg_append_attr(cmd, NL80211_ATTR_CENTER_FREQ1, 4,
+					&ap->chandef.center1_frequency);
 
 	if (wiphy_supports_probe_resp_offload(wiphy)) {
 		uint8_t probe_resp[head_len + tail_len];
@@ -3326,6 +3330,7 @@ static bool ap_validate_band_channel(struct ap_state *ap)
 	struct wiphy *wiphy = netdev_get_wiphy(ap->netdev);
 	uint32_t freq;
 	const struct band_freq_attrs *attr;
+	int ret;
 
 	if (!(wiphy_get_supported_bands(wiphy) & ap->band)) {
 		l_error("AP hardware does not support band");
@@ -3345,6 +3350,22 @@ static bool ap_validate_band_channel(struct ap_state *ap)
 		l_error("AP frequency %u disabled or unsupported", freq);
 		return false;
 	}
+
+	if (!ap->supports_ht)
+		ret = band_freq_to_chandef(freq, attr, &ap->chandef);
+	else
+		ret = band_freq_to_ht_chandef(freq, attr, &ap->chandef);
+
+	if (ret < 0) {
+		l_error("AP unable to find chandef for freq %u", freq);
+		return false;
+	}
+
+	l_debug("AP using frequency %u and channel width %s",
+			ap->chandef.frequency,
+			band_chandef_width_to_string(
+				ap->chandef.channel_width));
+
 	return true;
 }
 
