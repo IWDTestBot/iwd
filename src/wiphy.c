@@ -137,6 +137,7 @@ struct wiphy {
 	bool registered : 1;
 	bool self_managed : 1;
 	bool ap_probe_resp_offload : 1;
+	bool supports_uapsd : 1;
 };
 
 static struct l_queue *wiphy_list = NULL;
@@ -910,6 +911,47 @@ bool wiphy_country_is_unknown(struct wiphy *wiphy)
 			(cc[0] == 'X' && cc[1] == 'X'));
 }
 
+bool wiphy_supports_uapsd(const struct wiphy *wiphy)
+{
+	return wiphy->supports_uapsd;
+}
+
+const uint8_t *wiphy_get_ht_capabilities(const struct wiphy *wiphy,
+						enum band_freq band,
+						size_t *size)
+{
+	static uint8_t ht_capa[26];
+	const struct band *bandp = wiphy_get_band(wiphy, band);
+
+	if (!bandp)
+		return NULL;
+
+	if (!bandp->ht_supported)
+		return NULL;
+
+	memset(ht_capa, 0, sizeof(ht_capa));
+
+	/*
+	 * The kernel segments the HT capabilities element into multiple
+	 * attributes. For convenience on the caller just combine them and
+	 * return the full IE rather than adding 3 separate getters. This also
+	 * provides a way to check if HT is supported.
+	 */
+	memcpy(ht_capa, bandp->ht_capabilities, 2);
+	ht_capa[2] = bandp->ht_ampdu_params;
+	memcpy(ht_capa + 3, bandp->ht_mcs_set, 16);
+
+	/*
+	 * TODO: HT Extended capabilities, beamforming, and ASEL capabilities
+	 * are not available to get from the kernel, leave as zero.
+	 */
+
+	if (size)
+		*size = sizeof(ht_capa);
+
+	return ht_capa;
+}
+
 int wiphy_estimate_data_rate(struct wiphy *wiphy,
 				const void *ies, uint16_t ies_len,
 				const struct scan_bss *bss,
@@ -1617,6 +1659,23 @@ static void parse_supported_bands(struct wiphy *wiphy,
 				memcpy(band->ht_capabilities, data, len);
 				band->ht_supported = true;
 				break;
+			/*
+			 * AMPDU factor/density are part of A-MPDU Parameters,
+			 * 802.11-2020 Section 9.4.2.55.3.
+			 */
+			case NL80211_BAND_ATTR_HT_AMPDU_FACTOR:
+				if (L_WARN_ON(len != 1))
+					continue;
+
+				band->ht_ampdu_params |= l_get_u8(data) & 0x3;
+				break;
+			case NL80211_BAND_ATTR_HT_AMPDU_DENSITY:
+				if (L_WARN_ON(len != 1))
+					continue;
+
+				band->ht_ampdu_params |=
+						(l_get_u8(data) & 0x7) >> 2;
+				break;
 			case NL80211_BAND_ATTR_IFTYPE_DATA:
 				if (!l_genl_attr_recurse(&attr, &nested))
 					continue;
@@ -1776,6 +1835,9 @@ static void wiphy_parse_attributes(struct wiphy *wiphy,
 			break;
 		case NL80211_ATTR_PROBE_RESP_OFFLOAD:
 			wiphy->ap_probe_resp_offload = true;
+			break;
+		case NL80211_ATTR_SUPPORT_AP_UAPSD:
+			wiphy->supports_uapsd = true;
 			break;
 		}
 	}
