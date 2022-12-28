@@ -72,6 +72,7 @@ struct ap_state {
 	uint8_t psk[32];
 	enum band_freq band;
 	uint8_t channel;
+	struct band_chandef chandef;
 	uint8_t *authorized_macs;
 	unsigned int authorized_macs_num;
 	char wsc_name[33];
@@ -111,6 +112,7 @@ struct ap_state {
 	bool in_event : 1;
 	bool free_pending : 1;
 	bool scanning : 1;
+	bool supports_ht : 1;
 };
 
 struct sta_state {
@@ -135,6 +137,9 @@ struct sta_state {
 	bool wsc_v2;
 	struct l_dhcp_lease *ip_alloc_lease;
 	bool ip_alloc_sent;
+
+	bool ht_support : 1;
+	bool ht_greenfield : 1;
 };
 
 struct ap_wsc_pbc_probe_record {
@@ -834,12 +839,76 @@ static size_t ap_get_extra_ies_len(struct ap_state *ap,
 
 	len += ap_get_wsc_ie_len(ap, type, client_frame, client_frame_len);
 
+	if (ap->supports_ht)
+		len += 26;
+
 	if (ap->ops->get_extra_ies_len)
 		len += ap->ops->get_extra_ies_len(type, client_frame,
 							client_frame_len,
 							ap->user_data);
 
 	return len;
+}
+
+/* WMM Specification 2.2.2 WMM Parameter Element */
+struct ap_wmm_ac_record {
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	uint8_t aifsn : 4;
+	uint8_t acm : 1;
+	uint8_t aci : 2;
+	uint8_t reserved : 1;
+	uint8_t ecw_min : 4;
+	uint8_t ecw_max : 4;
+#elif defined (__BIG_ENDIAN_BITFIELD)
+	uint8_t reserved : 1;
+	uint8_t aci : 2;
+	uint8_t acm : 1;
+	uint8_t aifsn : 4;
+	uint8_t acw_max : 4;
+	uint8_t acw_min : 4;
+#else
+#error "Please fix <asm/byteorder.h"
+#endif
+	__le16 txop_limit;
+} __attribute__((packed));
+
+static size_t ap_write_wmm_ies(struct ap_state *ap, uint8_t *out_buf)
+{
+	unsigned int i;
+	struct wiphy *wiphy = netdev_get_wiphy(ap->netdev);
+
+	/*
+	 * Linux kernel requires APs include WMM Information element if
+	 * supporting HT/VHT/etc.
+	 *
+	 * The only value we can actually get from the kernel is UAPSD. The
+	 * remaining values (AC parameter records) are made up or defaults
+	 * defined in the WMM spec are used.
+	 */
+	*out_buf++ = IE_TYPE_VENDOR_SPECIFIC;
+	*out_buf++ = 24;
+	memcpy(out_buf, microsoft_oui, sizeof(microsoft_oui));
+	out_buf += sizeof(microsoft_oui);
+	*out_buf++ = 2; /* WMM OUI Type */
+	*out_buf++ = 1; /* WMM Parameter subtype */
+	*out_buf++ = 1; /* WMM Version */
+	*out_buf++ = wiphy_supports_uapsd(wiphy) ? 1 << 7 : 0;
+	*out_buf++ = 0; /* reserved */
+
+	for (i = 0; i < 4; i++) {
+		struct ap_wmm_ac_record ac = { 0 };
+
+		ac.aifsn = 2;
+		ac.acm = 0;
+		ac.aci = i;
+		ac.ecw_min = 1;
+		ac.ecw_max = 15;
+		l_put_le16(0, &ac.txop_limit);
+
+		memcpy(out_buf + (i * 4), &ac, sizeof(struct ap_wmm_ac_record));
+	}
+
+	return 26;
 }
 
 static size_t ap_write_extra_ies(struct ap_state *ap,
@@ -853,12 +922,75 @@ static size_t ap_write_extra_ies(struct ap_state *ap,
 	len += ap_write_wsc_ie(ap, type, client_frame, client_frame_len,
 				out_buf + len);
 
+	if (ap->supports_ht)
+		len += ap_write_wmm_ies(ap, out_buf + len);
+
 	if (ap->ops->write_extra_ies)
 		len += ap->ops->write_extra_ies(type,
 						client_frame, client_frame_len,
 						out_buf + len, ap->user_data);
 
 	return len;
+}
+
+static size_t ap_build_ht_capability(struct ap_state *ap, uint8_t *buf)
+{
+	struct wiphy *wiphy = netdev_get_wiphy(ap->netdev);
+	size_t ht_capa_len;
+	const uint8_t *ht_capa = wiphy_get_ht_capabilities(wiphy, ap->band,
+								&ht_capa_len);
+
+	memcpy(buf, ht_capa, ht_capa_len);
+
+	return ht_capa_len;
+}
+
+static size_t ap_build_ht_operation(struct ap_state *ap, uint8_t *buf)
+{
+	const struct l_queue_entry *e;
+	unsigned int non_ht = false;
+	unsigned int non_greenfield = false;
+
+	memset(buf, 0, 22);
+	*buf++ = ap->channel;
+
+	/*
+	 * If 40MHz set 'Secondary Channel Offset' (bits 0-1) to above/below
+	 * and set 'STA Channel Width' (bit 2) to indicate non-20Mhz.
+	 */
+	if (ap->chandef.channel_width == BAND_CHANDEF_WIDTH_20)
+		goto check_stas;
+	else if (ap->chandef.frequency < ap->chandef.center1_frequency)
+		*buf |= 1 & 0x3;
+	else
+		*buf |= 3 & 0x3;
+
+	*buf |= 1 << 2;
+
+check_stas:
+	for (e = l_queue_get_entries(ap->sta_states); e; e = e->next) {
+		struct sta_state *sta = e->data;
+
+		if (!sta->associated)
+			continue;
+
+		if (!sta->ht_support)
+			non_ht = true;
+		else if (!sta->ht_greenfield)
+			non_greenfield = true;
+	}
+
+	if (non_greenfield)
+		set_bit(buf, 10);
+
+	if (non_ht)
+		set_bit(buf, 12);
+
+	/*
+	 * TODO: Basic MCS set for all associated STAs
+	 */
+
+	return 22;
 }
 
 /*
@@ -912,6 +1044,18 @@ static size_t ap_build_beacon_pr_head(struct ap_state *ap,
 	/* DSSS Parameter Set IE for DSSS, HR, ERP and HT PHY rates */
 	ie_tlv_builder_next(&builder, IE_TYPE_DSSS_PARAMETER_SET);
 	ie_tlv_builder_set_data(&builder, &ap->channel, 1);
+
+	if (ap->supports_ht) {
+		ie_tlv_builder_next(&builder, IE_TYPE_HT_CAPABILITIES);
+		len = ap_build_ht_capability(ap,
+					ie_tlv_builder_get_data(&builder));
+		ie_tlv_builder_set_length(&builder, len);
+
+		ie_tlv_builder_next(&builder, IE_TYPE_HT_OPERATION);
+		len = ap_build_ht_operation(ap,
+					ie_tlv_builder_get_data(&builder));
+		ie_tlv_builder_set_length(&builder, len);
+	}
 
 	ie_tlv_builder_finalize(&builder, &out_len);
 	return 36 + out_len;
@@ -1571,6 +1715,18 @@ static uint32_t ap_assoc_resp(struct ap_state *ap, struct sta_state *sta,
 	resp->ies[ies_len++] = len;
 	ies_len += len;
 
+	if (ap->supports_ht) {
+		resp->ies[ies_len++] = IE_TYPE_HT_CAPABILITIES;
+		len = ap_build_ht_capability(ap, resp->ies + ies_len + 1);
+		resp->ies[ies_len++] = len;
+		ies_len += len;
+
+		resp->ies[ies_len++] = IE_TYPE_HT_OPERATION;
+		len = ap_build_ht_operation(ap, resp->ies + ies_len + 1);
+		resp->ies[ies_len++] = len;
+		ies_len += len;
+	}
+
 	ies_len += ap_write_extra_ies(ap, stype, req, req_len,
 					resp->ies + ies_len);
 
@@ -1775,6 +1931,17 @@ static void ap_assoc_reassoc(struct sta_state *sta, bool reassoc,
 			}
 
 			fils_ip_req = true;
+			break;
+		case IE_TYPE_HT_CAPABILITIES:
+			if (ie_tlv_iter_get_length(&iter) != 26) {
+				err = MMPDU_REASON_CODE_INVALID_IE;
+				goto bad_frame;
+			}
+
+			if (test_bit(ie_tlv_iter_get_data(&iter), 4))
+				sta->ht_greenfield = true;
+
+			sta->ht_support = true;
 			break;
 		}
 
@@ -2401,8 +2568,6 @@ static struct l_genl_msg *ap_build_cmd_start_ap(struct ap_state *ap)
 	uint32_t nl_akm = CRYPTO_AKM_PSK;
 	uint32_t wpa_version = NL80211_WPA_VERSION_2;
 	uint32_t auth_type = NL80211_AUTHTYPE_OPEN_SYSTEM;
-	uint32_t ch_freq = band_channel_to_freq(ap->channel, ap->band);
-	uint32_t ch_width = NL80211_CHAN_WIDTH_20;
 	unsigned int i;
 
 	static const uint8_t bcast_addr[6] = {
@@ -2450,8 +2615,13 @@ static struct l_genl_msg *ap_build_cmd_start_ap(struct ap_state *ap)
 	l_genl_msg_append_attr(cmd, NL80211_ATTR_WPA_VERSIONS, 4, &wpa_version);
 	l_genl_msg_append_attr(cmd, NL80211_ATTR_AKM_SUITES, 4, &nl_akm);
 	l_genl_msg_append_attr(cmd, NL80211_ATTR_AUTH_TYPE, 4, &auth_type);
-	l_genl_msg_append_attr(cmd, NL80211_ATTR_WIPHY_FREQ, 4, &ch_freq);
-	l_genl_msg_append_attr(cmd, NL80211_ATTR_CHANNEL_WIDTH, 4, &ch_width);
+	l_genl_msg_append_attr(cmd, NL80211_ATTR_WIPHY_FREQ, 4,
+				&ap->chandef.frequency);
+	l_genl_msg_append_attr(cmd, NL80211_ATTR_CHANNEL_WIDTH, 4,
+				&ap->chandef.channel_width);
+	if (ap->chandef.center1_frequency)
+		l_genl_msg_append_attr(cmd, NL80211_ATTR_CENTER_FREQ1, 4,
+					&ap->chandef.center1_frequency);
 
 	if (wiphy_supports_probe_resp_offload(wiphy)) {
 		uint8_t probe_resp[head_len + tail_len];
@@ -2618,6 +2788,9 @@ static void ap_handle_new_station(struct ap_state *ap, struct l_genl_msg *msg)
 		ap->sta_states = l_queue_new();
 
 	l_queue_push_tail(ap->sta_states, sta);
+
+	if (ap->supports_ht)
+		ap_update_beacon(ap);
 
 	msg = nl80211_build_set_station_unauthorized(
 					netdev_get_ifindex(ap->netdev), mac);
@@ -3187,6 +3360,32 @@ static bool ap_validate_band_channel(struct ap_state *ap)
 		l_error("AP frequency %u disabled or unsupported", freq);
 		return false;
 	}
+
+	if (ap->supports_ht) {
+		if (band_freq_to_ht_chandef(freq, attr, &ap->chandef) < 0) {
+			/*
+			 * This is unlikely ever to fail since there are no
+			 * 20Mhz restrictions, but just in case fall back to
+			 * non-HT.
+			 */
+			ap->supports_ht = false;
+
+			l_warn("AP could not find HT chandef for frequency %u"
+				" using 20Mhz no-HT", freq);
+
+			goto no_ht;
+		}
+	} else {
+no_ht:
+		ap->chandef.frequency = freq;
+		ap->chandef.channel_width = BAND_CHANDEF_WIDTH_20NOHT;
+	}
+
+	l_debug("AP using frequency %u and channel width %s",
+			ap->chandef.frequency,
+			band_chandef_width_to_string(
+				ap->chandef.channel_width));
+
 	return true;
 }
 
@@ -3254,6 +3453,9 @@ static int ap_load_config(struct ap_state *ap, const struct l_settings *config,
 		ap->channel = 6;
 		ap->band = BAND_FREQ_2_4_GHZ;
 	}
+
+	ap->supports_ht = wiphy_get_ht_capabilities(wiphy, ap->band,
+							NULL) != NULL;
 
 	if (!ap_validate_band_channel(ap)) {
 		l_error("AP Band and Channel combination invalid");
@@ -3651,6 +3853,9 @@ bool ap_station_disconnect(struct ap_state *ap, const uint8_t *mac,
 	sta = l_queue_remove_if(ap->sta_states, ap_sta_match_addr, mac);
 	if (!sta)
 		return false;
+
+	if (ap->supports_ht)
+		ap_update_beacon(ap);
 
 	ap_del_station(sta, reason, false);
 	ap_sta_free(sta);
