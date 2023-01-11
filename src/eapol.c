@@ -1087,8 +1087,6 @@ static void eapol_send_ptk_1_of_4(struct eapol_sm *sm)
 
 	handshake_state_new_anonce(sm->handshake);
 
-	sm->handshake->ptk_complete = false;
-
 	sm->replay_counter++;
 
 	memset(ek, 0, EAPOL_FRAME_LEN(sm->mic_len));
@@ -1111,6 +1109,11 @@ static void eapol_send_ptk_1_of_4(struct eapol_sm *sm)
 			pmkid, false);
 
 	eapol_key_data_append(ek, sm->mic_len, HANDSHAKE_KDE_PMKID, pmkid, 16);
+
+	if (sm->handshake->ptk_complete) {
+		ek->secure = true;
+		sm->rekey = true;
+	}
 
 	ek->header.packet_len = L_CPU_TO_BE16(EAPOL_FRAME_LEN(sm->mic_len) +
 				EAPOL_KEY_DATA_LEN(ek, sm->mic_len) - 4);
@@ -2092,7 +2095,8 @@ static void eapol_handle_ptk_4_of_4(struct eapol_sm *sm,
 	 * This might be a retransmission, so accept but don't install
 	 * the keys again.
 	 */
-	if (!sm->handshake->ptk_complete)
+	if (!sm->handshake->ptk_complete ||
+				(sm->handshake->ptk_complete && sm->rekey))
 		handshake_state_install_ptk(sm->handshake);
 
 	sm->handshake->ptk_complete = true;
@@ -2445,6 +2449,8 @@ static void eapol_eap_complete_cb(enum eap_result result, void *user_data)
 		}
 
 		/* sm->mic_len will have been set in eapol_eap_results_cb */
+
+		sm->frame_retry = 0;
 
 		/* Kick off 4-Way Handshake */
 		eapol_ptk_1_of_4_retry(NULL, sm);
@@ -2836,6 +2842,8 @@ bool eapol_start(struct eapol_sm *sm)
 		} else {
 			if (L_WARN_ON(!sm->handshake->have_pmk))
 				return false;
+
+			sm->frame_retry = 0;
 
 			/* Kick off handshake */
 			eapol_ptk_1_of_4_retry(NULL, sm);
