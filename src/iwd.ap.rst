@@ -67,6 +67,13 @@ The group ``[General]`` contains general AP configuration.
        ensure the country is set, and that the desired frequency/channel is
        unrestricted.
 
+   * - RekeyTimeout
+     - Timeout for PTK rekeys (seconds)
+
+       The time interval at which the AP starts a rekey for a given station. If
+       not provided a default value of 600 seconds is used. A value of 0 will
+       disable PTK rekeys completely.
+
 Network Authentication Settings
 -------------------------------
 
