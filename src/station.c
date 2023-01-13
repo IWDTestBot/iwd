@@ -1999,6 +1999,9 @@ static void station_roamed(struct station *station)
 
 	l_queue_clear(station->roam_bss_list, l_free);
 
+	if (station->ft_work.id)
+		wiphy_radio_work_done(station->wiphy, station->ft_work.id);
+
 	station_enter_state(station, STATION_STATE_CONNECTED);
 }
 
@@ -2022,6 +2025,9 @@ static void station_roam_failed(struct station *station)
 	l_debug("%u", netdev_get_ifindex(station->netdev));
 
 	l_queue_clear(station->roam_bss_list, l_free);
+
+	if (station->ft_work.id)
+		wiphy_radio_work_done(station->wiphy, station->ft_work.id);
 
 	/*
 	 * If we attempted a reassociation or a fast transition, and ended up
@@ -2263,7 +2269,8 @@ try_next:
 	station->preparing_roam = false;
 	station_enter_state(station, STATION_STATE_FT_ROAMING);
 
-	return true;
+	/* Keep the work item until after FT finishes */
+	return false;
 
 assoc_failed:
 	station_roam_failed(station);
@@ -2291,6 +2298,11 @@ static bool station_fast_transition(struct station *station,
 	/* Reset the vendor_ies in case they're different */
 	vendor_ies = network_info_get_extra_ies(info, bss, &iov_elems);
 	handshake_state_set_vendor_ies(hs, vendor_ies, iov_elems);
+
+	if (station->roam_trigger_timeout) {
+		l_timeout_remove(station->roam_trigger_timeout);
+		station->roam_trigger_timeout = NULL;
+	}
 
 	/* Both ft_action/ft_authenticate will gate the associate work item */
 	if ((hs->mde[4] & 1))
@@ -2747,7 +2759,8 @@ static bool station_cannot_roam(struct station *station)
 
 	return disabled || station->preparing_roam ||
 				station->state == STATION_STATE_ROAMING ||
-				station->state == STATION_STATE_FT_ROAMING;
+				station->state == STATION_STATE_FT_ROAMING ||
+				station->ft_work.id;
 }
 
 #define WNM_REQUEST_MODE_PREFERRED_CANDIDATE_LIST	(1 << 0)
