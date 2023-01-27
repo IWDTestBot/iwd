@@ -5053,6 +5053,8 @@ static void station_known_networks_changed(enum known_networks_event event,
 
 static int station_init(void)
 {
+	bool eap_tls_cache;
+
 	station_list = l_queue_new();
 	netdev_watch = netdev_watch_add(station_netdev_watch, NULL, NULL);
 	l_dbus_register_interface(dbus_get_bus(), IWD_STATION_INTERFACE,
@@ -5102,6 +5104,11 @@ static int station_init(void)
 						"ndisc_evict_nocarrier");
 
 	watchlist_init(&event_watches, NULL);
+
+	if (!l_settings_get_bool(iwd_get_config(), "Network",
+				"EnableEAPTLSCache", &eap_tls_cache) ||
+			!eap_tls_cache)
+		return 0;
 
 	eap_tls_set_session_cache_ops(storage_eap_tls_cache_load,
 					storage_eap_tls_cache_sync);
