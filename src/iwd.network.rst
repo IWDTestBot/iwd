@@ -174,6 +174,16 @@ The group ``[Settings]`` contains general settings.
        Properly configured Access Points will typically update this setting
        appropriately via Transition Disable indications.  User customization
        of this value is thus typically not required.
+   * - DisableEAPTLSCache
+     - Values: true, **false**
+
+       Disables TLS session caching in EAP-TLS, EAP-TTLS and EAP-PEAP.
+       Some network authenticators may be misconfigured in a way that TLS
+       session resumption is allowed but actually attempting it will cause
+       the EAP method to fail or time out.  In that case, assuming the
+       credentials and other settings are correct, every other connection
+       attempt will fail as sessions are cached and forgotten in alternating
+       attempts.  Use this setting to disable caching for this network.
 
 Network Authentication Settings
 -------------------------------
