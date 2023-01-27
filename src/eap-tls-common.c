@@ -115,6 +115,7 @@ struct eap_tls_state {
 
 	bool expecting_frag_ack:1;
 	bool tunnel_ready:1;
+	bool tls_session_resumed:1;
 
 	struct l_queue *ca_cert;
 	struct l_certchain *client_cert;
@@ -129,8 +130,10 @@ static struct l_settings *eap_tls_session_cache;
 static eap_tls_session_cache_load_func_t eap_tls_session_cache_load;
 static eap_tls_session_cache_sync_func_t eap_tls_session_cache_sync;
 
-static void __eap_tls_common_state_reset(struct eap_tls_state *eap_tls)
+static void __eap_tls_common_state_reset(struct eap_state *eap)
 {
+	struct eap_tls_state *eap_tls = eap_get_data(eap);
+
 	eap_tls->version_negotiated = EAP_TLS_VERSION_NOT_NEGOTIATED;
 	eap_tls->method_completed = false;
 	eap_tls->phase2_failed = false;
@@ -144,6 +147,27 @@ static void __eap_tls_common_state_reset(struct eap_tls_state *eap_tls)
 	 */
 	if (eap_tls->tunnel)
 		l_tls_reset(eap_tls->tunnel);
+
+	/*
+	 * If we used TLS session resumption successfully but the overall
+	 * EAP method failed, forget the session to improve the chances
+	 * that authentication succeeds on the next attempt considering
+	 * that some authenticators strangely allow resumption but can't
+	 * handle it all the way to EAP method success.  Do this even if
+	 * we have no indication that the method failed but it just didn't
+	 * succeed, to handle cases like the server getting stuck and a
+	 * timout occuring at a higher layer.  The risk is that we may
+	 * occasionally flush the session data when there was only a
+	 * momentary radio issue, invalid phase2 credentials or decision
+	 * to abort.  Those are not hot paths.
+	 *
+	 * TLS errors before the ready callback are already handled in
+	 * l_tls so we only need to look at .tls_session_resumed here.
+	 */
+	if (eap_tls->tls_session_resumed && !eap_method_is_success(eap))
+		eap_tls_forget_peer(eap_get_peer_id(eap));
+
+	eap_tls->tls_session_resumed = false;
 
 	eap_tls->tx_frag_offset = 0;
 	eap_tls->tx_frag_last_len = 0;
@@ -187,7 +211,7 @@ bool eap_tls_common_state_reset(struct eap_state *eap)
 {
 	struct eap_tls_state *eap_tls = eap_get_data(eap);
 
-	__eap_tls_common_state_reset(eap_tls);
+	__eap_tls_common_state_reset(eap);
 
 	if (eap_tls->variant_ops->reset)
 		eap_tls->variant_ops->reset(eap_tls->variant_data);
@@ -199,7 +223,7 @@ void eap_tls_common_state_free(struct eap_state *eap)
 {
 	struct eap_tls_state *eap_tls = eap_get_data(eap);
 
-	__eap_tls_common_state_reset(eap_tls);
+	__eap_tls_common_state_reset(eap);
 
 	eap_set_data(eap, NULL);
 
@@ -244,7 +268,9 @@ static void eap_tls_tunnel_ready(const char *peer_identity, void *user_data)
 {
 	struct eap_state *eap = user_data;
 	struct eap_tls_state *eap_tls = eap_get_data(eap);
-	bool resumed = l_tls_get_session_resumed(eap_tls->tunnel);
+
+	eap_tls->tls_session_resumed =
+		l_tls_get_session_resumed(eap_tls->tunnel);
 
 	if (eap_tls->ca_cert && !peer_identity) {
 		l_error("%s: TLS did not verify AP identity",
@@ -265,7 +291,8 @@ static void eap_tls_tunnel_ready(const char *peer_identity, void *user_data)
 	if (!eap_tls->variant_ops->tunnel_ready)
 		return;
 
-	if (!eap_tls->variant_ops->tunnel_ready(eap, peer_identity, resumed))
+	if (!eap_tls->variant_ops->tunnel_ready(eap, peer_identity,
+						eap_tls->tls_session_resumed))
 		l_tls_close(eap_tls->tunnel);
 }
 
