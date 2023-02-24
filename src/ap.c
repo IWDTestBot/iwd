@@ -1499,10 +1499,15 @@ static void ap_gtk_query_cb(struct l_genl_msg *msg, void *user_data)
 	struct sta_state *sta = user_data;
 	const void *gtk_rsc;
 	uint8_t zero_gtk_rsc[6];
+	int err;
 
 	sta->gtk_query_cmd_id = 0;
 
-	if (l_genl_msg_get_error(msg) < 0)
+	err = l_genl_msg_get_error(msg);
+	if (err == -ENOTSUP) {
+		gtk_rsc = zero_gtk_rsc;
+		goto start_rsna;
+	} else if (err < 0)
 		goto error;
 
 	gtk_rsc = nl80211_parse_get_key_seq(msg);
@@ -1511,6 +1516,7 @@ static void ap_gtk_query_cb(struct l_genl_msg *msg, void *user_data)
 		gtk_rsc = zero_gtk_rsc;
 	}
 
+start_rsna:
 	ap_start_rsna(sta, gtk_rsc);
 	return;
 
