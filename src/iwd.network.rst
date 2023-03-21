@@ -133,14 +133,14 @@ The group ``[Settings]`` contains general settings.
 
        If enabled, the MAC address will be fully randomized on each connection.
        This option is only used if [General].AddressRandomization is set to
-       'network'. See iwd.config. This setting should not be used with
+       'network'. See **iwd.config**\(5). This setting should not be used with
        [Settings].AddressOverride, if both are set AddressOverride will be used.
    * - AddressOverride
      - MAC address string
 
        Override the MAC address used for connecting to this network. This option
        is only used if [General].AddressRandomization is set to 'network'. See
-       iwd.config. This setting should not be used with
+       **iwd.config**\(5). This setting should not be used with
        [Settings].AlwaysRandomizeAddress, if both are set AddressOverride will
        be used.
    * - TransitionDisable
@@ -180,7 +180,7 @@ Network Authentication Settings
 
 The group ``[Security]`` contains settings for Wi-Fi security and
 authentication configuration. This group can be encrypted by enabling
-``SystemdEncrypt``, see *iwd.config* for details on this option. If this
+``SystemdEncrypt``, see **iwd.config**\(5) for details on this option. If this
 section is encrypted (only contains EncryptedSalt/EncryptedSecurity) it should
 not be modified. Modifying these values will result in the inability to
 connect to that network.
@@ -541,4 +541,4 @@ PEAP + MSCHAPv2
 SEE ALSO
 ========
 
-iwd(8), iwd.config(5)
+**iwd**\(8), **iwd.config**\(5)

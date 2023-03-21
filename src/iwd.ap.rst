@@ -33,7 +33,7 @@ method is used.
 FILE FORMAT
 ===========
 
-See *iwd.network* for details on the settings file syntax.
+See **iwd.network**\(5) for details on the settings file syntax.
 
 SETTINGS
 ========
@@ -62,7 +62,7 @@ The group ``[General]`` contains general AP configuration.
        Note: Due to regulatory requirements the linux kernel does not allow or
        strictly limits 5GHz use in AP mode while in world roaming. These
        frequencies become available once the country is set, either via IWD's
-       main.conf option ``[General].Country`` (see ``man iwd.config``) or
+       main.conf option ``[General].Country`` (see **iwd.config**\(5)) or
        externally (e.g. iw reg set <CC>). If you are having trouble using 5GHz
        ensure the country is set, and that the desired frequency/channel is
        unrestricted.
@@ -122,7 +122,7 @@ IPv4 Network Configuration
 
 The group ``[IPv4]`` contains settings for IWD's built-in DHCP server.  All
 settings are optional.  They're used if network configuration was enabled as
-described in ``iwd.config(5)``.  Omitting the ``[IPv4]`` group disables
+described in **iwd.config**\(5).  Omitting the ``[IPv4]`` group disables
 network configuration for this access point so if an all-defaults DHCP setup
 is desired, the group header line must still be present:
 
@@ -230,4 +230,4 @@ The group ``[WSC]`` fine-tunes some Wi-Fi Simple Configuration local parameters
 SEE ALSO
 ========
 
-iwd(8), iwd.network(5)
+**iwd**\(8), **iwd.network**\(5)

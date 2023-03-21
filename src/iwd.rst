@@ -44,19 +44,19 @@ OPTIONS
 ENVIRONMENT
 ===========
 
-*$STATE_DIRECTORY* is used for network configuration files.  See *iwd.network*
-for details.
+*$STATE_DIRECTORY* is used for network configuration files.  See
+**iwd.network**\(5) for details.
 
 *$CONFIGURATION_DIRECTORY* is used for daemon configuration settings.  Only
-the file **main.conf** is currently read from this directory.  See *iwd.config*
-for details.
+the file **main.conf** is currently read from this directory.  See
+**iwd.config**\(5) for details.
 
-See *iwd.debug* for further environment variables for debugging.
+See **iwd.debug**\(7) for further environment variables for debugging.
 
 SEE ALSO
 ========
 
-iwd.config(5), iwd.network(5), iwd.debug(7), iwctl(1), iwmon(1), hwsim(1),
-ead(8), systemd.exec(5)
+**iwd.config**\(5), **iwd.network**\(5), **iwd.debug**\(7), **iwctl**\(1),
+**iwmon**\(1), **hwsim**\(1), **ead**\(8), **systemd.exec**\(5)
 
 http://iwd.wiki.kernel.org
