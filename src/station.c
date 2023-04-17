@@ -2850,6 +2850,22 @@ static void station_roam_trigger_cb(struct l_timeout *timeout, void *user_data)
 	if (station_cannot_roam(station))
 		return;
 
+	/*
+	 * This is unlikely, but can still happen when network configuration is
+	 * enabled and DHCP is slow. If IWD connects to a BSS under the low RSSI
+	 * threshold it will immediately get a CQM event once connected (as far
+	 * as the kernel is concerned, NOT IWD's connected state). This starts
+	 * a 5 second timer and if DHCP has not completed by then IWD will
+	 * roam. Since this would likely confused the APs and IWD its best to
+	 * let DHCP complete i.e. wait until we are in a connected state.
+	 */
+	if (station->state != STATION_STATE_CONNECTED) {
+		l_debug("Tried to roam in unconnected state, will try "
+			"again in 5 seconds");
+		station_roam_timeout_rearm(station, 5);
+		return;
+	}
+
 	station_start_roam(station);
 }
 
