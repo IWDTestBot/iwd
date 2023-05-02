@@ -2549,7 +2549,7 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 	uint16_t mdid;
 	enum security orig_security, security;
 
-	if (err) {
+	if (err || !network) {
 		station_roam_failed(station);
 		return false;
 	}
