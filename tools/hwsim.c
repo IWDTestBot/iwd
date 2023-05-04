@@ -1512,42 +1512,9 @@ static void process_frame(struct hwsim_frame *frame)
 		struct send_frame_info *send_info;
 		bool drop = drop_mcast;
 		uint32_t delay = 0;
-		const struct l_queue_entry *i;
 
 		if (radio == frame->src_radio)
 			continue;
-
-		/*
-		 * The kernel hwsim medium passes multicast frames to all
-		 * radios that are on the same frequency as this frame but
-		 * the netlink medium API only lets userspace pass frames to
-		 * radios by known hardware address.  It does check that the
-		 * receiving radio is on the same frequency though so we can
-		 * send to all known addresses.
-		 *
-		 * If the frame's Receiver Address (RA) is a multicast
-		 * address, then send the frame to every radio that is
-		 * registered.  If it's a unicast address then optimize
-		 * by only forwarding the frame to the radios that have
-		 * at least one interface with this specific address.
-		 */
-		if (!util_is_broadcast_address(frame->dst_ether_addr)) {
-			for (i = l_queue_get_entries(interface_info);
-					i; i = i->next) {
-				struct interface_info_rec *interface = i->data;
-
-				if (interface->radio_rec != radio)
-					continue;
-
-				if (!memcmp(interface->addr,
-						frame->dst_ether_addr,
-						ETH_ALEN))
-					break;
-			}
-
-			if (!i)
-				continue;
-		}
 
 		process_rules(frame->src_radio, radio, frame, false,
 				&drop, &delay);
