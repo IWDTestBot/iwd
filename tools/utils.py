@@ -529,7 +529,8 @@ class Namespace:
 		ret = 'Namespace: %s\n' % self.name
 		ret += 'Processes:\n'
 		for p in Process.get_all():
-			ret += '\t%s' % str(p)
+			if p.namespace == self.name:
+				ret += '\t%s' % str(p)
 
 		ret += 'Radios:\n'
 		if len(self.radios) > 0:
