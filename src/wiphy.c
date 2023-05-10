@@ -67,6 +67,7 @@ static int mac_randomize_bytes = 6;
 static char regdom_country[2];
 static uint32_t work_ids;
 static unsigned int wiphy_dump_id;
+static bool dump_queued;
 
 enum driver_flag {
 	DEFAULT_IF = 0x1,
@@ -135,6 +136,7 @@ struct wiphy {
 	bool work_in_callback;
 	unsigned int get_reg_id;
 	unsigned int dump_id;
+	bool dump_queued : 1;
 
 	bool support_scheduled_scan:1;
 	bool support_rekey_offload:1;
@@ -2104,18 +2106,23 @@ static void wiphy_setup_rm_enabled_capabilities(struct wiphy *wiphy)
 	 */
 }
 
+static void wiphy_dump_after_regdom(struct wiphy *wiphy);
+
 static void wiphy_dump_done(void *user_data)
 {
 	struct wiphy *wiphy = user_data;
 	const struct l_queue_entry *e;
 
-	/* This dump was canceled due to another dump */
-	if ((wiphy && !wiphy->dump_id) || (!wiphy && !wiphy_dump_id))
-		return;
-
 	if (wiphy) {
 		wiphy->dump_id = 0;
 
+		if (wiphy->dump_queued) {
+			wiphy->dump_queued = false;
+			wiphy_dump_after_regdom(wiphy);
+			return;
+		}
+
+		/* No other dumps queued, emit done */
 		WATCHLIST_NOTIFY(&wiphy->state_watches,
 				wiphy_state_watch_func_t, wiphy,
 				WIPHY_STATE_WATCH_EVENT_REGDOM_DONE);
@@ -2124,6 +2131,12 @@ static void wiphy_dump_done(void *user_data)
 	}
 
 	wiphy_dump_id = 0;
+
+	if (dump_queued) {
+		dump_queued = false;
+		wiphy_dump_after_regdom(NULL);
+		return;
+	}
 
 	for (e = l_queue_get_entries(wiphy_list); e; e = e->next) {
 		wiphy = e->data;
@@ -2198,38 +2211,48 @@ static void wiphy_dump_callback(struct l_genl_msg *msg,
 	}
 }
 
-static bool wiphy_cancel_last_dump(struct wiphy *wiphy)
-{
-	unsigned int id = 0;
-
-	/*
-	 * Zero command ID to signal that wiphy_dump_done doesn't need to do
-	 * anything.
-	 */
-	if (wiphy && wiphy->dump_id) {
-		id = wiphy->dump_id;
-		wiphy->dump_id = 0;
-	} else if (!wiphy && wiphy_dump_id) {
-		id = wiphy_dump_id;
-		wiphy_dump_id = 0;
-	}
-
-	if (id) {
-		l_debug("Canceling pending regdom wiphy dump (%s)",
-					wiphy ? wiphy->name : "global");
-
-		l_genl_family_cancel(nl80211, id);
-	}
-
-	return id != 0;
-}
-
 static void wiphy_dump_after_regdom(struct wiphy *wiphy)
 {
 	const struct l_queue_entry *e;
 	struct l_genl_msg *msg;
-	unsigned int id;
-	bool no_start_event;
+	unsigned int *id = NULL;
+
+	if (wiphy)
+		id = &wiphy->dump_id;
+	else
+		id = &wiphy_dump_id;
+
+	if (*id) {
+		/*
+		 * If the dump hasn't hit the kernel we can safely cancel it.
+		 * Otherwise set the dump_queued flag and once the current dump
+		 * has completed, another will start. This also ensures there is
+		 * only at most 1 pending dump.
+		 */
+		if (!l_genl_family_request_sent(nl80211, *id)) {
+			l_debug("Canceling pending regdom wiphy dump (%s)",
+					wiphy ? wiphy->name : "global");
+
+			l_genl_family_cancel(nl80211, *id);
+
+			/*
+			 * If there is already dump queued (dump_queued=true)
+			 * the destroy callback will end up starting another
+			 * dump. If this happens nothing more needs to be done.
+			 */
+			if (*id)
+				return;
+		} else if (wiphy) {
+			wiphy->dump_queued = true;
+			return;
+		} else {
+			dump_queued = true;
+			return;
+		}
+	}
+
+	l_debug("Dumping wiphy after regdom change (%s)",
+			wiphy ? wiphy->name : "global");
 
 	msg = l_genl_msg_new_sized(NL80211_CMD_GET_WIPHY, 128);
 
@@ -2237,45 +2260,27 @@ static void wiphy_dump_after_regdom(struct wiphy *wiphy)
 		l_genl_msg_append_attr(msg, NL80211_ATTR_WIPHY, 4, &wiphy->id);
 
 	l_genl_msg_append_attr(msg, NL80211_ATTR_SPLIT_WIPHY_DUMP, 0, NULL);
-	id = l_genl_family_dump(nl80211, msg, wiphy_dump_callback,
+	*id = l_genl_family_dump(nl80211, msg, wiphy_dump_callback,
 						wiphy, wiphy_dump_done);
-	if (!id) {
+	if (!*id) {
 		l_error("Wiphy information dump failed");
 		l_genl_msg_unref(msg);
 		return;
 	}
 
-	/*
-	 * Another update while dumping wiphy. This next dump should supercede
-	 * the first and not result in a DONE event until this new dump is
-	 * finished. This is because the disabled frequencies are in an unknown
-	 * state and could cause incorrect behavior by any watchers.
-	 */
-	no_start_event = wiphy_cancel_last_dump(wiphy);
-
 	/* Limited dump so just emit the event for this wiphy */
 	if (wiphy) {
-		wiphy->dump_id = id;
-
-		if (no_start_event)
-			return;
-
 		WATCHLIST_NOTIFY(&wiphy->state_watches,
 				wiphy_state_watch_func_t, wiphy,
 				WIPHY_STATE_WATCH_EVENT_REGDOM_STARTED);
 		return;
 	}
 
-	wiphy_dump_id = id;
-
 	/* Otherwise for a global regdom change notify for all wiphy's */
 	for (e = l_queue_get_entries(wiphy_list); e; e = e->next) {
 		struct wiphy *w = e->data;
 
 		if (w->self_managed)
-			continue;
-
-		if (no_start_event)
 			continue;
 
 		WATCHLIST_NOTIFY(&w->state_watches, wiphy_state_watch_func_t,
