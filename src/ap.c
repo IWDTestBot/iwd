@@ -3668,19 +3668,22 @@ static int ap_load_config(struct ap_state *ap, const struct l_settings *config,
 		ap->band = BAND_FREQ_2_4_GHZ;
 	}
 
-	if (l_settings_has_key(config, "General", "DisableHT")) {
+	if (l_settings_has_key(config, "General", "EnableHT")) {
 		bool boolval;
 
-		if (!l_settings_get_bool(config, "General", "DisableHT",
+		if (!l_settings_get_bool(config, "General", "EnableHT",
 						&boolval)) {
-			l_error("AP [General].DisableHT not a valid boolean");
+			l_error("AP [General].EnableHT not a valid boolean");
 			return -EINVAL;
 		}
 
-		ap->supports_ht = !boolval;
-	} else
-		ap->supports_ht = wiphy_get_ht_capabilities(wiphy, ap->band,
-							NULL) != NULL;
+		if (!wiphy_get_ht_capabilities(wiphy, ap->band, NULL)) {
+			l_error("AP hardware does not support HT");
+			return -EINVAL;
+		}
+
+		ap->supports_ht = boolval;
+	}
 
 	if (!ap_validate_band_channel(ap)) {
 		l_error("AP Band and Channel combination invalid");
