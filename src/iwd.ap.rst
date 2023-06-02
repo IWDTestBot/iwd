@@ -73,10 +73,10 @@ The group ``[General]`` contains general AP configuration.
        The time interval at which the AP starts a rekey for a given station. If
        not provided a default value of 0 is used (rekeying is disabled).
 
-   * - DisableHT
+   * - EnableHT
      - Boolean value
 
-       Explicitly disable HT capabilities for this AP.
+       Enable HT capabilities for this AP.
 
 Network Authentication Settings
 -------------------------------
