@@ -30,7 +30,6 @@
 
 #include <ell/ell.h>
 
-#include "src/iwd.h"
 #include "src/dbus.h"
 
 static struct l_dbus *g_dbus = NULL;
@@ -38,99 +37,99 @@ static dbus_agent_shutdown_func_t agent_shutdown;
 
 struct l_dbus_message *dbus_error_busy(struct l_dbus_message *msg)
 {
-	return l_dbus_message_new_error(msg, IWD_SERVICE ".InProgress",
+	return l_dbus_message_new_error(msg, DBUS_SERVICE ".InProgress",
 					"Operation already in progress");
 }
 
 struct l_dbus_message *dbus_error_failed(struct l_dbus_message *msg)
 {
-	return l_dbus_message_new_error(msg, IWD_SERVICE ".Failed",
+	return l_dbus_message_new_error(msg, DBUS_SERVICE ".Failed",
 					"Operation failed");
 }
 
 struct l_dbus_message *dbus_error_aborted(struct l_dbus_message *msg)
 {
-	return l_dbus_message_new_error(msg, IWD_SERVICE ".Aborted",
+	return l_dbus_message_new_error(msg, DBUS_SERVICE ".Aborted",
 					"Operation aborted");
 }
 
 struct l_dbus_message *dbus_error_not_available(struct l_dbus_message *msg)
 {
-	return l_dbus_message_new_error(msg, IWD_SERVICE ".NotAvailable",
+	return l_dbus_message_new_error(msg, DBUS_SERVICE ".NotAvailable",
 					"Operation not available");
 }
 
 struct l_dbus_message *dbus_error_invalid_args(struct l_dbus_message *msg)
 {
-	return l_dbus_message_new_error(msg, IWD_SERVICE ".InvalidArguments",
+	return l_dbus_message_new_error(msg, DBUS_SERVICE ".InvalidArguments",
 					"Argument type is wrong");
 }
 
 struct l_dbus_message *dbus_error_invalid_format(struct l_dbus_message *msg)
 {
-	return l_dbus_message_new_error(msg, IWD_SERVICE ".InvalidFormat",
+	return l_dbus_message_new_error(msg, DBUS_SERVICE ".InvalidFormat",
 					"Argument format is invalid");
 }
 
 struct l_dbus_message *dbus_error_already_exists(struct l_dbus_message *msg)
 {
-	return l_dbus_message_new_error(msg, IWD_SERVICE ".AlreadyExists",
+	return l_dbus_message_new_error(msg, DBUS_SERVICE ".AlreadyExists",
 					"Object already exists");
 }
 
 struct l_dbus_message *dbus_error_not_found(struct l_dbus_message *msg)
 {
-	return l_dbus_message_new_error(msg, IWD_SERVICE ".NotFound",
+	return l_dbus_message_new_error(msg, DBUS_SERVICE ".NotFound",
 					"Object not found");
 }
 
 struct l_dbus_message *dbus_error_not_supported(struct l_dbus_message *msg)
 {
-	return l_dbus_message_new_error(msg, IWD_SERVICE ".NotSupported",
+	return l_dbus_message_new_error(msg, DBUS_SERVICE ".NotSupported",
 					"Operation not supported");
 }
 
 struct l_dbus_message *dbus_error_no_agent(struct l_dbus_message *msg)
 {
-	return l_dbus_message_new_error(msg, IWD_SERVICE ".NoAgent",
+	return l_dbus_message_new_error(msg, DBUS_SERVICE ".NoAgent",
 					"No Agent registered");
 }
 
 struct l_dbus_message *dbus_error_not_connected(struct l_dbus_message *msg)
 {
-	return l_dbus_message_new_error(msg, IWD_SERVICE ".NotConnected",
+	return l_dbus_message_new_error(msg, DBUS_SERVICE ".NotConnected",
 					"Not connected");
 }
 
 struct l_dbus_message *dbus_error_not_configured(struct l_dbus_message *msg)
 {
-	return l_dbus_message_new_error(msg, IWD_SERVICE ".NotConfigured",
+	return l_dbus_message_new_error(msg, DBUS_SERVICE ".NotConfigured",
 					"Not configured");
 }
 
 struct l_dbus_message *dbus_error_not_implemented(struct l_dbus_message *msg)
 {
-	return l_dbus_message_new_error(msg, IWD_SERVICE ".NotImplemented",
+	return l_dbus_message_new_error(msg, DBUS_SERVICE ".NotImplemented",
 					"Not implemented");
 }
 
 struct l_dbus_message *dbus_error_service_set_overlap(
 						struct l_dbus_message *msg)
 {
-	return l_dbus_message_new_error(msg, IWD_SERVICE ".ServiceSetOverlap",
+	return l_dbus_message_new_error(msg, DBUS_SERVICE ".ServiceSetOverlap",
 					"Service set overlap");
 }
 
 struct l_dbus_message *dbus_error_already_provisioned(
 						struct l_dbus_message *msg)
 {
-	return l_dbus_message_new_error(msg, IWD_SERVICE ".AlreadyProvisioned",
+	return l_dbus_message_new_error(msg, DBUS_SERVICE ".AlreadyProvisioned",
 					"Already provisioned");
 }
 
 struct l_dbus_message *dbus_error_not_hidden(struct l_dbus_message *msg)
 {
-	return l_dbus_message_new_error(msg, IWD_SERVICE ".NotHidden",
+	return l_dbus_message_new_error(msg, DBUS_SERVICE ".NotHidden",
 					"Not hidden");
 }
 

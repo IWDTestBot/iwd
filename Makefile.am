@@ -270,6 +270,7 @@ src_iwd_SOURCES = src/main.c linux/nl80211.h src/iwd.h src/missing.h \
 
 src_iwd_LDADD = $(ell_ldadd) -ldl
 src_iwd_DEPENDENCIES = $(ell_dependencies)
+src_iwd_CFLAGS = -DDBUS_SERVICE=\"net.connman.iwd\"
 
 if OFONO
 builtin_modules += ofono
