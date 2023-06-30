@@ -30,11 +30,11 @@
 
 #include <ell/ell.h>
 
-#include "src/agent.h"
 #include "src/iwd.h"
 #include "src/dbus.h"
 
 static struct l_dbus *g_dbus = NULL;
+static dbus_agent_shutdown_func_t agent_shutdown;
 
 struct l_dbus_message *dbus_error_busy(struct l_dbus_message *msg)
 {
@@ -220,8 +220,14 @@ void dbus_exit(void)
 	g_dbus = NULL;
 }
 
+void __dbus_set_agent_shutdown_func(dbus_agent_shutdown_func_t agent_shutdown)
+{
+	agent_shutdown = agent_shutdown;
+}
+
 void dbus_shutdown(void)
 {
 	/* Allow AgentManager to send a Release call before disconnecting */
-	agent_shutdown();
+	if (agent_shutdown)
+		agent_shutdown();
 }

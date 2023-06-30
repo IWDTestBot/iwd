@@ -51,9 +51,13 @@
 #define IWD_AGENT_MANAGER_PATH IWD_BASE_PATH
 #define IWD_P2P_SERVICE_MANAGER_PATH IWD_BASE_PATH
 
+typedef void (*dbus_agent_shutdown_func_t)(void);
+
 struct l_dbus;
 
 struct l_dbus *dbus_get_bus(void);
+
+void __dbus_set_agent_shutdown_func(dbus_agent_shutdown_func_t agent_shutdown);
 
 void dbus_pending_reply(struct l_dbus_message **msg,
 				struct l_dbus_message *reply);
