@@ -45,6 +45,7 @@
 #include "src/crypto.h"
 #include "src/nl80211util.h"
 #include "src/nl80211cmd.h"
+#include "src/dbus.h"
 
 #define HWSIM_SERVICE "net.connman.hwsim"
 
@@ -539,27 +540,6 @@ static const char *interface_get_path(const struct interface_info_rec *rec)
 	snprintf(path, sizeof(path), "%s/%u",
 			radio_get_path(rec->radio_rec), rec->id);
 	return path;
-}
-
-static struct l_dbus_message *dbus_error_failed(struct l_dbus_message *msg)
-{
-	return l_dbus_message_new_error(msg, HWSIM_SERVICE ".Failed",
-					"Operation failed");
-}
-
-static struct l_dbus_message *dbus_error_invalid_args(
-						struct l_dbus_message *msg)
-{
-	return l_dbus_message_new_error(msg, HWSIM_SERVICE ".InvalidArgs",
-					"Argument type is wrong");
-}
-
-static void dbus_pending_reply(struct l_dbus_message **msg,
-				struct l_dbus_message *reply)
-{
-	l_dbus_send(dbus, reply);
-	l_dbus_message_unref(*msg);
-	*msg = NULL;
 }
 
 static const char *rule_get_path(struct hwsim_rule *rule)
@@ -2865,6 +2845,8 @@ static bool setup_dbus_hwsim(void)
 		l_error("Unable to connect to Dbus");
 		return false;
 	}
+
+	dbus_init(dbus);
 
 	if (!l_dbus_register_interface(dbus, HWSIM_RADIO_MANAGER_INTERFACE,
 					setup_radio_manager_interface,

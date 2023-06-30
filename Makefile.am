@@ -407,8 +407,11 @@ tools_hwsim_SOURCES = tools/hwsim.c src/mpdu.h \
 					src/storage.h src/storage.c \
 					src/common.h src/common.c \
 					src/band.h src/band.c \
-					src/crypto.h src/crypto.c
+					src/crypto.h src/crypto.c \
+					src/dbus.h src/dbus.c
+
 tools_hwsim_LDADD = $(ell_ldadd)
+tools_hwsim_CFLAGS = -DDBUS_SERVICE=\"net.connman.hwsim\"
 
 if DBUS_POLICY
 dist_dbus_data_DATA += tools/hwsim-dbus.conf
