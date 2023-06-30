@@ -408,7 +408,10 @@ tools_hwsim_SOURCES = tools/hwsim.c src/mpdu.h \
 					src/common.h src/common.c \
 					src/band.h src/band.c \
 					src/crypto.h src/crypto.c \
-					src/dbus.h src/dbus.c
+					src/dbus.h src/dbus.c \
+					src/watchlist.h src/watchlist.c \
+					src/module.h src/module.c \
+					tools/rules.c
 
 tools_hwsim_LDADD = $(ell_ldadd)
 tools_hwsim_CFLAGS = -DDBUS_SERVICE=\"net.connman.hwsim\"
