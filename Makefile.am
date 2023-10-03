@@ -378,8 +378,9 @@ man_MANS += wired/ead.8
 endif
 endif
 
-if DAEMON
-noinst_PROGRAMS += tools/probe-req tools/iwd-decrypt-profile
+if TOOLS
+noinst_PROGRAMS += tools/probe-req
+bin_PROGRAMS += tools/iwd-decrypt-profile
 
 tools_probe_req_SOURCES = tools/probe-req.c src/mpdu.h src/mpdu.c \
 					src/ie.h src/ie.c \
