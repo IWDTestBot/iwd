@@ -57,6 +57,50 @@ Methods		string StartEnrollee()
 						net.connman.iwd.NotSupported
 						net.connman.iwd.Busy
 
+		PkexConfigure(dict args)
+			The 'args' dictionary (a{sv}) contains parameters for
+			the PKEX configurer. This can be empty or contain the
+			following dictionary members:
+
+			string Key - The PKEX key. This is required if not
+			specified in the network profile already.
+
+			string Identifier - The PKEX key identifier. This is
+			optional, but if used both the Configurer and enrollee
+			must use the same value. Can also be specified in the
+			network profile.
+
+			uint32_t Timeout - A timeout (in seconds) for
+			configuration. This is optional, but suggested to
+			prevent a device from indefinitely configuring
+			enrollees (if Stop() was never called).
+
+			Possible errors:	net.connman.iwd.Busy
+						net.connman.iwd.NotConnected
+						net.connman.iwd.InvalidArguments
+						net.connman.iwd.NotConfigured
+
+		PkexEnroll(dict args)
+			The 'args' dictionary (a{sv}) contains parameters for
+			the PKEX enrollee.
+
+			string Key - The PKEX key. This is required and must
+			match the configurer's key.
+
+			string Identifier - The PKEX key identifier. This is
+			optional, but if used both the Configurer and enrollee
+			must use the same value.
+
+			array(y) Address - The address of the PKEX listener. If
+			not specified a broadcast address is used.
+
+			array(u) Frequencies - A list of frequencies to
+			discover on. If not specified channel 2, 44, and 149
+			are used per the DPP spec.
+
+			Possible errors:	net.connman.iwd.Busy
+						net.connman.iwd.InvalidArguments
+
 Properties	boolean Started [readonly]
 
 			True if DPP is currently active.
