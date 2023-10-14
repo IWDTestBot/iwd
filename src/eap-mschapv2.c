@@ -437,6 +437,8 @@ static int eap_mschapv2_check_settings(struct l_settings *settings,
 	int r = 0;
 	size_t hash_len;
 
+	l_error("EAP_MSCHAPv2: Obsolete, please switch to P/EAP-TLS");
+
 	snprintf(setting, sizeof(setting), "%sIdentity", prefix);
 	identity = l_settings_get_string(settings, "Security", setting);
 
@@ -479,8 +481,14 @@ static int eap_mschapv2_check_settings(struct l_settings *settings,
 		}
 
 		return 0;
-	} else if (password)
+	} else if (password) {
+		if (!l_checksum_is_supported(L_CHECKSUM_MD4, false)) {
+			l_warn("EAP_MSCHAPv2: Obsolete MD4 not found");
+			l_warn("Please use Password-Hash instead of Password");
+			return -EINVAL;
+		}
 		goto validate;
+	}
 
 	secret = l_queue_find(secrets, eap_secret_info_match, setting2);
 	if (!secret) {
@@ -561,13 +569,6 @@ static struct eap_method eap_mschapv2 = {
 static int eap_mschapv2_init(void)
 {
 	l_debug("");
-
-	if (!l_checksum_is_supported(L_CHECKSUM_MD4, false)) {
-		l_warn("EAP_MSCHAPv2 init: MD4 support not found, skipping");
-		l_warn("Ensure that CONFIG_CRYPTO_MD4 is enabled");
-		return -ENOTSUP;
-	}
-
 	return eap_register_method(&eap_mschapv2);
 }
 
