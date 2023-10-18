@@ -131,6 +131,7 @@ struct station {
 	bool autoconnect : 1;
 	bool autoconnect_can_start : 1;
 	bool netconfig_after_roam : 1;
+	bool allow_roaming : 1;
 };
 
 struct anqp_entry {
@@ -2831,6 +2832,9 @@ static bool station_cannot_roam(struct station *station)
 	const struct l_settings *config = iwd_get_config();
 	bool disabled;
 
+	if (!station->allow_roaming)
+		return true;
+
 	/*
 	 * Disable roaming with hardware that can roam automatically. Note this
 	 * is now required for recent kernels which have CQM event support on
@@ -4225,6 +4229,38 @@ static bool station_property_get_state(struct l_dbus *dbus,
 	return true;
 }
 
+static bool station_property_get_allow_roaming(struct l_dbus *dbus,
+					struct l_dbus_message *message,
+					struct l_dbus_message_builder *builder,
+					void *user_data)
+{
+	struct station *station = user_data;
+	bool roaming = station->allow_roaming;
+
+	l_dbus_message_builder_append_basic(builder, 'b', &roaming);
+	return true;
+}
+
+static struct l_dbus_message *station_property_set_allow_roaming(
+					struct l_dbus *dbus,
+					struct l_dbus_message *message,
+					struct l_dbus_message_iter *new_value,
+					l_dbus_property_complete_cb_t complete,
+					void *user_data)
+{
+	struct station *station = user_data;
+	bool roaming;
+
+	if (!l_dbus_message_iter_get_variant(new_value, "b", &roaming))
+		return dbus_error_invalid_args(message);
+
+	l_debug("Setting allow_roaming %s", roaming ? "true" : "false");
+
+	station->allow_roaming = roaming;
+
+	return l_dbus_message_new_method_return(message);
+}
+
 void station_foreach(station_foreach_func_t func, void *user_data)
 {
 	const struct l_queue_entry *entry;
@@ -4456,6 +4492,8 @@ static struct station *station_create(struct netdev *netdev)
 
 	station->roam_bss_list = l_queue_new();
 
+	station->allow_roaming = true;
+
 	return station;
 }
 
@@ -4580,6 +4618,8 @@ static void station_setup_interface(struct l_dbus_interface *interface)
 					station_property_get_scanning, NULL);
 	l_dbus_interface_property(interface, "State", 0, "s",
 					station_property_get_state, NULL);
+	l_dbus_interface_property(interface, "AllowRoaming", 0, "b",
+				station_property_get_allow_roaming, station_property_set_allow_roaming);
 }
 
 static void station_destroy_interface(void *user_data)
