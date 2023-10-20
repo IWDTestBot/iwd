@@ -678,6 +678,11 @@ static bool release_agent(void *data, void *user_data)
 	return true;
 }
 
+static void agent_shutdown(void)
+{
+	l_queue_foreach_remove(agents, release_agent, NULL);
+}
+
 static int agent_init(void)
 {
 	struct l_dbus *dbus = dbus_get_bus();
@@ -701,6 +706,8 @@ static int agent_init(void)
 		return -EIO;
 	}
 
+	__dbus_set_agent_shutdown_func(agent_shutdown);
+
 	return 0;
 }
 
@@ -712,11 +719,6 @@ static void agent_exit(void)
 
 	l_queue_destroy(agents, agent_free);
 	agents = NULL;
-}
-
-void agent_shutdown(void)
-{
-	l_queue_foreach_remove(agents, release_agent, NULL);
 }
 
 IWD_MODULE(agent, agent_init, agent_exit);

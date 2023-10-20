@@ -120,6 +120,10 @@ int iwd_modules_init(void)
 		struct module *src;
 		struct module *dst;
 
+		if (!strcmp(dep->self, "dummy") &&
+				!strcmp(dep->target, "dummy"))
+			continue;
+
 		src = module_find(modules, n_modules, dep->self);
 		dst = module_find(modules, n_modules, dep->target);
 		if (!src || !dst) {
@@ -185,3 +189,5 @@ void iwd_modules_exit(void)
 	l_free(modules_sorted);
 	modules_sorted = NULL;
 }
+
+IWD_MODULE_DEPENDS(dummy, dummy);
