@@ -319,6 +319,7 @@ class TestContext(Namespace):
 		self.namespaces = []
 		self._last_mem_available = 0
 		self._mem_chart = BarChart()
+		self.register_hwsim = False;
 
 	def start_dbus_monitor(self):
 		if not Process.is_verbose('dbus-monitor'):
@@ -329,17 +330,15 @@ class TestContext(Namespace):
 	def start_haveged(self):
 		self.start_process(['haveged', '-F'])
 
+	def start_hwsim(self):
+		self.register_hwsim = self.hw_config['SETUP'].get('hwsim_medium', 'no') in ['no', '0', 'false']
+
+		super().start_hwsim(self.register_hwsim)
+
 	def create_radios(self):
 		setup = self.hw_config['SETUP']
 		nradios = int(setup['num_radios'])
 		args = ['hwsim']
-
-		if self.hw_config['SETUP'].get('hwsim_medium', 'no') in ['no', '0', 'false']:
-			# register hwsim as medium
-			args.extend(['--no-register'])
-
-		proc = self.start_process(args)
-		proc.wait_for_service(self, 'net.connman.hwsim', 20)
 
 		for i in range(nradios):
 			name = 'rad%u' % i
@@ -524,7 +523,7 @@ class TestContext(Namespace):
 			# Remove radios from 'root' namespace
 			self.radios = list(set(self.radios) - set(radios))
 
-			self.namespaces.append(Namespace(self.args, key, radios))
+			self.namespaces.append(Namespace(self.args, key, radios, self.register_hwsim))
 
 	def get_namespace(self, ns):
 		for n in self.namespaces:
@@ -865,6 +864,7 @@ def pre_test(ctx, test, copied):
 	ctx.start_dbus()
 	ctx.start_haveged()
 	ctx.start_dbus_monitor()
+	ctx.start_hwsim()
 	ctx.start_radios()
 	ctx.create_namespaces()
 	ctx.start_hostapd()
