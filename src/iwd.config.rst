@@ -35,7 +35,7 @@ chosen.  The presence of *main.conf* is not required.
 FILE FORMAT
 ===========
 
-See *iwd.network* for details on the file format.
+See **iwd.network**\(5) for details on the file format.
 
 SETTINGS
 ========
@@ -416,4 +416,4 @@ are buggy or just don't behave similar enough to the majority of other drivers.
 SEE ALSO
 ========
 
-iwd(8), iwd.network(5)
+**iwd**\(8), **iwd.network**\(5)

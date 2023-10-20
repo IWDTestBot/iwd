@@ -47,4 +47,4 @@ The granularity of the DHCP logging can also be tailored by setting
 SEE ALSO
 ========
 
-iwd(8), iwmon(1)
+**iwd**\(8), **iwmon**\(1)
