@@ -43,6 +43,7 @@ struct offchannel_info {
 
 	uint32_t roc_cmd_id;
 	uint64_t roc_cookie;
+	uint64_t early_cookie;
 
 	offchannel_started_cb_t started;
 	offchannel_destroy_cb_t destroy;
@@ -54,15 +55,34 @@ struct offchannel_info {
 	bool needs_cancel : 1;
 };
 
+struct match_data {
+	uint64_t wdev_id;
+	uint64_t cookie;
+};
+
 static struct l_genl_family *nl80211;
 static struct l_queue *offchannel_list;
 
-static bool match_wdev(const void *a, const void *user_data)
+static bool match_info(const void *a, const void *user_data)
 {
+	const struct match_data *match = user_data;
 	const struct offchannel_info *info = a;
-	const uint64_t *wdev_id = user_data;
 
-	return info->wdev_id == *wdev_id;
+	if (match->wdev_id != info->wdev_id)
+		return false;
+
+	if (!match->cookie)
+		return true;
+
+	return match->cookie == info->roc_cookie;
+}
+
+static bool match_id(const void *a, const void *user_data)
+{
+	const uint32_t *id = user_data;
+	const struct offchannel_info *info = a;
+
+	return *id == info->work.id;
 }
 
 static void offchannel_cancel_roc(struct offchannel_info *info)
@@ -98,9 +118,19 @@ static void offchannel_roc_cb(struct l_genl_msg *msg, void *user_data)
 		goto work_done;
 	}
 
-	/* This request was cancelled, and ROC needs to be cancelled */
+	/*
+	 * If this request was cancelled prior to the request ever hitting the
+	 * kernel, cancel now.
+	 *
+	 * If the ROC event came before the ACK, call back now since the
+	 * callback was skipped in the notify event. There is the potential that
+	 * an external process issued the ROC, but if the cookies don't match
+	 * here we can be sure it wasn't for us.
+	 */
 	if (info->needs_cancel)
 		offchannel_cancel_roc(info);
+	else if (info->early_cookie == info->roc_cookie && info->started)
+		info->started(info->user_data);
 
 	return;
 
@@ -191,7 +221,8 @@ void offchannel_cancel(uint64_t wdev_id, uint32_t id)
 	else if (ret == false)
 		goto work_done;
 
-	info = l_queue_find(offchannel_list, match_wdev, &wdev_id);
+
+	info = l_queue_find(offchannel_list, match_id, &id);
 	if (!info)
 		return;
 
@@ -246,6 +277,7 @@ work_done:
 static void offchannel_mlme_notify(struct l_genl_msg *msg, void *user_data)
 {
 	struct offchannel_info *info;
+	struct match_data match = {0};
 	uint64_t wdev_id;
 	uint64_t cookie;
 	uint8_t cmd;
@@ -261,12 +293,37 @@ static void offchannel_mlme_notify(struct l_genl_msg *msg, void *user_data)
 					NL80211_ATTR_UNSPEC) < 0)
 		return;
 
-	info = l_queue_find(offchannel_list, match_wdev, &wdev_id);
+	match.wdev_id = wdev_id;
+	match.cookie = cookie;
+
+	info = l_queue_find(offchannel_list, match_info, &match);
+	if (!info) {
+		/* Try again without cookie */
+		match.cookie = 0;
+		info = l_queue_find(offchannel_list, match_info, &match);
+	}
+
 	if (!info)
 		return;
 
-	/* ROC must have been started elsewhere, not by IWD */
-	if (info->roc_cookie != cookie)
+	/*
+	 * If the cookie is zero and there is a pending ROC command there are
+	 * two possibilities:
+	 *   - The ACK callback came out of order. This has been seen in UML
+	 *     when an offchannel request is canceled followed by another
+	 *     request on the same channel. To handle this delay the started
+	 *     callback until the ACK comes in when we can check the cookie.
+	 *
+	 *   - Event came from external process doing ROC. Checking the cookie
+	 *     in the ACK lets us verify if this is the case.
+	 *
+	 * If the cookie is set but does not match, this ROC request came from
+	 * outside IWD.
+	 */
+	if (!info->roc_cookie && info->roc_cmd_id) {
+		info->early_cookie = cookie;
+		return;
+	} else if (info->roc_cookie != cookie)
 		return;
 
 	switch (cmd) {
