@@ -71,6 +71,7 @@ enum dpp_state {
 	DPP_STATE_PRESENCE,
 	DPP_STATE_AUTHENTICATING,
 	DPP_STATE_CONFIGURING,
+	DPP_STATE_SUCCESS,
 };
 
 enum dpp_capability {
@@ -137,7 +138,6 @@ struct dpp_sm {
 	struct l_timeout *timeout;
 
 	struct dpp_configuration *config;
-	uint32_t connect_scan_id;
 	uint64_t frame_cookie;
 	uint8_t frame_retry;
 	void *frame_pending;
@@ -149,6 +149,7 @@ struct dpp_sm {
 	bool mcast_support : 1;
 	bool roc_started : 1;
 	bool channel_switch : 1;
+	bool station_autoconnecting : 1;
 };
 
 static bool dpp_get_started(struct l_dbus *dbus,
@@ -270,6 +271,8 @@ static void dpp_free_auth_data(struct dpp_sm *dpp)
 
 static void dpp_reset(struct dpp_sm *dpp)
 {
+	struct station *station = station_find(netdev_get_ifindex(dpp->netdev));
+
 	if (dpp->uri) {
 		l_free(dpp->uri);
 		dpp->uri = NULL;
@@ -295,11 +298,6 @@ static void dpp_reset(struct dpp_sm *dpp)
 		dpp->config = NULL;
 	}
 
-	if (dpp->connect_scan_id) {
-		scan_cancel(dpp->wdev_id, dpp->connect_scan_id);
-		dpp->connect_scan_id = 0;
-	}
-
 	if (dpp->peer_asn1) {
 		l_free(dpp->peer_asn1);
 		dpp->peer_asn1 = NULL;
@@ -315,7 +313,17 @@ static void dpp_reset(struct dpp_sm *dpp)
 		dpp->retry_timeout = NULL;
 	}
 
+	/*
+	 * Set station back to its original autoconnecting state if an
+	 * enrollee and DPP failed
+	 */
+	if (station && dpp->role == DPP_CAPABILITY_ENROLLEE &&
+			dpp->station_autoconnecting &&
+			dpp->state != DPP_STATE_SUCCESS)
+		station_set_autoconnect(station, true);
+
 	dpp->state = DPP_STATE_NOTHING;
+	dpp->role = 0;
 	dpp->new_freq = 0;
 	dpp->frame_retry = 0;
 	dpp->frame_cookie = 0;
@@ -629,36 +637,6 @@ static void dpp_write_config(struct dpp_configuration *config,
 	storage_network_sync(SECURITY_PSK, ssid, settings);
 }
 
-static void dpp_scan_triggered(int err, void *user_data)
-{
-	/* Not much can be done in this case */
-	if (err < 0)
-		l_error("Failed to trigger DPP scan");
-}
-
-static bool dpp_scan_results(int err, struct l_queue *bss_list,
-				const struct scan_freq_set *freqs,
-				void *userdata)
-{
-	struct dpp_sm *dpp = userdata;
-	struct station *station = station_find(netdev_get_ifindex(dpp->netdev));
-
-	if (err < 0)
-		return false;
-
-	station_set_scan_results(station, bss_list, freqs, true);
-
-	return true;
-}
-
-static void dpp_scan_destroy(void *userdata)
-{
-	struct dpp_sm *dpp = userdata;
-
-	dpp->connect_scan_id = 0;
-	dpp_reset(dpp);
-}
-
 static void dpp_handle_config_response_frame(const struct mmpdu_header *frame,
 				const void *body, size_t body_len,
 				int rssi, void *user_data)
@@ -685,7 +663,6 @@ static void dpp_handle_config_response_frame(const struct mmpdu_header *frame,
 	struct dpp_configuration *config;
 	struct station *station = station_find(netdev_get_ifindex(dpp->netdev));
 	struct network *network = NULL;
-	struct scan_bss *bss = NULL;
 	char ssid[33];
 
 	if (dpp->state != DPP_STATE_CONFIGURING)
@@ -819,8 +796,6 @@ static void dpp_handle_config_response_frame(const struct mmpdu_header *frame,
 		ssid[config->ssid_len] = '\0';
 
 		network = station_network_find(station, ssid, SECURITY_PSK);
-		if (network)
-			bss = network_bss_select(network, true);
 	}
 
 	dpp_write_config(config, network);
@@ -830,16 +805,9 @@ static void dpp_handle_config_response_frame(const struct mmpdu_header *frame,
 
 	offchannel_cancel(dpp->wdev_id, dpp->offchannel_id);
 
-	if (network && bss)
-		__station_connect_network(station, network, bss);
-	else if (station) {
-		dpp->connect_scan_id = scan_active(dpp->wdev_id, NULL, 0,
-						dpp_scan_triggered,
-						dpp_scan_results, dpp,
-						dpp_scan_destroy);
-		if (dpp->connect_scan_id)
-			return;
-	}
+	dpp->state = DPP_STATE_SUCCESS;
+
+	station_set_autoconnect(station, true);
 
 	dpp_reset(dpp);
 }
@@ -1579,6 +1547,7 @@ static void dpp_offchannel_timeout(int error, void *user_data)
 	case DPP_STATE_PRESENCE:
 		break;
 	case DPP_STATE_NOTHING:
+	case DPP_STATE_SUCCESS:
 		/* Protocol already terminated */
 		return;
 	case DPP_STATE_AUTHENTICATING:
@@ -2507,6 +2476,15 @@ static struct l_dbus_message *dpp_dbus_start_enrollee(struct l_dbus *dbus,
 
 	dpp->state = DPP_STATE_PRESENCE;
 	dpp->role = DPP_CAPABILITY_ENROLLEE;
+
+	/*
+	 * If the DPP fails its probably best to continue with periodic scans
+	 * just in case there is an available network.
+	 */
+	if (station) {
+		dpp->station_autoconnecting = station_get_autoconnect(station);
+		station_set_autoconnect(station, false);
+	}
 
 	l_ecdh_generate_key_pair(dpp->curve, &dpp->proto_private,
 					&dpp->own_proto_public);
