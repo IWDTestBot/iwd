@@ -71,3 +71,70 @@ Properties	boolean Started [readonly]
 
 			Indicates the DPP URI. This property is only available
 			when Started is true.
+
+
+Interface	net.connman.iwd.SharedCodeDeviceProvisioning [Experimental]
+Object path	/net/connman/iwd/{phy0,phy1,...}/{1,2,...}
+
+		ConfigureEnrollee(a{sv})
+			Starts a DPP configurator using a shared code (and
+			optionally identifier) set in the dictionary argument.
+			Valid dictionary keys are:
+
+			{
+				Code: <The shared code to use>
+				Identifier: <Optional identifier>
+			}
+
+			As with the DeviceProvisioning interface, configurators
+			must be currently connected to start.
+
+			Possible errors:	net.connman.iwd.Busy
+						net.connman.iwd.NotConnected
+						net.connman.InvalidArguments
+
+		StartConfigurator(object agent_path)
+			Start a shared code configurator using an agent to
+			obtain the shared code. This method is meant for an
+			automated use case where a configurator is capable of
+			configuring multiple enrollees, and distinguishing
+			between them by their identifier.
+
+			After starting the configurator will listen on channel.
+			Upon receiving an enrollees initial request it will
+			make an agent call (on 'agent_path') to obtain the
+			code associated with the enrollee.
+
+			As with the DeviceProvisioning interface, configurators
+			must be currently connected to start.
+
+			Possible errors:	net.connman.iwd.Busy
+						net.connman.iwd.NotConnected
+						net.connman.iwd.InvalidArguments
+
+		StartEnrollee(a{sv})
+			Start a shared code enrollee using the Code and
+			optionally identifier passed in the dictionary argument.
+			As with the configurator, valid dictionary keys are:
+
+			{
+				Code: <The shared code to use>
+				Identifier: <Optional identifier>
+			}
+
+			As with the DeviceProvisioning interface, enrollees
+			must be disconnected in order to start.
+
+			Possible errors:	net.connman.iwd.Busy
+						net.connman.iwd.InvalidArguments
+
+Properties	boolean Started [readonly]
+
+			True if shared code device provisioning is currently
+			active. (configurator or enrollee is started)
+
+		string Role [readonly, optional]
+
+			Indicates the DPP role. Possible values are "enrollee"
+			or "configurator". This property is only available when
+			Started is true.
