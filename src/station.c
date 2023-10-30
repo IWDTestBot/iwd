@@ -123,10 +123,12 @@ struct station {
 
 	struct wiphy_radio_work_item ft_work;
 
+	uint64_t last_roam_scan;
+
 	bool preparing_roam : 1;
 	bool roam_scan_full : 1;
 	bool signal_low : 1;
-	bool ap_directed_roaming : 1;
+	bool force_roam : 1;
 	bool scanning : 1;
 	bool autoconnect : 1;
 	bool autoconnect_can_start : 1;
@@ -1708,6 +1710,7 @@ static void station_roam_state_clear(struct station *station)
 	station->signal_low = false;
 	station->roam_min_time.tv_sec = 0;
 	station->netconfig_after_roam = false;
+	station->last_roam_scan = 0;
 
 	if (station->roam_scan_id)
 		scan_cancel(netdev_get_wdev_id(station->netdev),
@@ -2114,7 +2117,7 @@ static void station_roam_retry(struct station *station)
 	 */
 	station->preparing_roam = false;
 	station->roam_scan_full = false;
-	station->ap_directed_roaming = false;
+	station->force_roam = false;
 
 	if (station->signal_low)
 		station_roam_timeout_rearm(station, roam_retry_interval);
@@ -2145,7 +2148,7 @@ static void station_roam_failed(struct station *station)
 	 * We were told by the AP to roam, but failed.  Try ourselves or
 	 * wait for the AP to tell us to roam again
 	 */
-	if (station->ap_directed_roaming)
+	if (station->force_roam)
 		goto delayed_retry;
 
 	/*
@@ -2425,7 +2428,7 @@ static bool station_try_next_transition(struct station *station,
 			util_address_to_string(bss->addr));
 
 	/* Reset AP roam flag, at this point the roaming behaves the same */
-	station->ap_directed_roaming = false;
+	station->force_roam = false;
 
 	/* Can we use Fast Transition? */
 	if (station_can_fast_transition(hs, bss) && !no_ft)
@@ -2583,7 +2586,7 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 	 * to occur.
 	 */
 	bss = l_queue_find(bss_list, bss_match_bssid, current_bss->addr);
-	if (bss && !station->ap_directed_roaming) {
+	if (bss && !station->force_roam) {
 		cur_bss_rank = bss->rank;
 
 		if (hs->mde && bss->mde_present && l_get_le16(bss->mde) == mdid)
@@ -2710,6 +2713,8 @@ static int station_roam_scan(struct station *station,
 
 	if (L_WARN_ON(scan_freq_set_isempty(params.freqs)))
 		return -ENOTSUP;
+
+	station->last_roam_scan = l_time_now();
 
 	station->roam_scan_id =
 		scan_active_full(netdev_get_wdev_id(station->netdev), &params,
@@ -2961,18 +2966,18 @@ static void station_ap_directed_roam(struct station *station,
 			MAC_STR(hdr->address_3));
 
 	/*
-	 * The ap_directed_roaming flag forces IWD to roam if there are any
+	 * The force_roam flag forces IWD to roam if there are any
 	 * candidates, even if they are worse than the current BSS. This isn't
 	 * always a good idea since we may be associated to the best BSS. Where
 	 * this does matter is if the AP indicates its going down or will be
 	 * disassociating us. If either of these bits are set, set the
-	 * ap_directed_roaming flag. Otherwise still try roaming but don't
+	 * force_roam flag. Otherwise still try roaming but don't
 	 * treat it any different than a normal roam.
 	 */
 	if (req_mode & (WNM_REQUEST_MODE_DISASSOCIATION_IMMINENT |
 			WNM_REQUEST_MODE_TERMINATION_IMMINENT |
 			WNM_REQUEST_MODE_ESS_DISASSOCIATION_IMMINENT))
-		station->ap_directed_roaming = true;
+		station->force_roam = true;
 
 	if (req_mode & WNM_REQUEST_MODE_TERMINATION_IMMINENT) {
 		if (pos + 12 > body_len)
@@ -3330,10 +3335,13 @@ static void station_disconnect_event(struct station *station, void *event_data)
 	l_warn("Unexpected disconnect event");
 }
 
-#define STATION_PKT_LOSS_THRESHOLD 10
+#define STATION_PKT_LOSS_THRESHOLD	10
+#define LOSS_ROAM_RATE_LIMIT		2
 
 static void station_packets_lost(struct station *station, uint32_t num_pkts)
 {
+	uint64_t elapsed;
+
 	l_debug("Packets lost event: %u", num_pkts);
 
 	if (num_pkts < STATION_PKT_LOSS_THRESHOLD)
@@ -3343,6 +3351,38 @@ static void station_packets_lost(struct station *station, uint32_t num_pkts)
 		return;
 
 	station_debug_event(station, "packet-loss-roam");
+
+	elapsed = l_time_diff(station->last_roam_scan, l_time_now());
+
+	/*
+	 * If we just issued a roam scan, delay the roam to avoid constant
+	 * scanning.
+	 */
+	if (LOSS_ROAM_RATE_LIMIT > l_time_to_secs(elapsed)) {
+		l_debug("Too many roam attempts in %u second timeframe, "
+			"delaying roam", LOSS_ROAM_RATE_LIMIT);
+
+		if (station->roam_trigger_timeout)
+			return;
+
+		station_roam_timeout_rearm(station, LOSS_ROAM_RATE_LIMIT);
+
+		return;
+	}
+
+	station_start_roam(station);
+}
+
+static void station_beacon_lost(struct station *station)
+{
+	l_debug("Beacon lost event");
+
+	if (station_cannot_roam(station))
+		return;
+
+	station->force_roam = true;
+
+	station_debug_event(station, "beacon-loss-roam");
 
 	station_start_roam(station);
 }
@@ -3390,6 +3430,9 @@ static void station_netdev_event(struct netdev *netdev, enum netdev_event event,
 			return;
 
 		station_roamed(station);
+		break;
+	case NETDEV_EVENT_BEACON_LOSS_NOTIFY:
+		station_beacon_lost(station);
 		break;
 	}
 }
