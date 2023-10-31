@@ -79,6 +79,13 @@ enum dpp_capability {
 	DPP_CAPABILITY_CONFIGURATOR = 0x02,
 };
 
+struct pkex_agent {
+	char *owner;
+	char *path;
+	unsigned int disconnect_watch;
+	uint32_t pending_id;
+};
+
 struct dpp_sm {
 	struct netdev *netdev;
 	char *uri;
@@ -100,6 +107,8 @@ struct dpp_sm {
 	struct l_ecc_point *peer_boot_public;
 
 	enum dpp_state state;
+
+	struct pkex_agent *agent;
 
 	/*
 	 * List of frequencies to jump between. The presence of this list is
@@ -335,6 +344,16 @@ static void dpp_reset(struct dpp_sm *dpp)
 	dpp_property_changed_notify(dpp);
 }
 
+static void pkex_agent_free(void *data)
+{
+	struct pkex_agent *agent = data;
+
+	l_free(agent->owner);
+	l_free(agent->path);
+	l_dbus_remove_watch(dbus_get_bus(), agent->disconnect_watch);
+	l_free(agent);
+}
+
 static void dpp_free(struct dpp_sm *dpp)
 {
 	dpp_reset(dpp);
@@ -352,6 +371,11 @@ static void dpp_free(struct dpp_sm *dpp)
 	if (dpp->boot_private) {
 		l_ecc_scalar_free(dpp->boot_private);
 		dpp->boot_private = NULL;
+	}
+
+	if (dpp->agent) {
+		pkex_agent_free(dpp->agent);
+		dpp->agent = NULL;
 	}
 
 	l_free(dpp);
@@ -2753,6 +2777,79 @@ static void dpp_setup_interface(struct l_dbus_interface *interface)
 	l_dbus_interface_property(interface, "URI", 0, "s", dpp_get_uri, NULL);
 }
 
+static void pkex_agent_disconnect(struct l_dbus *dbus, void *user_data)
+{
+	struct dpp_sm *dpp = user_data;
+
+	l_debug("SharedCodeAgent %s disconnected", dpp->agent->path);
+
+	if (dpp->agent->pending_id)
+		l_dbus_cancel(dbus_get_bus(), dpp->agent->pending_id);
+
+	pkex_agent_free(dpp->agent);
+	dpp->agent = NULL;
+}
+
+static struct l_dbus_message *dpp_dbus_pkex_register_agent(
+						struct l_dbus *dbus,
+						struct l_dbus_message *message,
+						void *user_data)
+{
+	struct dpp_sm *dpp = user_data;
+	const char *sender = l_dbus_message_get_sender(message);
+	const char *path;
+
+	if (dpp->agent)
+		return dbus_error_already_exists(message);
+
+	if (!l_dbus_message_get_arguments(message, "o", &path))
+		return dbus_error_invalid_args(message);
+
+	dpp->agent = l_new(struct pkex_agent, 1);
+	dpp->agent->owner = l_strdup(sender);
+	dpp->agent->path = l_strdup(path);
+	dpp->agent->disconnect_watch = l_dbus_add_disconnect_watch(dbus, sender,
+							pkex_agent_disconnect,
+							dpp, NULL);
+
+	l_debug("%s registered a SharedCodeAgent on path %s", sender, path);
+
+	return l_dbus_message_new_method_return(message);
+}
+
+static struct l_dbus_message *dpp_dbus_pkex_unregister_agent(
+						struct l_dbus *dbus,
+						struct l_dbus_message *message,
+						void *user_data)
+{
+	struct dpp_sm *dpp = user_data;
+
+	if (!dpp->agent)
+		return dbus_error_not_found(message);
+
+	if (strcmp(dpp->agent->owner, l_dbus_message_get_sender(message)))
+		return dbus_error_not_found(message);
+
+	l_debug("%s unregistered SharedCodeAgent on path %s", dpp->agent->owner,
+			dpp->agent->path);
+
+	if (dpp->agent->pending_id)
+		l_dbus_cancel(dbus_get_bus(), dpp->agent->pending_id);
+
+	pkex_agent_free(dpp->agent);
+	dpp->agent = NULL;
+
+	return l_dbus_message_new_method_return(message);
+}
+
+static void dpp_setup_pkex_interface(struct l_dbus_interface *interface)
+{
+	l_dbus_interface_method(interface, "RegisterSharedCodeAgent", 0,
+			dpp_dbus_pkex_register_agent, "", "o", "path");
+	l_dbus_interface_method(interface, "UnregisterSharedCodeAgent", 0,
+			dpp_dbus_pkex_unregister_agent, "", "");
+}
+
 static void dpp_destroy_interface(void *user_data)
 {
 	struct dpp_sm *dpp = user_data;
@@ -2775,6 +2872,9 @@ static int dpp_init(void)
 	l_dbus_register_interface(dbus_get_bus(), IWD_DPP_INTERFACE,
 					dpp_setup_interface,
 					dpp_destroy_interface, false);
+	l_dbus_register_interface(dbus_get_bus(), IWD_DPP_PKEX_INTERFACE,
+					dpp_setup_pkex_interface,
+					NULL, false);
 
 	mlme_watch = l_genl_family_register(nl80211, "mlme", dpp_mlme_notify,
 						NULL, NULL);
