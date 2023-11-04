@@ -431,7 +431,7 @@ unit_tests += unit/test-cmac-aes \
 		unit/test-ie unit/test-util unit/test-ssid-security \
 		unit/test-arc4 unit/test-wsc unit/test-eap-mschapv2 \
 		unit/test-eap-sim unit/test-sae unit/test-p2p unit/test-band \
-		unit/test-dpp unit/test-json
+		unit/test-dpp unit/test-json unit/test-pmksa
 endif
 
 if CLIENT
@@ -580,6 +580,10 @@ unit_test_dpp_LDADD = $(ell_ldadd)
 
 unit_test_json_SOURCES = unit/test-json.c src/json.h src/json.c shared/jsmn.h
 unit_test_json_LDADD = $(ell_ldadd)
+
+unit_test_pmksa_SOURCES = unit/test-pmksa.c src/pmksa.c src/pmksa.h \
+				src/module.h src/util.h
+unit_test_pmksa_LDADD = $(ell_ldadd)
 endif
 
 if CLIENT
