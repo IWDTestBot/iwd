@@ -82,6 +82,13 @@ enum dpp_capability {
 	DPP_CAPABILITY_CONFIGURATOR = 0x02,
 };
 
+struct pkex_agent {
+	char *owner;
+	char *path;
+	unsigned int disconnect_watch;
+	uint32_t pending_id;
+};
+
 struct dpp_sm {
 	struct netdev *netdev;
 	char *uri;
@@ -103,6 +110,8 @@ struct dpp_sm {
 	struct l_ecc_point *peer_boot_public;
 
 	enum dpp_state state;
+
+	struct pkex_agent *agent;
 
 	/*
 	 * List of frequencies to jump between. The presence of this list is
@@ -154,6 +163,7 @@ struct dpp_sm {
 	char *pkex_id;
 	char *pkex_key;
 	uint8_t pkex_version;
+	struct l_ecc_point *peer_encr_key;
 	struct l_ecc_point *pkex_m;
 	/* Ephemeral key Y' or X' for enrollee or configurator */
 	struct l_ecc_point *y_or_x;
@@ -317,6 +327,68 @@ static void dpp_free_pending_pkex_data(struct dpp_sm *dpp)
 	}
 
 	memset(dpp->peer_addr, 0, sizeof(dpp->peer_addr));
+
+	if (dpp->peer_encr_key) {
+		l_ecc_point_free(dpp->peer_encr_key);
+		dpp->peer_encr_key = NULL;
+	}
+}
+
+static void pkex_agent_free(void *data)
+{
+	struct pkex_agent *agent = data;
+
+	l_free(agent->owner);
+	l_free(agent->path);
+	l_dbus_remove_watch(dbus_get_bus(), agent->disconnect_watch);
+	l_free(agent);
+}
+
+static void dpp_agent_cancel(struct dpp_sm *dpp)
+{
+	struct l_dbus_message *msg;
+
+	const char *reason = "shutdown";
+
+	msg = l_dbus_message_new_method_call(dbus_get_bus(),
+						dpp->agent->owner,
+						dpp->agent->path,
+						IWD_SHARED_CODE_AGENT_INTERFACE,
+						"Cancel");
+	l_dbus_message_set_arguments(msg, "s", reason);
+	l_dbus_message_set_no_reply(msg, true);
+	l_dbus_send(dbus_get_bus(), msg);
+}
+
+static void dpp_agent_release(struct dpp_sm *dpp)
+{
+	struct l_dbus_message *msg;
+
+	msg = l_dbus_message_new_method_call(dbus_get_bus(),
+						dpp->agent->owner,
+						dpp->agent->path,
+						IWD_SHARED_CODE_AGENT_INTERFACE,
+						"Release");
+	l_dbus_message_set_no_reply(msg, true);
+	l_dbus_send(dbus_get_bus(), msg);
+}
+
+static void dpp_destroy_agent(struct dpp_sm *dpp)
+{
+	if (!dpp->agent)
+		return;
+
+	if (dpp->agent->pending_id) {
+		dpp_agent_cancel(dpp);
+		l_dbus_cancel(dbus_get_bus(), dpp->agent->pending_id);
+	}
+
+	dpp_agent_release(dpp);
+
+	l_debug("Released SharedCodeAgent on path %s", dpp->agent->path);
+
+	pkex_agent_free(dpp->agent);
+	dpp->agent = NULL;
 }
 
 static void dpp_free_auth_data(struct dpp_sm *dpp)
@@ -415,6 +487,11 @@ static void dpp_reset(struct dpp_sm *dpp)
 		dpp->retry_timeout = NULL;
 	}
 
+	if (dpp->pkex_scan_id) {
+		scan_cancel(dpp->wdev_id, dpp->pkex_scan_id);
+		dpp->pkex_scan_id = 0;
+	}
+
 	dpp->state = DPP_STATE_NOTHING;
 	dpp->new_freq = 0;
 	dpp->frame_retry = 0;
@@ -430,6 +507,8 @@ static void dpp_reset(struct dpp_sm *dpp)
 	explicit_bzero(dpp->auth_tag, dpp->key_len);
 	explicit_bzero(dpp->z, dpp->key_len);
 	explicit_bzero(dpp->u, dpp->u_len);
+
+	dpp_destroy_agent(dpp);
 
 	dpp_free_pending_pkex_data(dpp);
 
@@ -456,6 +535,11 @@ static void dpp_free(struct dpp_sm *dpp)
 	if (dpp->boot_private) {
 		l_ecc_scalar_free(dpp->boot_private);
 		dpp->boot_private = NULL;
+	}
+
+	if (dpp->agent) {
+		pkex_agent_free(dpp->agent);
+		dpp->agent = NULL;
 	}
 
 	l_free(dpp);
@@ -1800,6 +1884,18 @@ static void dpp_offchannel_timeout(int error, void *user_data)
 
 	switch (dpp->state) {
 	case DPP_STATE_PKEX_EXCHANGE:
+		if (dpp->role != DPP_CAPABILITY_CONFIGURATOR || !dpp->agent)
+			break;
+
+		/*
+		 * We have a pending agent request but it did not arrive in
+		 * time, we cant assume the enrollee will be waiting around
+		 * for our response so cancel the request and continue waiting
+		 * for another request
+		 */
+		if (dpp->agent->pending_id)
+			dpp_free_pending_pkex_data(dpp);
+		/* Fall through */
 	case DPP_STATE_PRESENCE:
 		break;
 	case DPP_STATE_NOTHING:
@@ -2912,6 +3008,63 @@ bad_code:
 	return;
 }
 
+static void dpp_pkex_agent_reply(struct l_dbus_message *message,
+					void *user_data)
+{
+	struct dpp_sm *dpp = user_data;
+	const char *error, *text;
+	const char *code;
+
+	dpp->agent->pending_id = 0;
+
+	l_debug("SharedCodeAgent %s path %s replied", dpp->agent->owner,
+			dpp->agent->path);
+
+	if (l_dbus_message_get_error(message, &error, &text)) {
+		l_error("RequestSharedCode(%s) returned %s(\"%s\")",
+				dpp->pkex_id, error, text);
+		goto reset;
+	}
+
+	if (!l_dbus_message_get_arguments(message, "s", &code)) {
+		l_debug("Invalid arguments, check SharedCodeAgent!");
+		goto reset;
+	}
+
+	dpp->pkex_key = l_strdup(code);
+	dpp_process_pkex_exchange_request(dpp, dpp->peer_encr_key);
+
+	return;
+
+reset:
+	dpp_free_pending_pkex_data(dpp);
+}
+
+static bool dpp_pkex_agent_request(struct dpp_sm *dpp)
+{
+	struct l_dbus_message *msg;
+
+	if (!dpp->agent)
+		return false;
+
+	if (L_WARN_ON(dpp->agent->pending_id))
+		return false;
+
+	msg = l_dbus_message_new_method_call(dbus_get_bus(),
+						dpp->agent->owner,
+						dpp->agent->path,
+						IWD_SHARED_CODE_AGENT_INTERFACE,
+						"RequestSharedCode");
+	l_dbus_message_set_arguments(msg, "s", dpp->pkex_id);
+
+
+	dpp->agent->pending_id = l_dbus_send_with_reply(dbus_get_bus(),
+							msg,
+							dpp_pkex_agent_reply,
+							dpp, NULL);
+	return dpp->agent->pending_id != 0;
+}
+
 static void dpp_handle_pkex_exchange_request(struct dpp_sm *dpp,
 					const uint8_t *from,
 					const uint8_t *body, size_t body_len)
@@ -3011,6 +3164,29 @@ static void dpp_handle_pkex_exchange_request(struct dpp_sm *dpp,
 	}
 
 	memcpy(dpp->peer_addr, from, 6);
+
+	if (!dpp->pkex_key) {
+		if (!id) {
+			l_debug("Configurator started with agent but enrollee "
+				"sent no identifier, ignoring");
+			return;
+		}
+
+		dpp->pkex_id = l_strndup(id, id_len);
+
+		/* Need to obtain code from agent */
+		if (!dpp_pkex_agent_request(dpp)) {
+			l_debug("Failed to request code from agent!");
+			dpp_free_pending_pkex_data(dpp);
+			return;
+		}
+
+		/* Save the encrypted key/identifier for the agent callback */
+
+		dpp->peer_encr_key = l_steal_ptr(m);
+
+		return;
+	}
 
 	dpp_process_pkex_exchange_request(dpp, m);
 
@@ -3931,8 +4107,34 @@ invalid_args:
 	return dbus_error_invalid_args(message);
 }
 
+static void pkex_agent_disconnect(struct l_dbus *dbus, void *user_data)
+{
+	struct dpp_sm *dpp = user_data;
+
+	l_debug("SharedCodeAgent %s disconnected", dpp->agent->path);
+
+	dpp_reset(dpp);
+}
+
+static void dpp_create_agent(struct dpp_sm *dpp, const char *path,
+					struct l_dbus_message *message)
+{
+	const char *sender = l_dbus_message_get_sender(message);
+
+	dpp->agent = l_new(struct pkex_agent, 1);
+	dpp->agent->owner = l_strdup(sender);
+	dpp->agent->path = l_strdup(path);
+	dpp->agent->disconnect_watch = l_dbus_add_disconnect_watch(dbus_get_bus(),
+							sender,
+							pkex_agent_disconnect,
+							dpp, NULL);
+
+	l_debug("Registered a SharedCodeAgent on path %s", path);
+}
+
 static struct l_dbus_message *dpp_start_pkex_configurator(struct dpp_sm *dpp,
 					const char *key, const char *identifier,
+					const char *agent_path,
 					struct l_dbus_message *message)
 {
 	struct handshake_state *hs = netdev_get_handshake(dpp->netdev);
@@ -3959,6 +4161,9 @@ static struct l_dbus_message *dpp_start_pkex_configurator(struct dpp_sm *dpp,
 	if (key)
 		dpp->pkex_key = l_strdup(key);
 
+	if (agent_path)
+		dpp_create_agent(dpp, agent_path, message);
+
 	dpp->role = DPP_CAPABILITY_CONFIGURATOR;
 	dpp->state = DPP_STATE_PKEX_EXCHANGE;
 	dpp->current_freq = bss->frequency;
@@ -3970,7 +4175,10 @@ static struct l_dbus_message *dpp_start_pkex_configurator(struct dpp_sm *dpp,
 	dpp_reset_protocol_timer(dpp, DPP_PKEX_PROTO_TIMEOUT);
 	dpp_pkex_property_changed_notify(dpp);
 
-	l_debug("Starting PKEX configurator for single enrollee");
+	if (dpp->pkex_key)
+		l_debug("Starting PKEX configurator for single enrollee");
+	else
+		l_debug("Starting PKEX configurator with agent");
 
 	return l_dbus_message_new_method_return(message);
 }
@@ -3989,7 +4197,21 @@ static struct l_dbus_message *dpp_dbus_pkex_configure_enrollee(
 	if (!dpp_parse_pkex_args(message, &key, &id))
 		return dbus_error_invalid_args(message);
 
-	return dpp_start_pkex_configurator(dpp, key, id, message);
+	return dpp_start_pkex_configurator(dpp, key, id, NULL, message);
+}
+
+static struct l_dbus_message *dpp_dbus_pkex_start_configurator(
+						struct l_dbus *dbus,
+						struct l_dbus_message *message,
+						void *user_data)
+{
+	struct dpp_sm *dpp = user_data;
+	const char *path;
+
+	if (!l_dbus_message_get_arguments(message, "o", &path))
+		return dbus_error_invalid_args(message);
+
+	return dpp_start_pkex_configurator(dpp, NULL, NULL, path, message);
 }
 
 static void dpp_setup_interface(struct l_dbus_interface *interface)
@@ -4030,6 +4252,8 @@ static void dpp_setup_pkex_interface(struct l_dbus_interface *interface)
 			dpp_dbus_pkex_stop, "", "");
 	l_dbus_interface_method(interface, "ConfigureEnrollee", 0,
 			dpp_dbus_pkex_configure_enrollee, "", "a{sv}", "args");
+	l_dbus_interface_method(interface, "StartConfigurator", 0,
+			dpp_dbus_pkex_start_configurator, "", "o", "path");
 
 	l_dbus_interface_property(interface, "Started", 0, "b",
 			dpp_pkex_get_started, NULL);
