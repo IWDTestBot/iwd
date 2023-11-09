@@ -2,7 +2,7 @@
  *
  *  Wireless daemon for Linux
  *
- *  Copyright (C) 2017-2020  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2017-2023  Intel Corporation. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -618,6 +618,40 @@ bool proxy_interface_method_call(const struct proxy_interface *proxy,
 	va_start(args, callback);
 	l_dbus_message_set_arguments_valist(call, signature, args);
 	va_end(args);
+
+	callback_data = l_new(struct proxy_callback_data, 1);
+	callback_data->callback = callback;
+	callback_data->user_data = (void *) proxy;
+
+	l_dbus_send_with_reply(dbus, call, proxy_callback, callback_data,
+									l_free);
+
+	return true;
+}
+
+struct l_dbus_message_builder *proxy_interface_new_builder(
+				const struct proxy_interface *proxy,
+				const char *name)
+{
+	struct l_dbus_message *call = l_dbus_message_new_method_call(dbus,
+						IWD_SERVICE, proxy->path,
+						proxy->type->interface, name);
+
+	return l_dbus_message_builder_new(call);
+}
+
+bool proxy_interface_method_call_from_builder(
+					const struct proxy_interface *proxy,
+					struct l_dbus_message_builder *builder,
+					l_dbus_message_func_t callback)
+{
+	struct proxy_callback_data *callback_data;
+	struct l_dbus_message *call;
+
+	if (!proxy || !builder)
+		return false;
+
+	call = l_dbus_message_builder_finalize(builder);
 
 	callback_data = l_new(struct proxy_callback_data, 1);
 	callback_data->callback = callback;

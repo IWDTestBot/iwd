@@ -2,7 +2,7 @@
  *
  *  Wireless daemon for Linux
  *
- *  Copyright (C) 2017-2019  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2017-2013  Intel Corporation. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -38,6 +38,8 @@ struct proxy_interface;
 #define IWD_AP_DIAGNOSTIC_INTERFACE      "net.connman.iwd.AccessPointDiagnostic"
 #define IWD_DAEMON_INTERFACE             "net.connman.iwd.Daemon"
 #define IWD_DPP_INTERFACE                "net.connman.iwd.DeviceProvisioning"
+#define IWD_DPP_PKEX_INTERFACE \
+				"net.connman.iwd.SharedCodeDeviceProvisioning"
 
 typedef bool (*proxy_property_match_func_t) (const void *a, const void *b);
 
@@ -87,6 +89,15 @@ bool dbus_message_has_error(struct l_dbus_message *message);
 bool proxy_interface_method_call(const struct proxy_interface *proxy,
 					const char *name, const char *signature,
 					l_dbus_message_func_t callback, ...);
+
+bool proxy_interface_method_call_from_builder(
+					const struct proxy_interface *proxy,
+					struct l_dbus_message_builder *builder,
+					l_dbus_message_func_t callback);
+
+struct l_dbus_message_builder *proxy_interface_new_builder(
+				const struct proxy_interface *proxy,
+				const char *name);
 
 void proxy_properties_display(const struct proxy_interface *proxy,
 				const char *caption, const char *margin,
