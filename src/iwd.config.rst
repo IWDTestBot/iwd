@@ -413,6 +413,25 @@ are buggy or just don't behave similar enough to the majority of other drivers.
 
        If a driver in user matches one in this list power save will be disabled.
 
+DeviceProvisioning
+------------------
+
+The group ``[DeviceProvisioning]`` contains settings used for the DPP (Device
+Provisioning Protocol).
+
+.. list-table::
+   :header-rows: 0
+   :stub-columns: 0
+   :widths: 20 80
+   :align: left
+
+   * - EnrolleeScanDiscovery
+     - Values: true, **false**
+
+       When enabled a shared code enrollee will first scan and use the results
+       to determine which frequencies to iterate to discover a configurator.
+       This greatly increases the chances of a configurator being found.
+
 SEE ALSO
 ========
 
