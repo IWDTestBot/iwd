@@ -90,6 +90,15 @@ bool proxy_interface_method_call(const struct proxy_interface *proxy,
 					const char *name, const char *signature,
 					l_dbus_message_func_t callback, ...);
 
+bool proxy_interface_method_call_from_builder(
+					const struct proxy_interface *proxy,
+					struct l_dbus_message_builder *builder,
+					l_dbus_message_func_t callback);
+
+struct l_dbus_message_builder *proxy_interface_new_builder(
+				const struct proxy_interface *proxy,
+				const char *name);
+
 void proxy_properties_display(const struct proxy_interface *proxy,
 				const char *caption, const char *margin,
 				unsigned int name_column_width,
