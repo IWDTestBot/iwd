@@ -440,6 +440,25 @@ network configuration.
        value obtained from the DHCPv6 server or via Router Advertisements.
 
 
+The group ``[DeviceProvisioning]`` contains settings for device provisioning
+credential sharing.
+
+.. list-table::
+   :header-rows: 0
+   :stub-columns: 0
+   :widths: 20 80
+   :align: left
+
+   * - ShareFullConfig
+     - Values: true, **false**
+
+       When configuring an enrollee, include all additional network profile
+       settings except those that are device specific (e.g. MAC/IP address
+       overrides). This uses 3rd party attributes in the DPP configuration
+       response and will only be compatible with IWD-based enrollees that can
+       parse those attributes.
+
+
 Embedded PEMs
 -------------
 
