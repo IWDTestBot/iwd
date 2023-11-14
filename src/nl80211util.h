@@ -28,11 +28,39 @@ struct band_freq_attrs;
 
 int nl80211_parse_attrs(struct l_genl_msg *msg, int tag, ...);
 
+struct l_genl_msg *nl80211_build_deauthenticate(uint32_t ifindex,
+						const uint8_t addr[static 6],
+						uint16_t reason_code);
+struct l_genl_msg *nl80211_build_disconnect(uint32_t ifindex,
+							uint16_t reason_code);
+
+struct l_genl_msg *nl80211_build_del_station(uint32_t ifindex,
+						const uint8_t addr[static 6],
+						uint16_t reason_code,
+						uint8_t subtype);
+
 struct l_genl_msg *nl80211_build_new_key_group(uint32_t ifindex,
 					uint32_t cipher, uint8_t key_id,
 					const uint8_t *key, size_t key_len,
 					const uint8_t *ctr, size_t ctr_len,
 					const uint8_t *addr);
+struct l_genl_msg *nl80211_build_new_key_pairwise(uint32_t ifindex,
+						uint32_t cipher,
+						const uint8_t addr[static 6],
+						const uint8_t *tk,
+						size_t tk_len,
+						uint8_t key_id);
+struct l_genl_msg *nl80211_build_new_rx_key_pairwise(uint32_t ifindex,
+						uint32_t cipher,
+						const uint8_t addr[static 6],
+						const uint8_t *tk,
+						size_t tk_len,
+						uint8_t key_id);
+
+struct l_genl_msg *nl80211_build_rekey_offload(uint32_t ifindex,
+						const uint8_t *kek,
+						const uint8_t *kck,
+						uint64_t replay_ctr);
 
 struct l_genl_msg *nl80211_build_set_station_authorized(uint32_t ifindex,
 							const uint8_t *addr);

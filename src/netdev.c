@@ -858,12 +858,69 @@ static void netdev_connect_failed(struct netdev *netdev,
 	}
 }
 
-static void netdev_disconnect_cb(struct l_genl_msg *msg, void *user_data)
+static void netdev_connect_failed_cb(struct l_genl_msg *msg, void *user_data)
 {
 	struct netdev *netdev = user_data;
 
 	netdev->disconnect_cmd_id = 0;
 	netdev_connect_failed(netdev, netdev->result, netdev->last_code);
+}
+
+static void netdev_send_and_fail_connection(struct netdev *netdev,
+						enum netdev_result result,
+						uint16_t status_code,
+						struct l_genl_msg *msg)
+{
+	netdev->result = result;
+	netdev->last_code = status_code;
+
+	netdev->disconnect_cmd_id =
+		l_genl_family_send(nl80211, msg, netdev_connect_failed_cb,
+					netdev, NULL);
+}
+
+static void netdev_disconnect_and_fail_connection(struct netdev *netdev,
+						enum netdev_result result,
+						uint16_t status_code)
+{
+	struct l_genl_msg *msg = nl80211_build_disconnect(netdev->index,
+						MMPDU_REASON_CODE_UNSPECIFIED);
+
+	netdev_send_and_fail_connection(netdev, result, status_code, msg);
+}
+
+static void netdev_deauth_and_fail_connection(struct netdev *netdev,
+						enum netdev_result result,
+						uint16_t status_code)
+{
+	struct l_genl_msg *msg = nl80211_build_deauthenticate(netdev->index,
+						netdev->handshake->aa,
+						MMPDU_REASON_CODE_UNSPECIFIED);
+
+	netdev_send_and_fail_connection(netdev, result, status_code, msg);
+}
+
+static void netdev_disconnect_sme_cb(struct l_genl_msg *msg, void *user_data)
+{
+	struct netdev *netdev = user_data;
+
+	netdev->disconnect_cmd_id = 0;
+	netdev_connect_failed(netdev, netdev->result, netdev->last_code);
+}
+
+static void netdev_disconnect_by_sme(struct netdev *netdev,
+					enum netdev_result result,
+					uint16_t reason_code)
+{
+	struct l_genl_msg *msg = nl80211_build_disconnect(netdev->index,
+								reason_code);
+
+	netdev->result = result;
+	netdev->last_code = reason_code;
+
+	netdev->disconnect_cmd_id = l_genl_family_send(nl80211, msg,
+						netdev_disconnect_sme_cb,
+						netdev, NULL);
 }
 
 static void netdev_free(void *data)
@@ -1245,18 +1302,6 @@ static void netdev_cmd_disconnect_cb(struct l_genl_msg *msg, void *user_data)
 	disconnect_cb(netdev, r, disconnect_data);
 }
 
-static struct l_genl_msg *netdev_build_cmd_disconnect(struct netdev *netdev,
-							uint16_t reason_code)
-{
-	struct l_genl_msg *msg;
-
-	msg = l_genl_msg_new_sized(NL80211_CMD_DISCONNECT, 64);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_IFINDEX, 4, &netdev->index);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_REASON_CODE, 2, &reason_code);
-
-	return msg;
-}
-
 static void netdev_deauthenticate_event(struct l_genl_msg *msg,
 							struct netdev *netdev)
 {
@@ -1264,6 +1309,7 @@ static void netdev_deauthenticate_event(struct l_genl_msg *msg,
 	uint16_t type, len;
 	const void *data;
 	const struct mmpdu_header *hdr = NULL;
+	const struct mmpdu_deauthentication *deauth;
 	uint16_t reason_code;
 
 	l_debug("");
@@ -1298,7 +1344,8 @@ static void netdev_deauthenticate_event(struct l_genl_msg *msg,
 	if (!memcmp(hdr->address_2, netdev->addr, sizeof(netdev->addr)))
 		return;
 
-	reason_code = l_get_u8(mmpdu_body(hdr));
+	deauth = mmpdu_body(hdr);
+	reason_code = L_LE16_TO_CPU(deauth->reason_code);
 
 	l_info("deauth event, src="MAC" dest="MAC" bssid="MAC" reason=%u",
 			MAC_STR(hdr->address_2), MAC_STR(hdr->address_1),
@@ -1306,66 +1353,6 @@ static void netdev_deauthenticate_event(struct l_genl_msg *msg,
 
 	netdev_connect_failed(netdev, NETDEV_RESULT_AUTHENTICATION_FAILED,
 					MMPDU_STATUS_CODE_UNSPECIFIED);
-}
-
-static struct l_genl_msg *netdev_build_cmd_deauthenticate(struct netdev *netdev,
-							uint16_t reason_code)
-{
-	struct l_genl_msg *msg;
-
-	msg = l_genl_msg_new_sized(NL80211_CMD_DEAUTHENTICATE, 128);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_IFINDEX, 4, &netdev->index);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_REASON_CODE, 2, &reason_code);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_MAC, ETH_ALEN,
-							netdev->handshake->aa);
-
-	return msg;
-}
-
-static struct l_genl_msg *netdev_build_cmd_del_station(struct netdev *netdev,
-							const uint8_t *sta,
-							uint16_t reason_code,
-							bool disassociate)
-{
-	struct l_genl_msg *msg;
-	uint8_t subtype = disassociate ?
-			MPDU_MANAGEMENT_SUBTYPE_DISASSOCIATION :
-			MPDU_MANAGEMENT_SUBTYPE_DEAUTHENTICATION;
-
-	msg = l_genl_msg_new_sized(NL80211_CMD_DEL_STATION, 64);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_IFINDEX, 4, &netdev->index);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_MAC, 6, sta);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_MGMT_SUBTYPE, 1, &subtype);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_REASON_CODE, 2, &reason_code);
-
-	return msg;
-}
-
-static void netdev_del_sta_cb(struct l_genl_msg *msg, void *user_data)
-{
-	int err = l_genl_msg_get_error(msg);
-	const char *ext_error;
-
-	if (err >= 0)
-		return;
-
-	ext_error = l_genl_msg_get_extended_error(msg);
-	l_error("DEL_STATION failed: %s",
-			ext_error ? ext_error : strerror(-err));
-}
-
-int netdev_del_station(struct netdev *netdev, const uint8_t *sta,
-			uint16_t reason_code, bool disassociate)
-{
-	struct l_genl_msg *msg;
-
-	msg = netdev_build_cmd_del_station(netdev, sta, reason_code,
-						disassociate);
-
-	if (!l_genl_family_send(nl80211, msg, netdev_del_sta_cb, NULL, NULL))
-		return -EIO;
-
-	return 0;
 }
 
 static void netdev_operstate_cb(int error, uint16_t type,
@@ -1458,25 +1445,23 @@ static void netdev_setting_keys_failed(struct netdev_handshake_state *nhs,
 			return;
 		}
 
-		msg = netdev_build_cmd_disconnect(netdev,
-						MMPDU_REASON_CODE_UNSPECIFIED);
-		netdev->disconnect_cmd_id = l_genl_family_send(nl80211, msg,
-							netdev_disconnect_cb,
-							netdev, NULL);
+		netdev_disconnect_by_sme(netdev,
+					NETDEV_RESULT_KEY_SETTING_FAILED,
+					MMPDU_REASON_CODE_UNSPECIFIED);
 		break;
 	case NL80211_IFTYPE_AP:
 		if (err == -ENETDOWN)
 			return;
 
-		msg = netdev_build_cmd_del_station(netdev, nhs->super.spa,
-				MMPDU_REASON_CODE_UNSPECIFIED, false);
+		msg = nl80211_build_del_station(netdev->index,
+				nhs->super.spa, MMPDU_REASON_CODE_UNSPECIFIED,
+				MPDU_MANAGEMENT_SUBTYPE_DEAUTHENTICATION);
 		if (!l_genl_family_send(nl80211, msg, NULL, NULL, NULL))
 			l_error("error sending DEL_STATION");
 
 		break;
 	}
 
-	netdev->result = NETDEV_RESULT_KEY_SETTING_FAILED;
 	handshake_event(&nhs->super, HANDSHAKE_EVENT_SETTING_KEYS_FAILED, &err);
 }
 
@@ -1967,57 +1952,6 @@ error:
 	netdev_setting_keys_failed(nhs, err);
 }
 
-static struct l_genl_msg *netdev_build_cmd_new_key_pairwise(
-							struct netdev *netdev,
-							uint32_t cipher,
-							const uint8_t *aa,
-							const uint8_t *tk,
-							size_t tk_len,
-							uint8_t key_id)
-{
-	struct l_genl_msg *msg;
-
-	msg = l_genl_msg_new_sized(NL80211_CMD_NEW_KEY, 512);
-
-	l_genl_msg_append_attr(msg, NL80211_ATTR_KEY_DATA, tk_len, tk);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_KEY_CIPHER, 4, &cipher);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_MAC, ETH_ALEN, aa);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_KEY_IDX, 1, &key_id);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_IFINDEX, 4, &netdev->index);
-
-	return msg;
-}
-
-static struct l_genl_msg *netdev_build_cmd_new_rx_key_pairwise(
-							struct netdev *netdev,
-							uint32_t cipher,
-							const uint8_t *aa,
-							const uint8_t *tk,
-							size_t tk_len,
-							uint8_t key_id)
-{
-	uint8_t key_mode = NL80211_KEY_NO_TX;
-	uint32_t key_type = NL80211_KEYTYPE_PAIRWISE;
-	struct l_genl_msg *msg;
-
-	msg = l_genl_msg_new_sized(NL80211_CMD_NEW_KEY, 512);
-
-	l_genl_msg_append_attr(msg, NL80211_ATTR_MAC, ETH_ALEN, aa);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_IFINDEX, 4, &netdev->index);
-
-	l_genl_msg_enter_nested(msg, NL80211_ATTR_KEY);
-
-	l_genl_msg_append_attr(msg, NL80211_KEY_DATA, tk_len, tk);
-	l_genl_msg_append_attr(msg, NL80211_KEY_CIPHER, 4, &cipher);
-	l_genl_msg_append_attr(msg, NL80211_KEY_IDX, 1, &key_id);
-	l_genl_msg_append_attr(msg, NL80211_KEY_MODE, 1, &key_mode);
-	l_genl_msg_append_attr(msg, NL80211_KEY_TYPE, 4, &key_type);
-
-	l_genl_msg_leave_nested(msg);
-
-	return msg;
-}
-
 static void netdev_group_timeout_cb(struct l_timeout *timeout, void *user_data)
 {
 	struct netdev_handshake_state *nhs = user_data;
@@ -2093,9 +2027,9 @@ static void netdev_set_tk(struct handshake_state *hs, uint8_t key_index,
 	if (!netdev_copy_tk(tk_buf, tk, cipher, hs->authenticator))
 		goto invalid_key;
 
-	msg = netdev_build_cmd_new_key_pairwise(netdev, cipher, addr, tk_buf,
-						crypto_cipher_key_len(cipher),
-						key_index);
+	msg = nl80211_build_new_key_pairwise(netdev->index, cipher, addr,
+					tk_buf, crypto_cipher_key_len(cipher),
+					key_index);
 	nhs->pairwise_new_key_cmd_id =
 		l_genl_family_send(nl80211, msg, netdev_new_pairwise_key_cb,
 						nhs, NULL);
@@ -2127,9 +2061,9 @@ static void netdev_set_ext_tk(struct handshake_state *hs, uint8_t key_idx,
 	if (!netdev_copy_tk(tk_buf, tk, cipher, hs->authenticator))
 		goto error;
 
-	msg = netdev_build_cmd_new_rx_key_pairwise(netdev, cipher, addr, tk_buf,
-						crypto_cipher_key_len(cipher),
-						hs->active_tk_index);
+	msg = nl80211_build_new_rx_key_pairwise(netdev->index, cipher, addr,
+					tk_buf, crypto_cipher_key_len(cipher),
+					hs->active_tk_index);
 	nhs->pairwise_new_key_cmd_id =
 		l_genl_family_send(nl80211, msg, netdev_new_rx_pairwise_key_cb,
 						nhs, NULL);
@@ -2238,21 +2172,17 @@ void netdev_handshake_failed(struct handshake_state *hs, uint16_t reason_code)
 
 	netdev->sm = NULL;
 
-	netdev->result = NETDEV_RESULT_HANDSHAKE_FAILED;
-	netdev->last_code = reason_code;
-
 	switch (netdev->type) {
 	case NL80211_IFTYPE_STATION:
 	case NL80211_IFTYPE_P2P_CLIENT:
-		msg = netdev_build_cmd_disconnect(netdev, reason_code);
-		netdev->disconnect_cmd_id = l_genl_family_send(nl80211, msg,
-							netdev_disconnect_cb,
-							netdev, NULL);
+		netdev_disconnect_by_sme(netdev, NETDEV_RESULT_HANDSHAKE_FAILED,
+						reason_code);
 		break;
 	case NL80211_IFTYPE_AP:
 	case NL80211_IFTYPE_P2P_GO:
-		msg = netdev_build_cmd_del_station(netdev, nhs->super.spa,
-				reason_code, false);
+		msg = nl80211_build_del_station(netdev->index, nhs->super.spa,
+				reason_code,
+				MPDU_MANAGEMENT_SUBTYPE_DEAUTHENTICATION);
 		if (!l_genl_family_send(nl80211, msg, NULL, NULL, NULL))
 			l_error("error sending DEL_STATION");
 	}
@@ -2282,30 +2212,6 @@ static void hardware_rekey_cb(struct l_genl_msg *msg, void *data)
 	}
 }
 
-static struct l_genl_msg *netdev_build_cmd_replay_counter(struct netdev *netdev,
-							const uint8_t *kek,
-							const uint8_t *kck,
-							uint64_t replay_ctr)
-{
-	struct l_genl_msg *msg;
-
-	msg = l_genl_msg_new_sized(NL80211_CMD_SET_REKEY_OFFLOAD, 512);
-
-	l_genl_msg_append_attr(msg, NL80211_ATTR_IFINDEX, 4, &netdev->index);
-
-	l_genl_msg_enter_nested(msg, NL80211_ATTR_REKEY_DATA);
-	l_genl_msg_append_attr(msg, NL80211_REKEY_DATA_KEK,
-					NL80211_KEK_LEN, kek);
-	l_genl_msg_append_attr(msg, NL80211_REKEY_DATA_KCK,
-					NL80211_KCK_LEN, kck);
-	l_genl_msg_append_attr(msg, NL80211_REKEY_DATA_REPLAY_CTR,
-			NL80211_REPLAY_CTR_LEN, &replay_ctr);
-
-	l_genl_msg_leave_nested(msg);
-
-	return msg;
-}
-
 static void netdev_set_rekey_offload(uint32_t ifindex,
 					const uint8_t *kek,
 					const uint8_t *kck,
@@ -2326,7 +2232,7 @@ static void netdev_set_rekey_offload(uint32_t ifindex,
 		return;
 
 	l_debug("%d", netdev->index);
-	msg = netdev_build_cmd_replay_counter(netdev, kek, kck, replay_counter);
+	msg = nl80211_build_rekey_offload(ifindex, kek, kck, replay_counter);
 	netdev->rekey_offload_cmd_id = l_genl_family_send(nl80211, msg,
 							hardware_rekey_cb,
 							netdev, NULL);
@@ -2985,14 +2891,9 @@ error:
 	return;
 
 deauth:
-	netdev->result = NETDEV_RESULT_ASSOCIATION_FAILED;
-	netdev->last_code = MMPDU_STATUS_CODE_UNSPECIFIED;
-	msg = netdev_build_cmd_deauthenticate(netdev,
-						MMPDU_REASON_CODE_UNSPECIFIED);
-	netdev->disconnect_cmd_id = l_genl_family_send(nl80211,
-							msg,
-							netdev_disconnect_cb,
-							netdev, NULL);
+	netdev_disconnect_and_fail_connection(netdev,
+					NETDEV_RESULT_ASSOCIATION_FAILED,
+					MMPDU_STATUS_CODE_UNSPECIFIED);
 }
 
 static struct l_genl_msg *netdev_build_cmd_associate_common(
@@ -3033,18 +2934,12 @@ static void netdev_cmd_ft_reassociate_cb(struct l_genl_msg *msg,
 
 	netdev->connect_cmd_id = 0;
 
-	if (l_genl_msg_get_error(msg) < 0) {
-		struct l_genl_msg *cmd_deauth;
+	if (l_genl_msg_get_error(msg) >= 0)
+		return;
 
-		netdev->result = NETDEV_RESULT_ASSOCIATION_FAILED;
-		netdev->last_code = MMPDU_STATUS_CODE_UNSPECIFIED;
-		cmd_deauth = netdev_build_cmd_deauthenticate(netdev,
-						MMPDU_REASON_CODE_UNSPECIFIED);
-		netdev->disconnect_cmd_id = l_genl_family_send(nl80211,
-							cmd_deauth,
-							netdev_disconnect_cb,
-							netdev, NULL);
-	}
+	netdev_deauth_and_fail_connection(netdev,
+					NETDEV_RESULT_ASSOCIATION_FAILED,
+					MMPDU_STATUS_CODE_UNSPECIFIED);
 }
 
 static bool kernel_will_retry_auth(uint16_t status_code,
@@ -3169,16 +3064,9 @@ static void netdev_authenticate_event(struct l_genl_msg *msg,
 		 * to keep retrying, tell it to stop
 		 */
 		if (retry) {
-			struct l_genl_msg *cmd_deauth;
-
-			netdev->result = NETDEV_RESULT_ASSOCIATION_FAILED;
-			netdev->last_code = MMPDU_STATUS_CODE_UNSPECIFIED;
-			cmd_deauth = netdev_build_cmd_deauthenticate(netdev,
-						MMPDU_REASON_CODE_UNSPECIFIED);
-			netdev->disconnect_cmd_id = l_genl_family_send(nl80211,
-							cmd_deauth,
-							netdev_disconnect_cb,
-							netdev, NULL);
+			netdev_deauth_and_fail_connection(netdev,
+					NETDEV_RESULT_ASSOCIATION_FAILED,
+					MMPDU_STATUS_CODE_UNSPECIFIED);
 			return;
 		}
 	}
@@ -3603,19 +3491,16 @@ static void netdev_mac_change_failed(struct netdev *netdev, int error)
 		WATCHLIST_NOTIFY(&netdev_watches, netdev_watch_func_t,
 				netdev, NETDEV_WATCH_EVENT_DOWN);
 
-		goto failed;
-	} else {
-		/* If the interface is up we can still try and connect */
-		l_info("Failed to change the MAC, continuing with connection");
-		if (netdev_begin_connection(netdev) < 0)
-			goto failed;
-
+		netdev_connect_failed(netdev, NETDEV_RESULT_ABORTED,
+				MMPDU_STATUS_CODE_UNSPECIFIED);
 		return;
 	}
 
-failed:
-	netdev_connect_failed(netdev, NETDEV_RESULT_ABORTED,
-				MMPDU_STATUS_CODE_UNSPECIFIED);
+	/* If the interface is up we can still try and connect */
+	l_info("Failed to change the MAC, continuing with connection");
+
+	if (netdev_begin_connection(netdev) < 0)
+		l_error("netdev_begin_connection() error in mac_change_failed");
 }
 
 static void netdev_mac_destroy(void *user_data)
@@ -3647,14 +3532,9 @@ static void netdev_mac_power_up_cb(int error, uint16_t type,
 		return;
 	}
 
-	/*
-	 * Pick up where we left off in netdev_connect_commmon.
-	 */
-	if (netdev_begin_connection(netdev) < 0) {
-		l_error("Failed to connect after changing MAC");
-		netdev_connect_failed(netdev, NETDEV_RESULT_ASSOCIATION_FAILED,
-				MMPDU_STATUS_CODE_UNSPECIFIED);
-	}
+	/* Pick up where we left off in netdev_connect_commmon */
+	if (netdev_begin_connection(netdev) < 0)
+		l_error("netdev_begin_connection() error in mac_power_up_cb");
 }
 
 static void netdev_mac_power_down_cb(int error, uint16_t type,
@@ -3868,7 +3748,7 @@ static bool netdev_connection_work_ready(struct wiphy_radio_work_item *item)
 	}
 
 	if (netdev_begin_connection(netdev) < 0)
-		goto failed;
+		return true;
 
 	return false;
 
@@ -4165,7 +4045,7 @@ int netdev_disconnect(struct netdev *netdev,
 	}
 
 	if (send_disconnect) {
-		disconnect = netdev_build_cmd_disconnect(netdev,
+		disconnect = nl80211_build_disconnect(netdev->index,
 					MMPDU_REASON_CODE_DEAUTH_LEAVING);
 		netdev->disconnect_cmd_id = l_genl_family_send(nl80211,
 					disconnect, netdev_cmd_disconnect_cb,
@@ -4694,17 +4574,14 @@ static void netdev_sa_query_timeout(struct l_timeout *timeout,
 		void *user_data)
 {
 	struct netdev *netdev = user_data;
-	struct l_genl_msg *msg;
 
 	l_info("SA Query timed out, connection is invalid.  Disconnecting...");
 
 	l_timeout_remove(netdev->sa_query_timeout);
 	netdev->sa_query_timeout = NULL;
 
-	msg = netdev_build_cmd_disconnect(netdev,
-			MMPDU_REASON_CODE_PREV_AUTH_NOT_VALID);
-	netdev->disconnect_cmd_id = l_genl_family_send(nl80211, msg,
-			netdev_disconnect_cb, netdev, NULL);
+	netdev_disconnect_by_sme(netdev, NETDEV_RESULT_ABORTED,
+					MMPDU_REASON_CODE_PREV_AUTH_NOT_VALID);
 }
 
 static void netdev_sa_query_req_cb(struct l_genl_msg *msg, void *user_data)
@@ -4954,8 +4831,7 @@ static void netdev_unprot_disconnect_event(struct l_genl_msg *msg,
 	if (!hdr)
 		return;
 
-	/* get reason code, first byte of frame */
-	reason_code = l_get_u8(mmpdu_body(hdr));
+	reason_code = l_get_le16(mmpdu_body(hdr));
 
 	l_info("disconnect event, src="MAC" dest="MAC" bssid="MAC" reason=%u",
 			MAC_STR(hdr->address_2), MAC_STR(hdr->address_1),
