@@ -879,6 +879,9 @@ static bool dpp_scan_results(int err, struct l_queue *bss_list,
 	/* Purely for grabbing the SSID */
 	bss = l_queue_peek_head(bss_list);
 
+	if (L_WARN_ON(!util_ssid_is_utf8(bss->ssid_len, bss->ssid)))
+		goto reset;
+
 	memcpy(ssid, bss->ssid, bss->ssid_len);
 	ssid[bss->ssid_len] = '\0';
 
@@ -3680,6 +3683,9 @@ static void dpp_frame_watch(struct dpp_sm *dpp, uint16_t frame_type,
 static void dpp_station_state_watch(enum station_state state, void *user_data)
 {
 	struct dpp_sm *dpp = user_data;
+
+	if (dpp->state == DPP_STATE_NOTHING)
+		return;
 
 	switch (state) {
 	case STATION_STATE_DISCONNECTED:
