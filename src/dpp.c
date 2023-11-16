@@ -100,6 +100,7 @@ struct dpp_sm {
 	char *uri;
 	uint8_t role;
 	int refcount;
+	uint32_t station_watch;
 
 	uint64_t wdev_id;
 
@@ -182,6 +183,7 @@ struct dpp_sm {
 	size_t z_len;
 	uint8_t u[L_ECC_SCALAR_MAX_BYTES];
 	size_t u_len;
+	uint32_t pkex_scan_id;
 
 	bool mcast_support : 1;
 	bool roc_started : 1;
@@ -507,6 +509,11 @@ static void dpp_reset(struct dpp_sm *dpp)
 		dpp->retry_timeout = NULL;
 	}
 
+	if (dpp->pkex_scan_id) {
+		scan_cancel(dpp->wdev_id, dpp->pkex_scan_id);
+		dpp->pkex_scan_id = 0;
+	}
+
 	dpp->state = DPP_STATE_NOTHING;
 	dpp->new_freq = 0;
 	dpp->frame_retry = 0;
@@ -536,6 +543,8 @@ static void dpp_reset(struct dpp_sm *dpp)
 
 static void dpp_free(struct dpp_sm *dpp)
 {
+	struct station *station = station_find(netdev_get_ifindex(dpp->netdev));
+
 	dpp_reset(dpp);
 
 	if (dpp->own_asn1) {
@@ -552,6 +561,13 @@ static void dpp_free(struct dpp_sm *dpp)
 		l_ecc_scalar_free(dpp->boot_private);
 		dpp->boot_private = NULL;
 	}
+
+	/*
+	 * Since this is called when the netdev goes down, station may already
+	 * be gone in which case the state watch will automatically go away.
+	 */
+	if (station)
+		station_remove_state_watch(station, dpp->station_watch);
 
 	l_free(dpp);
 }
@@ -3608,6 +3624,55 @@ static void dpp_frame_watch(struct dpp_sm *dpp, uint16_t frame_type,
 					L_UINT_TO_PTR(frame_type), NULL);
 }
 
+/*
+ * Station is unaware of DPP's state so we need to handle a few cases here so
+ * weird stuff doesn't happen:
+ *
+ *   - While configuring we should stay connected, a disconnection/roam should
+ *     stop DPP since it would fail regardless due to the hardware going idle
+ *     or changing channels since configurators assume all comms will be
+ *     on-channel.
+ *   - While enrolling we should stay disconnected. If station connects during
+ *     enrolling it would cause 2x calls to __station_connect_network after
+ *     DPP finishes.
+ *
+ * Other conditions shouldn't ever happen i.e. configuring and going into a
+ * connecting state or enrolling and going to a disconnected/roaming state.
+ */
+static void dpp_station_state_watch(enum station_state state, void *user_data)
+{
+	struct dpp_sm *dpp = user_data;
+
+	switch (state) {
+	case STATION_STATE_DISCONNECTED:
+	case STATION_STATE_DISCONNECTING:
+	case STATION_STATE_ROAMING:
+	case STATION_STATE_FT_ROAMING:
+	case STATION_STATE_FW_ROAMING:
+		L_WARN_ON(dpp->role == DPP_CAPABILITY_ENROLLEE);
+
+		if (dpp->role == DPP_CAPABILITY_CONFIGURATOR) {
+			l_debug("Disconnected while configuring, stopping DPP");
+			dpp_reset(dpp);
+		}
+
+		break;
+	case STATION_STATE_CONNECTING:
+	case STATION_STATE_CONNECTED:
+	case STATION_STATE_CONNECTING_AUTO:
+	case STATION_STATE_AUTOCONNECT_FULL:
+	case STATION_STATE_AUTOCONNECT_QUICK:
+		L_WARN_ON(dpp->role == DPP_CAPABILITY_CONFIGURATOR);
+
+		if (dpp->role == DPP_CAPABILITY_ENROLLEE) {
+			l_debug("Connecting while enrolling, stopping DPP");
+			dpp_reset(dpp);
+		}
+
+		break;
+	}
+}
+
 static void dpp_create(struct netdev *netdev)
 {
 	struct l_dbus *dbus = dbus_get_bus();
@@ -3615,6 +3680,7 @@ static void dpp_create(struct netdev *netdev)
 	uint8_t dpp_conf_response_prefix[] = { 0x04, 0x0b };
 	uint8_t dpp_conf_request_prefix[] = { 0x04, 0x0a };
 	uint64_t wdev_id = netdev_get_wdev_id(netdev);
+	struct station *station = station_find(netdev_get_ifindex(netdev));
 
 	dpp->netdev = netdev;
 	dpp->state = DPP_STATE_NOTHING;
@@ -3659,6 +3725,9 @@ static void dpp_create(struct netdev *netdev)
 				dpp_conf_request_prefix,
 				sizeof(dpp_conf_request_prefix),
 				dpp_handle_config_request_frame, dpp, NULL);
+
+	dpp->station_watch = station_add_state_watch(station,
+					dpp_station_state_watch, dpp, NULL);
 
 	l_queue_push_tail(dpp_list, dpp);
 }
@@ -3960,6 +4029,14 @@ static struct l_dbus_message *dpp_dbus_stop(struct l_dbus *dbus,
 	return l_dbus_message_new_method_return(message);
 }
 
+static void dpp_pkex_scan_trigger(int err, void *user_data)
+{
+	struct dpp_sm *dpp = user_data;
+
+	if (err < 0)
+		dpp_reset(dpp);
+}
+
 /*
  * Section 5.6.1
  * In lieu of specific channel information obtained in a manner outside
@@ -3998,16 +4075,66 @@ static uint32_t *dpp_default_freqs(struct dpp_sm *dpp, size_t *out_len)
 	return freqs_out;
 }
 
+static bool dpp_pkex_scan_notify(int err, struct l_queue *bss_list,
+					const struct scan_freq_set *freqs,
+					void *user_data)
+{
+	struct dpp_sm *dpp = user_data;
+	const struct l_queue_entry *e;
+	_auto_(scan_freq_set_free) struct scan_freq_set *freq_set = NULL;
+
+	if (err < 0)
+		goto failed;
+
+	freq_set = scan_freq_set_new();
+
+	if (!bss_list || l_queue_isempty(bss_list)) {
+		dpp->freqs = dpp_default_freqs(dpp, &dpp->freqs_len);
+		if (!dpp->freqs)
+			goto failed;
+
+		l_debug("No BSS's seen, using default frequency list");
+		goto start;
+	}
+
+	for (e = l_queue_get_entries(bss_list); e; e = e->next) {
+		const struct scan_bss *bss = e->data;
+
+		scan_freq_set_add(freq_set, bss->frequency);
+	}
+
+	l_debug("Found %u frequencies to search for configurator",
+			l_queue_length(bss_list));
+
+	dpp->freqs = scan_freq_set_to_fixed_array(freq_set, &dpp->freqs_len);
+
+start:
+	dpp->current_freq = dpp->freqs[0];
+
+	dpp_reset_protocol_timer(dpp, DPP_PKEX_PROTO_TIMEOUT);
+
+	l_debug("PKEX start enrollee (id=%s)", dpp->pkex_id ?: "unset");
+
+	dpp_start_offchannel(dpp, dpp->current_freq);
+
+	return false;
+
+failed:
+	dpp_reset(dpp);
+	return false;
+}
+
+static void dpp_pkex_scan_destroy(void *user_data)
+{
+	struct dpp_sm *dpp = user_data;
+
+	dpp->pkex_scan_id = 0;
+}
+
 static bool dpp_start_pkex_enrollee(struct dpp_sm *dpp, const char *key,
 				const char *identifier)
 {
-	struct station *station = station_find(netdev_get_ifindex(dpp->netdev));
 	_auto_(l_ecc_point_free) struct l_ecc_point *qi = NULL;
-
-	if (station && station_get_connected_network(station)) {
-		l_debug("Already connected, disconnect before enrolling");
-		return false;
-	}
 
 	if (identifier)
 		dpp->pkex_id = l_strdup(identifier);
@@ -4049,17 +4176,25 @@ static bool dpp_start_pkex_enrollee(struct dpp_sm *dpp, const char *key,
 
 	dpp_property_changed_notify(dpp);
 
-	dpp->freqs = dpp_default_freqs(dpp, &dpp->freqs_len);
-	if (!dpp->freqs)
+	/*
+	 * The 'dpp_default_freqs' function returns the default frequencies
+	 * outlined in section 5.6.1. For 2.4/5GHz this is only 3 frequencies
+	 * which is unlikely to result in discovery of a configurator. The spec
+	 * does allow frequencies to be "obtained in a manner outside the scope
+	 * of this specification" which is what is being done here.
+	 *
+	 * This is mainly geared towards IWD-based configurators; banking on the
+	 * fact that they are currently connected to nearby APs. Scanning lets
+	 * us see nearby BSS's which should be the same frequencies as our
+	 * target configurator.
+	 */
+	l_debug("Performing scan for frequencies to start PKEX");
+
+	dpp->pkex_scan_id = scan_active(dpp->wdev_id, NULL, 0,
+				dpp_pkex_scan_trigger, dpp_pkex_scan_notify,
+				dpp, dpp_pkex_scan_destroy);
+	if (!dpp->pkex_scan_id)
 		goto failed;
-
-	dpp->current_freq = dpp->freqs[dpp->freqs_idx];
-
-	dpp_reset_protocol_timer(dpp, DPP_PKEX_PROTO_TIMEOUT);
-
-	l_debug("PKEX start enrollee (id=%s)", dpp->pkex_id ?: "unset");
-
-	dpp_start_offchannel(dpp, dpp->current_freq);
 
 	return true;
 
@@ -4120,7 +4255,7 @@ static struct l_dbus_message *dpp_dbus_pkex_start_enrollee(struct l_dbus *dbus,
 				dpp->interface != DPP_INTERFACE_UNBOUND)
 		return dbus_error_busy(message);
 
-	if (station_get_connected_network(station))
+	if (station && station_get_state(station) != STATION_STATE_DISCONNECTED)
 		return dbus_error_busy(message);
 
 	if (!dpp_parse_pkex_args(message, &key, &id))
