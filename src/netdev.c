@@ -2445,90 +2445,6 @@ static void netdev_driver_connected(struct netdev *netdev)
 		eapol_register(netdev->sm);
 }
 
-static unsigned int ie_rsn_akm_suite_to_nl80211(enum ie_rsn_akm_suite akm)
-{
-	switch (akm) {
-	case IE_RSN_AKM_SUITE_8021X:
-		return CRYPTO_AKM_8021X;
-	case IE_RSN_AKM_SUITE_PSK:
-		return CRYPTO_AKM_PSK;
-	case IE_RSN_AKM_SUITE_FT_OVER_8021X:
-		return CRYPTO_AKM_FT_OVER_8021X;
-	case IE_RSN_AKM_SUITE_FT_USING_PSK:
-		return CRYPTO_AKM_FT_USING_PSK;
-	case IE_RSN_AKM_SUITE_8021X_SHA256:
-		return CRYPTO_AKM_8021X_SHA256;
-	case IE_RSN_AKM_SUITE_PSK_SHA256:
-		return CRYPTO_AKM_PSK_SHA256;
-	case IE_RSN_AKM_SUITE_TDLS:
-		return CRYPTO_AKM_TDLS;
-	case IE_RSN_AKM_SUITE_SAE_SHA256:
-		return CRYPTO_AKM_SAE_SHA256;
-	case IE_RSN_AKM_SUITE_FT_OVER_SAE_SHA256:
-		return CRYPTO_AKM_FT_OVER_SAE_SHA256;
-	case IE_RSN_AKM_SUITE_AP_PEER_KEY_SHA256:
-		return CRYPTO_AKM_AP_PEER_KEY_SHA256;
-	case IE_RSN_AKM_SUITE_8021X_SUITE_B_SHA256:
-		return CRYPTO_AKM_8021X_SUITE_B_SHA256;
-	case IE_RSN_AKM_SUITE_8021X_SUITE_B_SHA384:
-		return CRYPTO_AKM_8021X_SUITE_B_SHA384;
-	case IE_RSN_AKM_SUITE_FT_OVER_8021X_SHA384:
-		return CRYPTO_AKM_FT_OVER_8021X_SHA384;
-	case IE_RSN_AKM_SUITE_FILS_SHA256:
-		return CRYPTO_AKM_FILS_SHA256;
-	case IE_RSN_AKM_SUITE_FILS_SHA384:
-		return CRYPTO_AKM_FILS_SHA384;
-	case IE_RSN_AKM_SUITE_FT_OVER_FILS_SHA256:
-		return CRYPTO_AKM_FT_OVER_FILS_SHA256;
-	case IE_RSN_AKM_SUITE_FT_OVER_FILS_SHA384:
-		return CRYPTO_AKM_FT_OVER_FILS_SHA384;
-	case IE_RSN_AKM_SUITE_OWE:
-		return CRYPTO_AKM_OWE;
-	case IE_RSN_AKM_SUITE_OSEN:
-		return CRYPTO_AKM_OSEN;
-	}
-
-	return 0;
-}
-
-static void netdev_append_nl80211_rsn_attributes(struct l_genl_msg *msg,
-						struct handshake_state *hs)
-{
-	uint32_t nl_cipher;
-	uint32_t nl_akm;
-	uint32_t wpa_version;
-
-	nl_cipher = ie_rsn_cipher_suite_to_cipher(hs->pairwise_cipher);
-	L_WARN_ON(!nl_cipher);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_CIPHER_SUITES_PAIRWISE,
-					4, &nl_cipher);
-
-	nl_cipher = ie_rsn_cipher_suite_to_cipher(hs->group_cipher);
-	L_WARN_ON(!nl_cipher);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_CIPHER_SUITE_GROUP,
-					4, &nl_cipher);
-
-	if (hs->mfp) {
-		uint32_t use_mfp = NL80211_MFP_REQUIRED;
-
-		l_genl_msg_append_attr(msg, NL80211_ATTR_USE_MFP, 4, &use_mfp);
-	}
-
-	nl_akm = ie_rsn_akm_suite_to_nl80211(hs->akm_suite);
-	L_WARN_ON(!nl_akm);
-	l_genl_msg_append_attr(msg, NL80211_ATTR_AKM_SUITES, 4, &nl_akm);
-
-	if (IE_AKM_IS_SAE(hs->akm_suite))
-		wpa_version = NL80211_WPA_VERSION_3;
-	else if (hs->wpa_ie)
-		wpa_version = NL80211_WPA_VERSION_1;
-	else
-		wpa_version = NL80211_WPA_VERSION_2;
-
-	l_genl_msg_append_attr(msg, NL80211_ATTR_WPA_VERSIONS,
-						4, &wpa_version);
-}
-
 static struct l_genl_msg *netdev_build_cmd_connect(struct netdev *netdev,
 						struct handshake_state *hs,
 						const uint8_t *prev_bssid,
@@ -2585,7 +2501,7 @@ static struct l_genl_msg *netdev_build_cmd_connect(struct netdev *netdev,
 	l_genl_msg_append_attr(msg, NL80211_ATTR_SOCKET_OWNER, 0, NULL);
 
 	if (is_rsn) {
-		netdev_append_nl80211_rsn_attributes(msg, hs);
+		nl80211_append_rsn_attributes(msg, hs);
 		c_iov = iov_ie_append(iov, n_iov, c_iov, hs->supplicant_ie);
 	}
 
@@ -2645,28 +2561,23 @@ static void netdev_cmd_connect_cb(struct l_genl_msg *msg, void *user_data)
 
 static bool netdev_retry_owe(struct netdev *netdev)
 {
-	struct iovec iov;
+	struct l_genl_msg *connect_cmd;
 
 	if (!owe_next_group(netdev->owe_sm))
 		return false;
 
-	iov.iov_base = netdev->handshake->vendor_ies;
-	iov.iov_len = netdev->handshake->vendor_ies_len;
+	connect_cmd = netdev_build_cmd_connect(netdev,
+					netdev->handshake, NULL, NULL, 0);
 
-	netdev->connect_cmd = netdev_build_cmd_connect(netdev,
-					netdev->handshake, NULL, &iov, 1);
-
-	netdev->connect_cmd_id = l_genl_family_send(nl80211,
-						netdev->connect_cmd,
+	netdev->connect_cmd_id = l_genl_family_send(nl80211, connect_cmd,
 						netdev_cmd_connect_cb, netdev,
 						NULL);
 
-	if (!netdev->connect_cmd_id)
-		return false;
+	if (netdev->connect_cmd_id > 0)
+		return true;
 
-	netdev->connect_cmd = NULL;
-
-	return true;
+	l_genl_msg_unref(connect_cmd);
+	return false;
 }
 
 static void netdev_connect_event(struct l_genl_msg *msg, struct netdev *netdev)
@@ -2933,7 +2844,7 @@ static struct l_genl_msg *netdev_build_cmd_associate_common(
 	l_genl_msg_append_attr(msg, NL80211_ATTR_SOCKET_OWNER, 0, NULL);
 
 	if (is_rsn)
-		netdev_append_nl80211_rsn_attributes(msg, hs);
+		nl80211_append_rsn_attributes(msg, hs);
 
 	if (is_rsn || hs->settings_8021x) {
 		l_genl_msg_append_attr(msg, NL80211_ATTR_CONTROL_PORT,
@@ -3615,7 +3526,8 @@ static int netdev_start_powered_mac_change(struct netdev *netdev)
 	/* No address set in handshake, use per-network MAC generation */
 	if (l_memeqzero(netdev->handshake->spa, ETH_ALEN))
 		wiphy_generate_address_from_ssid(netdev->wiphy,
-					(const char *)netdev->handshake->ssid,
+					netdev->handshake->ssid,
+					netdev->handshake->ssid_len,
 					new_addr);
 	else
 		memcpy(new_addr, netdev->handshake->spa, ETH_ALEN);
