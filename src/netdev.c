@@ -3045,7 +3045,13 @@ static void netdev_associate_event(struct l_genl_msg *msg,
 			 * out. The failed connection must be explicitly
 			 * initiated here.
 			 */
-			netdev_connect_failed(netdev,
+			if (!netdev->ap) {
+				if (netdev->event_filter)
+					netdev->event_filter(netdev,
+						NETDEV_EVENT_DISCONNECT_BY_SME,
+						NULL, netdev->user_data);
+			} else
+				netdev_connect_failed(netdev,
 					NETDEV_RESULT_ASSOCIATION_FAILED,
 					status_code);
 			return;
