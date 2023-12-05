@@ -199,6 +199,16 @@ connect to that network.
        required if the *PreSharedKey* is not provided.  If not provided in
        settings, the agent will be asked for the passphrase at connection
        time.
+   * - PasswordIdentifier
+     - string
+
+       An identifer string to be used with the passphrase. This is used for
+       WPA3-Personal (SAE) networks if the security has enabled password
+       identifiers for clients.
+
+       Note: if the network does not support password identifiers but one is
+       set in the profile it will be ignored and removed upon a successful
+       connection to the network.
    * - PreSharedKey
      - 64 character hex string
 
