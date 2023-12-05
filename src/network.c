@@ -70,6 +70,7 @@ struct network {
 	struct network_info *info;
 	unsigned char *psk;
 	char *passphrase;
+	char *password_identifier;
 	struct l_ecc_point *sae_pt_19; /* SAE PT for Group 19 */
 	struct l_ecc_point *sae_pt_20; /* SAE PT for Group 20 */
 	unsigned int agent_request;
@@ -122,6 +123,13 @@ static void network_reset_passphrase(struct network *network)
 				strlen(network->passphrase));
 		l_free(network->passphrase);
 		network->passphrase = NULL;
+	}
+
+	if (network->password_identifier) {
+		explicit_bzero(network->password_identifier,
+				strlen(network->password_identifier));
+		l_free(network->password_identifier);
+		network->password_identifier = NULL;
 	}
 
 	if (network->sae_pt_19) {
@@ -317,7 +325,8 @@ static struct l_ecc_point *network_generate_sae_pt(struct network *network,
 	l_debug("Generating PT for Group %u", group);
 
 	pt = crypto_derive_sae_pt_ecc(group, network->ssid,
-						network->passphrase, NULL);
+						network->passphrase,
+						network->password_identifier);
 	if (!pt)
 		l_warn("SAE PT generation for Group %u failed", group);
 
@@ -462,6 +471,10 @@ static int network_set_handshake_secrets_psk(struct network *network,
 
 		handshake_state_set_passphrase(hs, network->passphrase);
 
+		if (network->password_identifier)
+			handshake_state_set_password_identifier(hs,
+						network->password_identifier);
+
 		if (ie_rsnxe_capable(hs->authenticator_rsnxe,
 							IE_RSNX_SAE_H2E)) {
 			l_debug("Authenticator is SAE H2E capable");
@@ -594,8 +607,34 @@ generate:
 	return -EIO;
 }
 
-static int network_load_psk(struct network *network, bool need_passphrase)
+static inline bool __bss_is_sae(const struct scan_bss *bss,
+						const struct ie_rsn_info *rsn)
 {
+	if (rsn->akm_suites & IE_RSN_AKM_SUITE_SAE_SHA256)
+		return true;
+
+	return false;
+}
+
+static bool bss_is_sae(const struct scan_bss *bss)
+{
+	struct ie_rsn_info rsn;
+
+	memset(&rsn, 0, sizeof(rsn));
+	scan_bss_get_rsn_info(bss, &rsn);
+
+	return __bss_is_sae(bss, &rsn);
+}
+
+static int network_load_psk(struct network *network, struct scan_bss *bss)
+{
+	/*
+	 * A legacy psk file may only contain the PreSharedKey entry. For SAE
+	 * networks the raw Passphrase is required. So in this case where
+	 * the psk is found but no Passphrase, we ask the agent.  The psk file
+	 * will then be re-written to contain the raw passphrase.
+	 */
+	bool is_sae = bss_is_sae(bss);
 	const char *ssid = network_get_ssid(network);
 	enum security security = network_get_security(network);
 	size_t psk_len;
@@ -605,6 +644,9 @@ static int network_load_psk(struct network *network, bool need_passphrase)
 	_auto_(l_free) char *passphrase =
 			l_settings_get_string(network->settings,
 						"Security", "Passphrase");
+	_auto_(l_free) char *password_id =
+			l_settings_get_string(network->settings, "Security",
+						"PasswordIdentifier");
 	_auto_(l_free) char *path =
 		storage_get_network_file_path(security, ssid);
 
@@ -615,8 +657,34 @@ static int network_load_psk(struct network *network, bool need_passphrase)
 		psk_len = 0;
 	}
 
+	/*
+	 * Sort out if the password identifier is required, should be used, "
+	 * or should be ignored.
+	 */
+	if (is_sae) {
+		if (bss->sae_pw_id_exclusive && !password_id) {
+			l_error("BSS requires SAE password identifiers, check "
+				"[Security].PasswordIdentifier");
+			return -ENOKEY;
+		}
+
+		/*
+		 * If the profile contains a password identifier but the network
+		 * does not support it IWD will still attempt to connect. The
+		 * caveat here is if the connection is successful the sync will
+		 * remove the password identifier entry. Though this might be
+		 * unexpected to the user, retaining this (invalid) setting
+		 * isn't worth special casing.
+		 */
+		if (!bss->sae_pw_id_used && password_id) {
+			l_debug("[Security].PasswordIdentifier set but BSS "
+				"does not not use password identifiers");
+			l_free(l_steal_ptr(password_id));
+		}
+	}
+
 	/* PSK can be generated from the passphrase but not the other way */
-	if (!psk || need_passphrase) {
+	if (!psk || is_sae) {
 		if (!passphrase)
 			return -ENOKEY;
 
@@ -629,6 +697,7 @@ static int network_load_psk(struct network *network, bool need_passphrase)
 	network_reset_passphrase(network);
 	network_reset_psk(network);
 	network->passphrase = l_steal_ptr(passphrase);
+	network->password_identifier = l_steal_ptr(password_id);
 
 	if (network_settings_load_pt_ecc(network, path,
 						19, &network->sae_pt_19) > 0)
@@ -699,6 +768,11 @@ static void network_settings_save(struct network *network,
 	if (network->passphrase)
 		l_settings_set_string(settings, "Security", "Passphrase",
 					network->passphrase);
+
+	if (network->password_identifier)
+		l_settings_set_string(settings, "Security",
+					"PasswordIdentifier",
+					network->password_identifier);
 
 	if (network->sae_pt_19)
 		network_settings_save_sae_pt_ecc(settings, network->sae_pt_19);
@@ -776,25 +850,6 @@ void network_set_force_default_owe_group(struct network *network)
 bool network_get_force_default_owe_group(struct network *network)
 {
 	return network->force_default_owe_group;
-}
-
-static inline bool __bss_is_sae(const struct scan_bss *bss,
-						const struct ie_rsn_info *rsn)
-{
-	if (rsn->akm_suites & IE_RSN_AKM_SUITE_SAE_SHA256)
-		return true;
-
-	return false;
-}
-
-static bool bss_is_sae(const struct scan_bss *bss)
-{
-	struct ie_rsn_info rsn;
-
-	memset(&rsn, 0, sizeof(rsn));
-	scan_bss_get_rsn_info(bss, &rsn);
-
-	return __bss_is_sae(bss, &rsn);
 }
 
 int network_can_connect_bss(struct network *network, const struct scan_bss *bss)
@@ -959,7 +1014,7 @@ int network_autoconnect(struct network *network, struct scan_bss *bss)
 
 	switch (security) {
 	case SECURITY_PSK:
-		ret = network_load_psk(network, bss_is_sae(bss));
+		ret = network_load_psk(network, bss);
 		if (ret < 0)
 			goto close_settings;
 
@@ -1285,20 +1340,13 @@ static struct l_dbus_message *network_connect_psk(struct network *network,
 					struct l_dbus_message *message)
 {
 	struct station *station = network->station;
-	/*
-	 * A legacy psk file may only contain the PreSharedKey entry. For SAE
-	 * networks the raw Passphrase is required. So in this case where
-	 * the psk is found but no Passphrase, we ask the agent.  The psk file
-	 * will then be re-written to contain the raw passphrase.
-	 */
-	bool need_passphrase = bss_is_sae(bss);
 
 	if (!network_settings_load(network)) {
 		network->settings = l_settings_new();
 		network->ask_passphrase = true;
 	} else if (!network->ask_passphrase)
 		network->ask_passphrase =
-			network_load_psk(network, need_passphrase) < 0;
+			network_load_psk(network, bss) < 0;
 
 	l_debug("ask_passphrase: %s",
 		network->ask_passphrase ? "true" : "false");
