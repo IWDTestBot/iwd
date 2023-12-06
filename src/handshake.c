@@ -122,7 +122,8 @@ void handshake_state_free(struct handshake_state *s)
 	l_free(s->authenticator_rsnxe);
 	l_free(s->supplicant_rsnxe);
 	l_free(s->mde);
-	l_free(s->fte);
+	l_free(s->authenticator_fte);
+	l_free(s->supplicant_fte);
 	l_free(s->fils_ip_req_ie);
 	l_free(s->fils_ip_resp_ie);
 	l_free(s->vendor_ies);
@@ -314,9 +315,16 @@ void handshake_state_set_mde(struct handshake_state *s, const uint8_t *mde)
 	replace_ie(&s->mde, mde);
 }
 
-void handshake_state_set_fte(struct handshake_state *s, const uint8_t *fte)
+void handshake_state_set_authenticator_fte(struct handshake_state *s,
+						const uint8_t *fte)
 {
-	replace_ie(&s->fte, fte);
+	replace_ie(&s->authenticator_fte, fte);
+}
+
+void handshake_state_set_supplicant_fte(struct handshake_state *s,
+						const uint8_t *fte)
+{
+	replace_ie(&s->supplicant_fte, fte);
 }
 
 void handshake_state_set_vendor_ies(struct handshake_state *s,
@@ -526,7 +534,7 @@ bool handshake_state_derive_ptk(struct handshake_state *s)
 				IE_RSN_AKM_SUITE_FT_OVER_SAE_SHA256 |
 				IE_RSN_AKM_SUITE_FT_OVER_FILS_SHA256 |
 				IE_RSN_AKM_SUITE_FT_OVER_FILS_SHA384)) &&
-			(!s->mde || !s->fte))
+			(!s->mde || !s->authenticator_fte))
 		return false;
 
 	s->ptk_complete = false;
