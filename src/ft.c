@@ -1276,6 +1276,38 @@ int ft_associate(uint32_t ifindex, const uint8_t *addr)
 	return ret;
 }
 
+int ft_handshake_setup(uint32_t ifindex, const uint8_t *target)
+{
+	struct netdev *netdev = netdev_find(ifindex);
+	struct handshake_state *hs = netdev_get_handshake(netdev);
+	struct ft_info *info;
+
+	info = ft_info_find(ifindex, target);
+	if (!info)
+		return -ENOENT;
+
+	/*
+	 * Either failed or no response. This may have been an FT-over-DS
+	 * attempt so clear out the entry so FT-over-Air can try again.
+	 */
+	if (info->status != 0) {
+		int status = info->status;
+
+		l_queue_remove(info_list, info);
+		ft_info_destroy(info);
+
+		return status;
+	}
+
+	if (L_WARN_ON(!ft_prepare_handshake(info, hs)))
+		return -EINVAL;
+
+	/* After this no previous auths will be valid */
+	ft_clear_authentications(ifindex);
+
+	return 0;
+}
+
 static bool remove_ifindex(void *data, void *user_data)
 {
 	struct ft_info *info = data;
