@@ -279,16 +279,8 @@ static int station_autoconnect_next(struct station *station)
 			bss->signal_strength);
 
 		r = network_autoconnect(network, bss);
-		if (!r) {
-			if (station->quick_scan_id) {
-				scan_cancel(netdev_get_wdev_id(station->netdev),
-						station->quick_scan_id);
-				station->quick_scan_id = 0;
-				station_property_set_scanning(station, false);
-			}
-
+		if (!r)
 			return 0;
-		}
 
 		l_debug("autoconnect: network_autoconnect: %s (%d)",
 							strerror(-r), r);
@@ -1542,6 +1534,36 @@ static void station_set_drop_unicast_l2_multicast(struct station *station,
 
 static void station_signal_agent_notify(struct station *station);
 
+static void station_cancel_scans(struct station *station)
+{
+	if (station->hidden_network_scan_id) {
+		scan_cancel(netdev_get_wdev_id(station->netdev),
+				station->hidden_network_scan_id);
+
+		dbus_pending_reply(&station->hidden_pending,
+				dbus_error_failed(station->hidden_pending));
+	}
+
+	if (station->quick_scan_id) {
+		scan_cancel(netdev_get_wdev_id(station->netdev),
+				station->quick_scan_id);
+		station->quick_scan_id = 0;
+		station_property_set_scanning(station, false);
+	}
+
+	if (station->owe_hidden_scan_ids) {
+		void *ptr;
+
+		while ((ptr = l_queue_pop_head(station->owe_hidden_scan_ids)))
+			scan_cancel(netdev_get_wdev_id(station->netdev),
+					L_PTR_TO_UINT(ptr));
+
+		l_queue_destroy(station->owe_hidden_scan_ids, NULL);
+	}
+
+	periodic_scan_stop(station);
+}
+
 static void station_enter_state(struct station *station,
 						enum station_state state)
 {
@@ -1594,7 +1616,9 @@ static void station_enter_state(struct station *station,
 		if (station->signal_agent)
 			station_signal_agent_notify(station);
 
-		periodic_scan_stop(station);
+		/* Scans issued during a connection will fail */
+		station_cancel_scans(station);
+
 		break;
 	case STATION_STATE_CONNECTED:
 		l_dbus_object_add_interface(dbus,
@@ -3537,27 +3561,15 @@ void station_connect_network(struct station *station, struct network *network,
 	struct l_dbus *dbus = dbus_get_bus();
 	int err;
 
-	/*
-	 * If a hidden scan is not completed, station_is_busy would not
-	 * indicate anything is going on so we need to cancel the scan and
-	 * fail the connection now.
-	 */
-	if (station->hidden_network_scan_id) {
-		scan_cancel(netdev_get_wdev_id(station->netdev),
-				station->hidden_network_scan_id);
-
-		dbus_pending_reply(&station->hidden_pending,
-				dbus_error_failed(station->hidden_pending));
-	}
-
-	if (station->quick_scan_id) {
-		scan_cancel(netdev_get_wdev_id(station->netdev),
-				station->quick_scan_id);
-		station->quick_scan_id = 0;
-		station_property_set_scanning(station, false);
-	}
-
 	if (station_is_busy(station)) {
+		/*
+		 * All scans will be canceled when entering into a connecting
+		 * state but since we have an async disconnect callback cancel
+		 * them early so we don't potentially trigger a scan in the
+		 * middle of connecting. This also takes care of failing any
+		 * hidden network connection
+		 */
+		station_cancel_scans(station);
 		station_disconnect_onconnect(station, network, bss, message);
 
 		return;
@@ -4537,8 +4549,6 @@ static void station_free(struct station *station)
 		station->netconfig = NULL;
 	}
 
-	periodic_scan_stop(station);
-
 	if (station->signal_agent) {
 		station_signal_agent_release(station->signal_agent,
 					netdev_get_path(station->netdev));
@@ -4548,10 +4558,6 @@ static void station_free(struct station *station)
 	if (station->connect_pending)
 		dbus_pending_reply(&station->connect_pending,
 				dbus_error_aborted(station->connect_pending));
-
-	if (station->hidden_pending)
-		dbus_pending_reply(&station->hidden_pending,
-				dbus_error_aborted(station->hidden_pending));
 
 	if (station->disconnect_pending)
 		dbus_pending_reply(&station->disconnect_pending,
@@ -4565,23 +4571,7 @@ static void station_free(struct station *station)
 		scan_cancel(netdev_get_wdev_id(station->netdev),
 				station->dbus_scan_id);
 
-	if (station->quick_scan_id)
-		scan_cancel(netdev_get_wdev_id(station->netdev),
-				station->quick_scan_id);
-
-	if (station->hidden_network_scan_id)
-		scan_cancel(netdev_get_wdev_id(station->netdev),
-				station->hidden_network_scan_id);
-
-	if (station->owe_hidden_scan_ids) {
-		void *ptr;
-
-		while ((ptr = l_queue_pop_head(station->owe_hidden_scan_ids)))
-			scan_cancel(netdev_get_wdev_id(station->netdev),
-					L_PTR_TO_UINT(ptr));
-
-		l_queue_destroy(station->owe_hidden_scan_ids, NULL);
-	}
+	station_cancel_scans(station);
 
 	station_roam_state_clear(station);
 
