@@ -186,6 +186,46 @@ class Test(unittest.TestCase):
 
         self.agent = None
 
+    def test_network_seen_before_dpp(self):
+        self.start_iwd_pkex_configurator(self.device[0])
+
+        # Scan first so a network object already exists
+        self.device[1].scan()
+        self.wd.wait_for_object_condition(self.device[1], 'obj.scanning == True')
+        self.wd.wait_for_object_condition(self.device[1], 'obj.scanning == False')
+
+        self.device[1].dpp_pkex_enroll('secret123', identifier="test")
+
+        condition = 'obj.state == DeviceState.connected'
+        self.wd.wait_for_object_condition(self.device[1], condition)
+
+        # Check additional settings were carried over
+        with open('/tmp/ns0/ssidCCMP.psk', 'r') as f:
+            settings = f.read()
+
+        self.assertIn("SendHostname=true", settings)
+
+    def test_existing_known_network(self):
+        # Copy an invalid profile, make sure DPP overwrites it and connects
+        IWD.copy_to_storage("existingProfile.psk", "/tmp/ns0/", "ssidCCMP.psk")
+        self.start_iwd_pkex_configurator(self.device[0])
+
+        # Scan first so a network object exists, and its a known network
+        self.device[1].scan()
+        self.wd.wait_for_object_condition(self.device[1], 'obj.scanning == True')
+        self.wd.wait_for_object_condition(self.device[1], 'obj.scanning == False')
+
+        self.device[1].dpp_pkex_enroll('secret123', identifier="test")
+
+        condition = 'obj.state == DeviceState.connected'
+        self.wd.wait_for_object_condition(self.device[1], condition)
+
+        # Check additional settings were carried over
+        with open('/tmp/ns0/ssidCCMP.psk', 'r') as f:
+            settings = f.read()
+
+        self.assertIn("SendHostname=true", settings)
+
     def setUp(self):
         ns0 = ctx.get_namespace('ns0')
         self.wpas = Wpas('wpas.conf')

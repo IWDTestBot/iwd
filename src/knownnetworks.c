@@ -125,21 +125,6 @@ void __network_config_parse(const struct l_settings *settings,
 	}
 }
 
-void __network_info_init(struct network_info *info,
-				const char *ssid, enum security security,
-				struct network_config *config)
-{
-	if (ssid)
-		strcpy(info->ssid, ssid);
-
-	info->type = security;
-
-	memcpy(&info->config, config, sizeof(struct network_config));
-
-	if (info->config.is_hidden)
-		num_known_hidden_networks++;
-}
-
 static void network_info_free(void *data)
 {
 	struct network_info *network = data;
@@ -753,6 +738,23 @@ void known_networks_add(struct network_info *network)
 	WATCHLIST_NOTIFY(&known_network_watches,
 				known_networks_watch_func_t,
 				KNOWN_NETWORKS_EVENT_ADDED, network);
+}
+
+void __network_info_init(struct network_info *info,
+				const char *ssid, enum security security,
+				struct network_config *config)
+{
+	if (ssid)
+		strcpy(info->ssid, ssid);
+
+	info->type = security;
+
+	memcpy(&info->config, config, sizeof(struct network_config));
+
+	if (info->config.is_hidden)
+		num_known_hidden_networks++;
+
+	info->ops = &known_network_ops;
 }
 
 static void known_network_new(const char *ssid, enum security security,

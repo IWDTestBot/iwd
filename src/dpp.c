@@ -53,6 +53,7 @@
 #include "src/network.h"
 #include "src/handshake.h"
 #include "src/nl80211util.h"
+#include "src/knownnetworks.h"
 
 #define DPP_FRAME_MAX_RETRIES 5
 #define DPP_FRAME_RETRY_TIMEOUT 1
@@ -814,6 +815,8 @@ static void dpp_write_config(struct dpp_configuration *config,
 	_auto_(l_free) char *path;
 	_auto_(l_free) uint8_t *psk = NULL;
 	size_t psk_len;
+	struct network_config network_config;
+	struct network_info *info;
 
 	path = storage_get_network_file_path(SECURITY_PSK, config->ssid);
 
@@ -822,21 +825,12 @@ static void dpp_write_config(struct dpp_configuration *config,
 		l_settings_remove_group(settings, "Security");
 	}
 
-	if (config->passphrase) {
+	if (config->passphrase)
 		l_settings_set_string(settings, "Security", "Passphrase",
 				config->passphrase);
-		if (network)
-			network_set_passphrase(network, config->passphrase);
-
-	} else if (config->psk) {
+	else if (config->psk)
 		l_settings_set_string(settings, "Security", "PreSharedKey",
 				config->psk);
-
-		psk = l_util_from_hexstring(config->psk, &psk_len);
-
-		if (network)
-			network_set_psk(network, psk);
-	}
 
 	if (config->send_hostname)
 		l_settings_set_bool(settings, "IPv4", "SendHostname", true);
@@ -847,6 +841,39 @@ static void dpp_write_config(struct dpp_configuration *config,
 	l_debug("Storing credential for '%s(%s)'", config->ssid,
 						security_to_str(SECURITY_PSK));
 	storage_network_sync(SECURITY_PSK, config->ssid, settings);
+
+	/*
+	 * The network has yet to be seen. Once a scan is issued station will
+	 * handle network creation and in turn the settings will be loaded from
+	 * disk.
+	 */
+	if (!network)
+		return;
+
+	/*
+	 * Otherwise we need to jump through some hoops in order to update an
+	 * existing network object with the new settings
+	 */
+	info = known_networks_find(config->ssid, SECURITY_PSK);
+
+	__network_config_parse(settings, path, &network_config);
+
+	if (info)
+		known_network_update(info, &network_config);
+	else {
+		info = l_new(struct network_info, 1);
+		__network_info_init(info, config->ssid, SECURITY_PSK, &network_config);
+		network_set_info(network, info);
+	}
+
+	if (config->passphrase)
+		network_set_passphrase(network, config->passphrase);
+	else if (config->psk) {
+		psk = l_util_from_hexstring(config->psk, &psk_len);
+
+		if (network)
+			network_set_psk(network, psk);
+	}
 }
 
 static void dpp_scan_triggered(int err, void *user_data)
@@ -856,14 +883,34 @@ static void dpp_scan_triggered(int err, void *user_data)
 		l_error("Failed to trigger DPP scan");
 }
 
+static void dpp_connect(struct dpp_sm *dpp, const char *ssid)
+{
+	struct station *station = station_find(netdev_get_ifindex(dpp->netdev));
+	struct scan_bss *bss;
+	struct network *network;
+	int ret;
+
+	network = station_network_find(station, ssid, SECURITY_PSK);
+
+	dpp_reset(dpp);
+
+	if (!network) {
+		l_debug("Network was not found after scanning");
+		return;
+	}
+
+	bss = network_bss_select(network, true);
+	ret = network_autoconnect(network, bss);
+	if (ret < 0)
+		l_debug("Failed to connect after DPP (%d) %s", ret, strerror(ret));
+}
+
 static bool dpp_scan_results(int err, struct l_queue *bss_list,
 				const struct scan_freq_set *freqs,
 				void *userdata)
 {
 	struct dpp_sm *dpp = userdata;
 	struct station *station = station_find(netdev_get_ifindex(dpp->netdev));
-	struct scan_bss *bss;
-	struct network *network;
 
 	if (err < 0)
 		goto reset;
@@ -880,18 +927,7 @@ static bool dpp_scan_results(int err, struct l_queue *bss_list,
 
 	station_set_scan_results(station, bss_list, freqs, false);
 
-	network = station_network_find(station, dpp->config->ssid,
-					SECURITY_PSK);
-
-	dpp_reset(dpp);
-
-	if (!network) {
-		l_debug("Network was not found after scanning");
-		return true;
-	}
-
-	bss = network_bss_select(network, true);
-	network_autoconnect(network, bss);
+	dpp_connect(dpp, dpp->config->ssid);
 
 	return true;
 
@@ -1075,8 +1111,7 @@ static void dpp_handle_config_response_frame(const struct mmpdu_header *frame,
 	offchannel_cancel(dpp->wdev_id, dpp->offchannel_id);
 
 	if (network && bss)
-		__station_connect_network(station, network, bss,
-						STATION_STATE_CONNECTING);
+		dpp_connect(dpp, config->ssid);
 	else if (station) {
 		struct scan_parameters params = {0};
 
