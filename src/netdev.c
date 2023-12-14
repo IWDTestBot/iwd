@@ -139,6 +139,7 @@ struct netdev {
 	struct l_timeout *sa_query_timeout;
 	struct l_timeout *sa_query_delay;
 	struct l_timeout *group_handshake_timeout;
+	struct l_timeout *ifup_retry_timeout;
 	uint16_t sa_query_id;
 	int8_t rssi_levels[16];
 	uint8_t rssi_levels_num;
@@ -1025,6 +1026,11 @@ static void netdev_free(void *data)
 	if (netdev->get_link_cmd_id) {
 		l_netlink_cancel(rtnl, netdev->get_link_cmd_id);
 		netdev->get_link_cmd_id = 0;
+	}
+
+	if (netdev->ifup_retry_timeout) {
+		l_timeout_remove(netdev->ifup_retry_timeout);
+		netdev->ifup_retry_timeout = NULL;
 	}
 
 	scan_wdev_remove(netdev->wdev_id);
@@ -5885,20 +5891,41 @@ static bool netdev_disable_power_save(struct netdev *netdev)
 }
 
 static void netdev_initial_up_cb(int error, uint16_t type, const void *data,
+					uint32_t len, void *user_data);
+
+static void netdev_initial_up_retry(struct l_timeout *timeout, void *user_data)
+{
+	struct netdev *netdev = user_data;
+
+	l_timeout_remove(timeout);
+	netdev->ifup_retry_timeout = NULL;
+
+	netdev->set_powered_cmd_id =
+		l_rtnl_set_powered(rtnl, netdev->index, true,
+					netdev_initial_up_cb, netdev, NULL);
+}
+
+static void netdev_initial_up_cb(int error, uint16_t type, const void *data,
 					uint32_t len, void *user_data)
 {
 	struct netdev *netdev = user_data;
 
 	netdev->set_powered_cmd_id = 0;
 
-	if (!error)
+	switch (error) {
+	case 0:
 		netdev->ifi_flags |= IFF_UP;
-	else {
-		l_error("Error bringing interface %i up: %s", netdev->index,
-			strerror(-error));
-
-		if (error != -ERFKILL)
-			return;
+		break;
+	case -ERFKILL:
+		l_error("Error bringing interface %i up due to RFKILL",
+					netdev->index);
+		break;
+	default:
+		l_error("Error bringing interface %i up: %s, retrying in 1s",
+					netdev->index, strerror(-error));
+		netdev->ifup_retry_timeout = l_timeout_create(1,
+				netdev_initial_up_retry, netdev, NULL);
+		return;
 	}
 
 	l_rtnl_set_linkmode_and_operstate(rtnl, netdev->index,
