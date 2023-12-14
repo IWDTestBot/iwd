@@ -730,6 +730,73 @@ static void network_settings_save(struct network *network,
 		network_settings_save_sae_pt_ecc(settings, network->sae_pt_20);
 }
 
+static bool network_settings_update(struct network *network,
+					struct l_settings *new)
+{
+	bool have_transition_disable;
+	uint8_t transition_disable = 0;
+	unsigned int i;
+	size_t psk_len;
+	_auto_(l_strv_free) char **list = NULL;
+	_auto_(l_free) uint8_t *psk = NULL;
+	_auto_(l_free) char *passphrase = NULL;
+
+	if (l_settings_get_bool(new, NET_TRANSITION_DISABLE,
+				&have_transition_disable) &&
+				have_transition_disable) {
+		list = l_settings_get_string_list(new,
+					NET_TRANSITION_DISABLE_MODES, ' ');
+
+		for (i = 0; list[i]; i++) {
+			if (!strcmp(list[i], "personal"))
+				set_bit(&transition_disable, 0);
+			else if (!strcmp(list[i], "enterprise"))
+				set_bit(&transition_disable, 1);
+			else if (!strcmp(list[i], "open"))
+				set_bit(&transition_disable, 2);
+		}
+
+		have_transition_disable = true;
+	} else
+		have_transition_disable = false;
+
+	if (network->security != SECURITY_PSK)
+		goto apply;
+
+	psk = l_settings_get_bytes(network->settings, "Security",
+					"PreSharedKey", &psk_len);
+	if (psk && psk_len != 32) {
+		l_warn("updated [Security].PreSharedKey value is invalid!");
+		return false;
+	}
+
+	passphrase = l_settings_get_string(network->settings,
+						"Security", "Passphrase");
+	if (passphrase && !crypto_passphrase_is_valid(passphrase)) {
+		l_warn("updated [Security].Passphrase value is invalid!");
+		return false;
+	}
+
+apply:
+	network_settings_close(network);
+	network->settings = new;
+
+	network->have_transition_disable = have_transition_disable;
+	network->transition_disable = transition_disable;
+
+	if (psk)
+		network->psk = l_steal_ptr(psk);
+
+	if (passphrase) {
+		network->passphrase = l_strdup(passphrase);
+
+		network_settings_load_pt_ecc(network, 19, &network->sae_pt_19);
+		network_settings_load_pt_ecc(network, 20, &network->sae_pt_20);
+	}
+
+	return true;
+}
+
 void network_sync_settings(struct network *network)
 {
 	struct network_info *info = network->info;
@@ -1966,22 +2033,47 @@ static void network_update_hotspot(struct network *network, void *user_data)
 	match_hotspot_network(info, network);
 }
 
-static void match_known_network(struct station *station, void *user_data)
+static void match_known_network(struct station *station, void *user_data,
+				bool new)
 {
 	struct network_info *info = user_data;
 	struct network *network;
 
 	if (!info->is_hotspot) {
+		struct l_settings *settings;
 		network = station_network_find(station, info->ssid, info->type);
 		if (!network)
 			return;
 
-		network_set_info(network, info);
+		/* New networks should load settings upon connecting */
+		if (new) {
+			network_set_info(network, info);
+			return;
+		}
+
+		settings = network_info_open_settings(info);
+
+		if (!settings || !network_settings_update(network, settings)) {
+			l_warn("Failed to apply new/updated settings (%s)",
+					info->ssid);
+			l_settings_free(settings);
+		}
+
 		return;
 	}
 
 	/* This is a new hotspot network */
 	station_network_foreach(station, network_update_hotspot, info);
+}
+
+static void add_known_network(struct station *station, void *user_data)
+{
+	match_known_network(station, (struct network_info *)user_data, true);
+}
+
+static void update_known_network(struct station *station, void *user_data)
+{
+	match_known_network(station, (struct network_info *)user_data, false);
 }
 
 static void known_networks_changed(enum known_networks_event event,
@@ -1990,9 +2082,15 @@ static void known_networks_changed(enum known_networks_event event,
 {
 	switch (event) {
 	case KNOWN_NETWORKS_EVENT_ADDED:
-		station_foreach(match_known_network, (void *) info);
+		station_foreach(add_known_network, (void *) info);
 
 		/* Syncs frequencies of newly known network */
+		known_network_frequency_sync((struct network_info *)info);
+		break;
+	case KNOWN_NETWORKS_EVENT_UPDATED:
+		station_foreach(update_known_network, (void *) info);
+
+		/* Syncs frequencies of updated known network */
 		known_network_frequency_sync((struct network_info *)info);
 		break;
 	case KNOWN_NETWORKS_EVENT_REMOVED:
