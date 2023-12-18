@@ -2001,7 +2001,8 @@ static void network_update_hotspot(struct network *network, void *user_data)
 	match_hotspot_network(info, network);
 }
 
-static void match_known_network(struct station *station, void *user_data)
+static void match_known_network(struct station *station, void *user_data,
+				bool new)
 {
 	struct network_info *info = user_data;
 	struct network *network;
@@ -2011,12 +2012,29 @@ static void match_known_network(struct station *station, void *user_data)
 		if (!network)
 			return;
 
-		network_set_info(network, info);
+		if (new)
+			network_set_info(network, info);
+
+		if (network->settings)
+			l_settings_free(network->settings);
+
+		network->settings = network_info_open_settings(info);
+
 		return;
 	}
 
 	/* This is a new hotspot network */
 	station_network_foreach(station, network_update_hotspot, info);
+}
+
+static void add_known_network(struct station *station, void *user_data)
+{
+	match_known_network(station, (struct network_info *)user_data, true);
+}
+
+static void update_known_network(struct station *station, void *user_data)
+{
+	match_known_network(station, (struct network_info *)user_data, false);
 }
 
 static void known_networks_changed(enum known_networks_event event,
@@ -2025,10 +2043,13 @@ static void known_networks_changed(enum known_networks_event event,
 {
 	switch (event) {
 	case KNOWN_NETWORKS_EVENT_ADDED:
-		station_foreach(match_known_network, (void *) info);
+		station_foreach(add_known_network, (void *) info);
 
 		/* Syncs frequencies of newly known network */
 		known_network_frequency_sync((struct network_info *)info);
+		break;
+	case KNOWN_NETWORKS_EVENT_UPDATED:
+		station_foreach(update_known_network, (void *) info);
 		break;
 	case KNOWN_NETWORKS_EVENT_REMOVED:
 		station_foreach(emit_known_network_removed, (void *) info);
