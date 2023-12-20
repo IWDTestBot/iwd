@@ -167,7 +167,7 @@ static bool network_secret_check_cacheable(void *data, void *user_data)
 	return false;
 }
 
-void network_connected(struct network *network)
+void network_connected(struct network *network, struct scan_bss *bss)
 {
 	enum security security = network_get_security(network);
 	const char *ssid = network_get_ssid(network);
@@ -190,6 +190,8 @@ void network_connected(struct network *network)
 		if (err < 0)
 			l_error("Error %i touching network config", err);
 
+		known_network_add_connected_frequency(network->info,
+							bss->frequency);
 		/* Syncs frequencies of already known network*/
 		known_network_frequency_sync(network->info);
 	}
@@ -200,6 +202,15 @@ void network_connected(struct network *network)
 	l_queue_clear(network->blacklist, NULL);
 
 	network->provisioning_hidden = false;
+}
+
+void network_roamed(struct network *network, struct scan_bss *bss)
+{
+	if (network->info) {
+		known_network_add_connected_frequency(network->info,
+							bss->frequency);
+		known_network_frequency_sync(network->info);
+	}
 }
 
 void network_disconnected(struct network *network)
@@ -807,7 +818,7 @@ static void add_known_frequency(void *data, void *user_data)
 	struct scan_bss *bss = data;
 	struct network_info *info = user_data;
 
-	known_network_add_frequency(info, bss->frequency);
+	known_network_add_seen_frequency(info, bss->frequency);
 }
 
 void network_set_info(struct network *network, struct network_info *info)
@@ -1094,7 +1105,7 @@ bool network_bss_add(struct network *network, struct scan_bss *bss)
 		return false;
 
 	if (network->info)
-		known_network_add_frequency(network->info, bss->frequency);
+		known_network_add_seen_frequency(network->info, bss->frequency);
 
 	/* Done if BSS is not HS20 or we already have network_info set */
 	if (!bss->hs20_capable)
@@ -1131,7 +1142,7 @@ bool network_bss_update(struct network *network, struct scan_bss *bss)
 
 	/* Sync frequency for already known networks */
 	if (network->info) {
-		known_network_add_frequency(network->info, bss->frequency);
+		known_network_add_seen_frequency(network->info, bss->frequency);
 		known_network_frequency_sync(network->info);
 	}
 

@@ -2106,6 +2106,8 @@ static void station_roamed(struct station *station)
 		L_WARN_ON(!netconfig_after_roam(station));
 	} else
 		station_enter_state(station, STATION_STATE_CONNECTED);
+
+	network_roamed(station->connected_network, station->connected_bss);
 }
 
 static void station_roam_retry(struct station *station)
@@ -3213,7 +3215,7 @@ static void station_connect_ok(struct station *station)
 			l_warn("Could not request neighbor report");
 	}
 
-	network_connected(station->connected_network);
+	network_connected(station->connected_network, station->connected_bss);
 
 	if (station->netconfig) {
 		if (hs->fils_ip_req_ie && hs->fils_ip_resp_ie) {
