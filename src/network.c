@@ -204,6 +204,15 @@ void network_connected(struct network *network, struct scan_bss *bss)
 	network->provisioning_hidden = false;
 }
 
+void network_roamed(struct network *network, struct scan_bss *bss)
+{
+	if (network->info) {
+		known_network_add_connected_frequency(network->info,
+							bss->frequency);
+		known_network_frequency_sync(network->info);
+	}
+}
+
 void network_disconnected(struct network *network)
 {
 	network_settings_close(network);

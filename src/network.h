@@ -32,6 +32,7 @@ struct handshake_state;
 struct erp_cache_entry;
 
 void network_connected(struct network *network, struct scan_bss *bss);
+void network_roamed(struct network *network, struct scan_bss *bss);
 void network_disconnected(struct network *network);
 bool network_rankmod(const struct network *network, double *rankmod);
 
