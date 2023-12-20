@@ -566,7 +566,8 @@ static bool known_frequency_match(const void *a, const void *b)
  * Adds a frequency to the 'known' set of frequencies that this network
  * operates on.  The list is sorted according to most-recently seen
  */
-int known_network_add_frequency(struct network_info *info, uint32_t frequency)
+int known_network_add_seen_frequency(struct network_info *info,
+					uint32_t frequency)
 {
 	struct known_frequency *known_freq;
 
