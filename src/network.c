@@ -167,7 +167,7 @@ static bool network_secret_check_cacheable(void *data, void *user_data)
 	return false;
 }
 
-void network_connected(struct network *network)
+void network_connected(struct network *network, struct scan_bss *bss)
 {
 	enum security security = network_get_security(network);
 	const char *ssid = network_get_ssid(network);
@@ -190,6 +190,8 @@ void network_connected(struct network *network)
 		if (err < 0)
 			l_error("Error %i touching network config", err);
 
+		known_network_add_connected_frequency(network->info,
+							bss->frequency);
 		/* Syncs frequencies of already known network*/
 		known_network_frequency_sync(network->info);
 	}
