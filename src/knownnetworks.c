@@ -540,10 +540,12 @@ struct scan_freq_set *known_networks_get_recent_frequencies(
 				network_entry = network_entry->next,
 						num_networks_tosearch--) {
 		const struct network_info *network = network_entry->data;
+		uint8_t num_freqs = 5;
 
 		for (freq_entry = l_queue_get_entries(
 						network->known_frequencies);
-				freq_entry; freq_entry = freq_entry->next) {
+				freq_entry && num_freqs;
+				freq_entry = freq_entry->next, num_freqs--) {
 			const struct known_frequency *known_freq =
 							freq_entry->data;
 
