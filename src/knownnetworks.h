@@ -96,6 +96,7 @@ typedef void (*known_networks_destroy_func_t)(void *user_data);
 
 struct known_frequency {
 	uint32_t frequency;
+	bool connected : 1;
 };
 
 void __network_config_parse(const struct l_settings *settings,
@@ -115,6 +116,8 @@ struct network_info *known_networks_find(const char *ssid,
 struct scan_freq_set *known_networks_get_recent_frequencies(
 						uint8_t num_networks_tosearch);
 int known_network_add_seen_frequency(struct network_info *info,
+					uint32_t frequency);
+int known_network_add_connected_frequency(struct network_info *info,
 					uint32_t frequency);
 void known_network_frequency_sync(struct network_info *info);
 

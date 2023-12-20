@@ -562,12 +562,67 @@ static bool known_frequency_match(const void *a, const void *b)
 	return known_freq->frequency == *frequency;
 }
 
+static int known_frequency_compare(const void *a, const void *b,
+					void *user_data)
+{
+	const struct known_frequency *ka = a;
+
+	/*
+	 * Only meant to be used to insert 'seen' frequencies. Any existing
+	 * entry that has 'connected' set should preceed an entry that was
+	 * only seen.
+	 */
+	if (ka->connected)
+		return -1;
+
+	/*
+	 * Otherwise, insert immediately after the last 'connected' entry,
+	 * i.e. the most recently seen
+	 */
+	return 1;
+}
+
 /*
  * Adds a frequency to the 'known' set of frequencies that this network
- * operates on.  The list is sorted according to most-recently seen
+ * operates on. Frequencies added here will follow frequencies which have been
+ * connected to and inserted according to most-recently seen
  */
 int known_network_add_seen_frequency(struct network_info *info,
 					uint32_t frequency)
+{
+	struct known_frequency *known_freq;
+
+	if (!info->known_frequencies)
+		info->known_frequencies = l_queue_new();
+
+	known_freq = l_queue_find(info->known_frequencies,
+					known_frequency_match, &frequency);
+	/*
+	 * If no match, create a new one.
+	 * If connected to frequency before leave that entry in place
+	 */
+	if (!known_freq) {
+		known_freq = l_new(struct known_frequency, 1);
+		known_freq->frequency = frequency;
+	} else if (known_freq->connected)
+		return 0;
+
+	l_queue_remove(info->known_frequencies, known_freq);
+
+	/* insert the entry immediately after the last 'connected' entry */
+	l_queue_insert(info->known_frequencies, known_freq,
+			known_frequency_compare, NULL);
+
+	return 0;
+}
+
+/*
+ * Adds a frequency to the known set of frequencies that this network operates
+ * on. Frequencies added here are assumed to be most recently used and inserted
+ * at the head of the queue.
+ */
+int known_network_add_connected_frequency(struct network_info *info,
+						uint32_t frequency)
 {
 	struct known_frequency *known_freq;
 
@@ -580,6 +635,8 @@ int known_network_add_seen_frequency(struct network_info *info,
 		known_freq = l_new(struct known_frequency, 1);
 		known_freq->frequency = frequency;
 	}
+
+	known_freq->connected = true;
 
 	l_queue_push_head(info->known_frequencies, known_freq);
 
