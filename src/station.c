@@ -2106,6 +2106,8 @@ static void station_roamed(struct station *station)
 		L_WARN_ON(!netconfig_after_roam(station));
 	} else
 		station_enter_state(station, STATION_STATE_CONNECTED);
+
+	network_roamed(station->connected_network, station->connected_bss);
 }
 
 static void station_roam_retry(struct station *station)
