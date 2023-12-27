@@ -330,23 +330,39 @@ endif
 endif
 
 if MONITOR
+MONITOR_SOURCES = linux/nl80211.h \
+				monitor/nlmon.h monitor/nlmon.c \
+				monitor/pcap.h monitor/pcap.c \
+				monitor/display.h monitor/display.c \
+				src/ie.h src/ie.c \
+				src/wscutil.h src/wscutil.c \
+				src/mpdu.h src/mpdu.c \
+				src/util.h src/util.c \
+				src/crypto.h src/crypto.c \
+				src/watchlist.h src/watchlist.c \
+				src/eapolutil.h src/eapolutil.c \
+				src/nl80211cmd.h src/nl80211cmd.c \
+				src/p2putil.c src/p2putil.h \
+				src/anqputil.h src/anqputil.c \
+				src/band.h src/band.c
 bin_PROGRAMS += monitor/iwmon
 
-monitor_iwmon_SOURCES = monitor/main.c linux/nl80211.h \
-					monitor/nlmon.h monitor/nlmon.c \
-					monitor/pcap.h monitor/pcap.c \
-					monitor/display.h monitor/display.c \
-					src/ie.h src/ie.c \
-					src/wscutil.h src/wscutil.c \
-					src/mpdu.h src/mpdu.c \
-					src/util.h src/util.c \
-					src/crypto.h src/crypto.c \
-					src/watchlist.h src/watchlist.c \
-					src/eapolutil.h src/eapolutil.c \
-					src/nl80211cmd.h src/nl80211cmd.c \
-					src/p2putil.c src/p2putil.h \
-					src/anqputil.h src/anqputil.c \
-					src/band.h src/band.c
+if BPF
+bin_PROGRAMS += monitor/iwtrace
+
+monitor/iwtrace.bpf.o: monitor/iwtrace.bpf.c
+	clang -g -O2 -target bpf -c monitor/iwtrace.bpf.c -o monitor/iwtrace.tmp.bpf.o
+	bpftool gen object monitor/iwtrace.bpf.o monitor/iwtrace.tmp.bpf.o
+
+monitor/iwtrace.skel.h: monitor/iwtrace.bpf.o
+	bpftool gen skeleton monitor/iwtrace.bpf.o > monitor/iwtrace.skel.h
+
+monitor_iwtrace_SOURCES = monitor/iwtrace.c monitor/iwtrace.h \
+				monitor/iwtrace.skel.h $(MONITOR_SOURCES)
+monitor_iwtrace_LDADD = $(ell_ldadd) $(LIBBPF_LIBS)
+endif
+
+monitor_iwmon_SOURCES = monitor/main.c $(MONITOR_SOURCES)
 monitor_iwmon_LDADD = $(ell_ldadd)
 
 if MANUAL_PAGES
