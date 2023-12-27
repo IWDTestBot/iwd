@@ -200,6 +200,17 @@ AC_ARG_ENABLE([monitor], AS_HELP_STRING([--disable-monitor],
 					[enable_monitor=${enableval}])
 AM_CONDITIONAL(MONITOR, test "${enable_monitor}" != "no")
 
+AC_ARG_ENABLE([bpf], AS_HELP_STRING([--disable-bpf],
+				[don't enable bpf based tracing]),
+					[enable_bpf=${enableval}])
+if (test "${enable_bpf}" != "no"); then
+	PKG_CHECK_MODULES(LIBBPF, libbpf, dummy=yes,
+			AC_MSG_ERROR(libbpf is required))
+	AC_SUBST(LIBBPF_CFLAGS)
+	AC_SUBST(LIBBPF_LIBS)
+fi
+AM_CONDITIONAL(BPF, test "${enable_bpf}" != "no")
+
 AC_ARG_ENABLE([dbus-policy], AS_HELP_STRING([--disable-dbus-policy],
 				[don't install D-Bus system policy files]),
 					[enable_dbus_policy=${enableval}])
