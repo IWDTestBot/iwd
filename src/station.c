@@ -1497,6 +1497,8 @@ static const char *station_state_to_string(enum station_state state)
 		return "ft-roaming";
 	case STATION_STATE_FW_ROAMING:
 		return "fw-roaming";
+	case STATION_STATE_NETCONFIG:
+		return "connecting (netconfig)";
 	}
 
 	return "invalid";
@@ -1633,6 +1635,7 @@ static void station_enter_state(struct station *station,
 		station_set_drop_unicast_l2_multicast(station, false);
 		break;
 	case STATION_STATE_DISCONNECTING:
+	case STATION_STATE_NETCONFIG:
 		break;
 	case STATION_STATE_ROAMING:
 	case STATION_STATE_FT_ROAMING:
@@ -3344,6 +3347,7 @@ static void station_disconnect_event(struct station *station, void *event_data)
 	case STATION_STATE_CONNECTED:
 	case STATION_STATE_FT_ROAMING:
 	case STATION_STATE_FW_ROAMING:
+	case STATION_STATE_NETCONFIG:
 		station_disassociated(station);
 		return;
 	default:
@@ -4274,6 +4278,7 @@ static bool station_property_get_state(struct l_dbus *dbus,
 		break;
 	case STATION_STATE_CONNECTING:
 	case STATION_STATE_CONNECTING_AUTO:
+	case STATION_STATE_NETCONFIG:
 		statestr = "connecting";
 		break;
 	case STATION_STATE_CONNECTED:
