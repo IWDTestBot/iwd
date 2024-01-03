@@ -394,7 +394,20 @@ static struct l_genl_msg *scan_build_cmd(struct scan_context *sc,
 	if (params->ap_scan)
 		flags |= NL80211_SCAN_FLAG_AP;
 
-	flags |= NL80211_SCAN_FLAG_COLOCATED_6GHZ;
+	/*
+	 * TODO: This flag appears to cause some undesired behavior on brcmfmac
+	 *       when the device is in AP mode, or has a secondary AP interface
+	 *       running, causing clients to disconnect when a scan is issued.
+	 *
+	 *       Only using this flag for 6GHz capable devices will limit this
+	 *       behavior to only 6GHz devices and in reality makes sense
+	 *       because a non-6GHz device shouldn't use this flag anyways. If
+	 *       more issues still are seen related to this we may need an
+	 *       explicit workaround, either brcmfmac-specific or a disable
+	 *       option.
+	 */
+	if (wiphy_band_is_disabled(sc->wiphy, BAND_FREQ_6_GHZ) != -ENOTSUP)
+		flags |= NL80211_SCAN_FLAG_COLOCATED_6GHZ;
 
 	if (flags)
 		l_genl_msg_append_attr(msg, NL80211_ATTR_SCAN_FLAGS, 4, &flags);
