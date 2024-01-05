@@ -732,7 +732,7 @@ RST2MAN_PROCESS = $(AM_V_GEN)$(MKDIR_P) $(dir $@) && \
 			--no-generator --no-datestamp $< $@
 else
 RST2MAN_PROCESS = $(AM_V_GEN)test -f $@ || \
-		{ echo "Generated manual page $@ does not exist"; false; }
+		{ echo "Generated manual page $@ does not exist"; }
 endif
 
 %.service: %.service.in Makefile
