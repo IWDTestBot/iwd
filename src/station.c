@@ -1497,6 +1497,8 @@ static const char *station_state_to_string(enum station_state state)
 		return "ft-roaming";
 	case STATION_STATE_FW_ROAMING:
 		return "fw-roaming";
+	case STATION_STATE_NETCONFIG:
+		return "connecting (netconfig)";
 	}
 
 	return "invalid";
@@ -1635,6 +1637,7 @@ static void station_enter_state(struct station *station,
 		station_set_drop_unicast_l2_multicast(station, false);
 		break;
 	case STATION_STATE_DISCONNECTING:
+	case STATION_STATE_NETCONFIG:
 		break;
 	case STATION_STATE_ROAMING:
 	case STATION_STATE_FT_ROAMING:
@@ -1767,6 +1770,7 @@ static void station_reset_connection_state(struct station *station)
 	if (station->state == STATION_STATE_CONNECTED ||
 			station->state == STATION_STATE_CONNECTING ||
 			station->state == STATION_STATE_CONNECTING_AUTO ||
+			station->state == STATION_STATE_NETCONFIG ||
 			station_is_roaming(station))
 		network_disconnected(network);
 }
@@ -2042,8 +2046,9 @@ static void station_netconfig_event_handler(enum netconfig_event event,
 			dbus_pending_reply(&station->connect_pending, reply);
 		}
 
-		if (L_IN_SET(station->state, STATION_STATE_CONNECTING,
-				STATION_STATE_CONNECTING_AUTO))
+		if (L_IN_SET(station->state, STATION_STATE_NETCONFIG,
+				STATION_STATE_ROAMING, STATION_STATE_FT_ROAMING,
+				STATION_STATE_FW_ROAMING))
 			network_connect_failed(station->connected_network,
 						false);
 
@@ -2069,9 +2074,14 @@ static bool netconfig_after_roam(struct station *station)
 					network_get_settings(network)))
 		return false;
 
-	return netconfig_configure(station->netconfig,
+	if (L_WARN_ON(!netconfig_configure(station->netconfig,
 					station_netconfig_event_handler,
-					station);
+					station)))
+		return false;
+
+	station_enter_state(station, STATION_STATE_NETCONFIG);
+
+	return true;
 }
 
 static void station_roamed(struct station *station)
@@ -3250,6 +3260,8 @@ static void station_connect_ok(struct station *station)
 						station_netconfig_event_handler,
 						station)))
 			return;
+
+		station_enter_state(station, STATION_STATE_NETCONFIG);
 	} else
 		station_enter_state(station, STATION_STATE_CONNECTED);
 }
@@ -3342,6 +3354,7 @@ static void station_disconnect_event(struct station *station, void *event_data)
 	case STATION_STATE_CONNECTED:
 	case STATION_STATE_FT_ROAMING:
 	case STATION_STATE_FW_ROAMING:
+	case STATION_STATE_NETCONFIG:
 		station_disassociated(station);
 		return;
 	default:
@@ -4061,7 +4074,8 @@ static struct l_dbus_message *station_dbus_scan(struct l_dbus *dbus,
 		return dbus_error_busy(message);
 
 	if (station->state == STATION_STATE_CONNECTING ||
-			station->state == STATION_STATE_CONNECTING_AUTO)
+			station->state == STATION_STATE_CONNECTING_AUTO ||
+			station->state == STATION_STATE_NETCONFIG)
 		return dbus_error_busy(message);
 
 	station->dbus_scan_subset_idx = 0;
@@ -4272,6 +4286,7 @@ static bool station_property_get_state(struct l_dbus *dbus,
 		break;
 	case STATION_STATE_CONNECTING:
 	case STATION_STATE_CONNECTING_AUTO:
+	case STATION_STATE_NETCONFIG:
 		statestr = "connecting";
 		break;
 	case STATION_STATE_CONNECTED:
@@ -5018,7 +5033,8 @@ static struct l_dbus_message *station_debug_scan(struct l_dbus *dbus,
 		return dbus_error_busy(message);
 
 	if (station->state == STATION_STATE_CONNECTING ||
-			station->state == STATION_STATE_CONNECTING_AUTO)
+			station->state == STATION_STATE_CONNECTING_AUTO ||
+			station->state == STATION_STATE_NETCONFIG)
 		return dbus_error_busy(message);
 
 	if (!l_dbus_message_get_arguments(message, "aq", &iter))
