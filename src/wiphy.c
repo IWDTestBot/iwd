@@ -248,6 +248,8 @@ static bool wiphy_can_connect_sae(struct wiphy *wiphy)
 		 *
 		 * TODO: No support for CMD_EXTERNAL_AUTH yet.
 		 */
+		l_debug("Unsupported: %s needs CMD_EXTERNAL_AUTH for SAE",
+			wiphy->driver_str);
 		return false;
 	}
 
@@ -312,8 +314,10 @@ enum ie_rsn_akm_suite wiphy_select_akm(struct wiphy *wiphy,
 		if (ie_rsne_is_wpa3_personal(info)) {
 			l_debug("Network is WPA3-Personal...");
 
-			if (!wiphy_can_connect_sae(wiphy))
+			if (!wiphy_can_connect_sae(wiphy)) {
+				l_warn("Can't use SAE, trying WPA-2");
 				goto wpa2_personal;
+			}
 
 			if (info->akm_suites &
 					IE_RSN_AKM_SUITE_FT_OVER_SAE_SHA256)
