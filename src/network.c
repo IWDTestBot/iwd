@@ -807,7 +807,7 @@ static void add_known_frequency(void *data, void *user_data)
 	struct scan_bss *bss = data;
 	struct network_info *info = user_data;
 
-	known_network_add_frequency(info, bss->frequency);
+	known_network_add_frequency(info, bss);
 }
 
 void network_set_info(struct network *network, struct network_info *info)
@@ -1094,7 +1094,7 @@ bool network_bss_add(struct network *network, struct scan_bss *bss)
 		return false;
 
 	if (network->info)
-		known_network_add_frequency(network->info, bss->frequency);
+		known_network_add_frequency(network->info, bss);
 
 	/* Done if BSS is not HS20 or we already have network_info set */
 	if (!bss->hs20_capable)
@@ -1131,7 +1131,7 @@ bool network_bss_update(struct network *network, struct scan_bss *bss)
 
 	/* Sync frequency for already known networks */
 	if (network->info) {
-		known_network_add_frequency(network->info, bss->frequency);
+		known_network_add_frequency(network->info, bss);
 		known_network_frequency_sync(network->info);
 	}
 
