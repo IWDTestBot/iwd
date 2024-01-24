@@ -96,6 +96,7 @@ typedef void (*known_networks_destroy_func_t)(void *user_data);
 
 struct known_frequency {
 	uint32_t frequency;
+	uint16_t rank;
 };
 
 void __network_config_parse(const struct l_settings *settings,

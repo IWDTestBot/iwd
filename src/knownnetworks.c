@@ -562,9 +562,19 @@ static bool known_frequency_match(const void *a, const void *b)
 	return known_freq->frequency == *frequency;
 }
 
+static int known_frequency_compare(const void *a, const void *b,
+					void *user_data)
+{
+	const struct known_frequency *kf_a = a;
+	const struct known_frequency *kf_b = b;
+
+	return (kf_b->rank > kf_a->rank) ? 1 : -1;
+}
+
 /*
  * Adds a frequency to the 'known' set of frequencies that this network
- * operates on.  The list is sorted according to most-recently seen
+ * operates on.  The list is sorted according to the rank of the BSS on that
+ * frequency.
  */
 int known_network_add_frequency(struct network_info *info, struct scan_bss *bss)
 {
@@ -578,9 +588,11 @@ int known_network_add_frequency(struct network_info *info, struct scan_bss *bss)
 	if (!known_freq) {
 		known_freq = l_new(struct known_frequency, 1);
 		known_freq->frequency = bss->frequency;
+		known_freq->rank = bss->rank;
 	}
 
-	l_queue_push_head(info->known_frequencies, known_freq);
+	l_queue_insert(info->known_frequencies, known_freq,
+			known_frequency_compare, NULL);
 
 	return 0;
 }
