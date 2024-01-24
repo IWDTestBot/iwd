@@ -518,7 +518,8 @@ struct network_info *known_networks_find(const char *ssid,
 }
 
 struct scan_freq_set *known_networks_get_recent_frequencies(
-						uint8_t num_networks_tosearch)
+						uint8_t num_networks_tosearch,
+						uint8_t freqs_per_network)
 {
 	/*
 	 * This search function assumes that the known networks are always
@@ -530,7 +531,7 @@ struct scan_freq_set *known_networks_get_recent_frequencies(
 	const struct l_queue_entry *freq_entry;
 	struct scan_freq_set *set;
 
-	if (!num_networks_tosearch)
+	if (!num_networks_tosearch || !freqs_per_network)
 		return NULL;
 
 	set = scan_freq_set_new();
@@ -540,10 +541,12 @@ struct scan_freq_set *known_networks_get_recent_frequencies(
 				network_entry = network_entry->next,
 						num_networks_tosearch--) {
 		const struct network_info *network = network_entry->data;
+		uint8_t freqs_found = 0;
 
 		for (freq_entry = l_queue_get_entries(
 						network->known_frequencies);
-				freq_entry; freq_entry = freq_entry->next) {
+				freq_entry && freqs_found < freqs_per_network;
+				freq_entry = freq_entry->next, freqs_found++) {
 			const struct known_frequency *known_freq =
 							freq_entry->data;
 

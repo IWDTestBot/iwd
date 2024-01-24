@@ -114,7 +114,8 @@ struct network_info *known_networks_find(const char *ssid,
 						enum security security);
 
 struct scan_freq_set *known_networks_get_recent_frequencies(
-						uint8_t num_networks_tosearch);
+						uint8_t num_networks_tosearch,
+						uint8_t freqs_per_network);
 int known_network_add_frequency(struct network_info *info,
 				struct scan_bss *bss);
 void known_network_frequency_sync(struct network_info *info);
