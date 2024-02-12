@@ -33,6 +33,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <limits.h>
+#include <libgen.h>
 
 #include <ell/ell.h>
 
