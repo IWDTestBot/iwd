@@ -317,6 +317,30 @@ Functions that are static should not be forward-declared.  The only exception
 to this rule is if a circular dependency condition exists, and the forward
 declaration cannot be avoided.
 
+M18: Use appropriate logging levels
+===================================
+An appropriate log level should be used depending on the type of message
+being logged. Logging is done using the l_log APIs in ELL:
+
+l_info    Information that is expected during normal operation. l_info's use
+          should be very limited so non-debug logs are concise
+l_warn    An unexpected, but non-fatal condition ocurred
+l_error   An unexpected condition ocurred. These are generally fatal to the
+          current connection/protocol that is running but not generally to IWD's
+          overall operation.
+l_debug   General debugging. These can be used relatively freely but should
+          provide some piece of useful information.
+l_notice  Reserved for specific event-type notifications about IWD's internal
+          state. These are logs that are mean to be both human-readable and
+          parsed by tooling so they are required to be of a certain syntax. They
+          should start with "event: <name>" followed by comma separated key
+          value pairs containing the data of interest. Event names and their
+          arguments should be consistent across the code base, i.e. two events
+          called in different locations should have the same arguments.
+
+          For example:
+
+          l_notice("event: mycondition, arg1: value1, arg2: value2, ...");
 
 O1: Shorten the name
 ====================
