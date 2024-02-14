@@ -215,14 +215,12 @@ static bool station_is_roaming(struct station *station)
 			station->state == STATION_STATE_FW_ROAMING;
 }
 
-static bool station_debug_event(struct station *station, const char *name)
+static bool station_emit_event(struct station *station, const char *name)
 {
 	struct l_dbus_message *signal;
 
 	if (!iwd_is_developer_mode())
 		return true;
-
-	l_debug("StationDebug.Event(%s)", name);
 
 	signal = l_dbus_message_new_signal(dbus_get_bus(),
 					netdev_get_path(station->netdev),
@@ -232,6 +230,12 @@ static bool station_debug_event(struct station *station, const char *name)
 
 	return l_dbus_send(dbus_get_bus(), signal) != 0;
 }
+
+#define station_debug_event(station, name, fmt, ...)			\
+({									\
+	l_notice("event: %s, " fmt, name, ##__VA_ARGS__);		\
+	station_emit_event(station, name);				\
+})
 
 static void station_property_set_scanning(struct station *station,
 								bool scanning)
@@ -1565,7 +1569,7 @@ static void station_enter_state(struct station *station,
 			station_state_to_string(station->state),
 			station_state_to_string(state));
 
-	station_debug_event(station, station_state_to_string(state));
+	station_debug_event(station, station_state_to_string(state), "");
 
 	disconnected = !station_is_busy(station);
 
@@ -2351,13 +2355,14 @@ static bool station_ft_work_ready(struct wiphy_radio_work_item *item)
 		l_queue_insert(station->roam_bss_list, rbss,
 				roam_bss_rank_compare, NULL);
 
-		station_debug_event(station, "ft-fallback-to-reassoc");
+		station_debug_event(station, "ft-fallback-to-reassoc", "");
 
 		station_transition_start(station);
 		l_steal_ptr(rbss);
 		break;
 	case -ENOENT:
-		station_debug_event(station, "ft-roam-failed");
+		station_debug_event(station, "ft-roam-failed",
+					"reason: authentication timeout");
 try_next:
 		station_transition_start(station);
 		break;
@@ -2560,7 +2565,7 @@ static void station_roam_scan_triggered(int err, void *user_data)
 		return;
 	}
 
-	station_debug_event(station, "roam-scan-triggered");
+	station_debug_event(station, "roam-scan-triggered", "");
 
 	/*
 	 * Do not update the Scanning property as we won't be updating the
@@ -2704,7 +2709,7 @@ next:
 
 	/* See if we have anywhere to roam to */
 	if (l_queue_isempty(station->roam_bss_list)) {
-		station_debug_event(station, "no-roam-candidates");
+		station_debug_event(station, "no-roam-candidates", "");
 		goto fail;
 	}
 
@@ -3393,7 +3398,7 @@ static void station_packets_lost(struct station *station, uint32_t num_pkts)
 	if (station_cannot_roam(station))
 		return;
 
-	station_debug_event(station, "packet-loss-roam");
+	station_debug_event(station, "packet-loss-roam", "count: %u", num_pkts);
 
 	elapsed = l_time_diff(station->last_roam_scan, l_time_now());
 
@@ -3423,7 +3428,7 @@ static void station_beacon_lost(struct station *station)
 	if (station_cannot_roam(station))
 		return;
 
-	station_debug_event(station, "beacon-loss-roam");
+	station_debug_event(station, "beacon-loss-roam", "");
 
 	if (station->roam_trigger_timeout)
 		return;
