@@ -215,14 +215,12 @@ static bool station_is_roaming(struct station *station)
 			station->state == STATION_STATE_FW_ROAMING;
 }
 
-static bool station_debug_event(struct station *station, const char *name)
+static bool station_emit_event(struct station *station, const char *name)
 {
 	struct l_dbus_message *signal;
 
 	if (!iwd_is_developer_mode())
 		return true;
-
-	l_debug("StationDebug.Event(%s)", name);
 
 	signal = l_dbus_message_new_signal(dbus_get_bus(),
 					netdev_get_path(station->netdev),
@@ -232,6 +230,12 @@ static bool station_debug_event(struct station *station, const char *name)
 
 	return l_dbus_send(dbus_get_bus(), signal) != 0;
 }
+
+#define station_debug_event(station, name, fmt, ...)			\
+({									\
+	l_notice("event: %s, " fmt, name, ##__VA_ARGS__);		\
+	station_emit_event(station, name);				\
+})
 
 static void station_property_set_scanning(struct station *station,
 								bool scanning)
@@ -1565,7 +1569,7 @@ static void station_enter_state(struct station *station,
 			station_state_to_string(station->state),
 			station_state_to_string(state));
 
-	station_debug_event(station, station_state_to_string(state));
+	station_debug_event(station, station_state_to_string(state), "");
 
 	disconnected = !station_is_busy(station);
 
@@ -2351,13 +2355,14 @@ static bool station_ft_work_ready(struct wiphy_radio_work_item *item)
 		l_queue_insert(station->roam_bss_list, rbss,
 				roam_bss_rank_compare, NULL);
 
-		station_debug_event(station, "ft-fallback-to-reassoc");
+		station_debug_event(station, "ft-fallback-to-reassoc", "");
 
 		station_transition_start(station);
 		l_steal_ptr(rbss);
 		break;
 	case -ENOENT:
-		station_debug_event(station, "ft-roam-failed");
+		station_debug_event(station, "ft-roam-failed",
+					"reason: authentication timeout");
 try_next:
 		station_transition_start(station);
 		break;
@@ -2384,8 +2389,11 @@ disassociate:
 		station_disassociated(station);
 		break;
 	default:
-		if (ret > 0)
+		if (ret > 0) {
+			station_debug_event(station, "ft-roam-failed",
+						"status: %d", ret);
 			goto try_next;
+		}
 
 		station_roam_failed(station);
 		break;
@@ -2457,8 +2465,11 @@ static bool station_try_next_transition(struct station *station,
 	struct handshake_state *new_hs;
 	struct ie_rsn_info cur_rsne, target_rsne;
 
-	l_debug("%u, target %s", netdev_get_ifindex(station->netdev),
-			util_address_to_string(bss->addr));
+	station_debug_event(station, "roaming-info", "bss: "MAC", "
+					"signal: %d, load: %d/255",
+					MAC_STR(bss->addr),
+					bss->signal_strength / 100,
+					bss->utilization);
 
 	/* Reset AP roam flag, at this point the roaming behaves the same */
 	station->ap_directed_roaming = false;
@@ -2560,7 +2571,7 @@ static void station_roam_scan_triggered(int err, void *user_data)
 		return;
 	}
 
-	station_debug_event(station, "roam-scan-triggered");
+	station_debug_event(station, "roam-scan-triggered", "");
 
 	/*
 	 * Do not update the Scanning property as we won't be updating the
@@ -2704,7 +2715,7 @@ next:
 
 	/* See if we have anywhere to roam to */
 	if (l_queue_isempty(station->roam_bss_list)) {
-		station_debug_event(station, "no-roam-candidates");
+		station_debug_event(station, "no-roam-candidates", "");
 		goto fail;
 	}
 
@@ -3159,6 +3170,9 @@ static bool station_retry_owe_default_group(struct station *station)
 static bool station_retry_with_reason(struct station *station,
 					uint16_t reason_code)
 {
+	station_debug_event(station, "connect-failed", "reason: %u",
+				reason_code);
+
 	/*
 	 * We don't want to cause a retry and blacklist if the password was
 	 * incorrect. Otherwise we would just continue to fail.
@@ -3208,6 +3222,9 @@ static bool station_retry_with_status(struct station *station,
 						station->connected_bss);
 	else
 		blacklist_add_bss(station->connected_bss->addr);
+
+	station_debug_event(station, "connect-failed", "status: %u",
+				status_code);
 
 	return station_try_next_bss(station);
 }
@@ -3369,6 +3386,8 @@ static void station_disconnect_event(struct station *station, void *event_data)
 	case STATION_STATE_FT_ROAMING:
 	case STATION_STATE_FW_ROAMING:
 	case STATION_STATE_NETCONFIG:
+		station_debug_event(station, "disconnected-info", "reason: %u",
+					l_get_u16(event_data));
 		station_disassociated(station);
 		return;
 	default:
@@ -3393,7 +3412,7 @@ static void station_packets_lost(struct station *station, uint32_t num_pkts)
 	if (station_cannot_roam(station))
 		return;
 
-	station_debug_event(station, "packet-loss-roam");
+	station_debug_event(station, "packet-loss-roam", "count: %u", num_pkts);
 
 	elapsed = l_time_diff(station->last_roam_scan, l_time_now());
 
@@ -3423,7 +3442,7 @@ static void station_beacon_lost(struct station *station)
 	if (station_cannot_roam(station))
 		return;
 
-	station_debug_event(station, "beacon-loss-roam");
+	station_debug_event(station, "beacon-loss-roam", "");
 
 	if (station->roam_trigger_timeout)
 		return;
@@ -3508,7 +3527,12 @@ int __station_connect_network(struct station *station, struct network *network,
 		return r;
 	}
 
-	l_debug("connecting to BSS "MAC, MAC_STR(bss->addr));
+	station_debug_event(station, "connecting-info", "ssid: %s, bss: "MAC", "
+					"signal: %d, load: %d/255",
+					network_get_ssid(network),
+					MAC_STR(bss->addr),
+					bss->signal_strength / 100,
+					bss->utilization);
 
 	station->connected_bss = bss;
 	station->connected_network = network;
