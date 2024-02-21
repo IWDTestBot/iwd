@@ -93,6 +93,7 @@ static const struct diagnostic_dict_mapping diagnostic_mapping[] = {
 	{ "RxMCS", 'y' },
 	{ "TxMCS", 'y' },
 	{ "Frequency", 'u' },
+	{ "Channel", 'y' },
 	{ "Security", 's' },
 	{ NULL }
 };
