@@ -4702,11 +4702,15 @@ static void station_get_diagnostic_cb(
 	struct l_dbus_message *reply;
 	struct l_dbus_message_builder *builder;
 	struct handshake_state *hs = netdev_get_handshake(station->netdev);
+	uint8_t channel_num;
 
 	if (!info) {
 		reply = dbus_error_aborted(station->get_station_pending);
 		goto done;
 	}
+
+	channel_num = band_freq_to_channel(station->connected_bss->frequency,
+						NULL);
 
 	reply = l_dbus_message_new_method_return(station->get_station_pending);
 
@@ -4718,6 +4722,10 @@ static void station_get_diagnostic_cb(
 					util_address_to_string(info->addr));
 	dbus_append_dict_basic(builder, "Frequency", 'u',
 				&station->connected_bss->frequency);
+
+	if (channel_num != 0)
+		dbus_append_dict_basic(builder, "Channel", 'y', &channel_num);
+
 	dbus_append_dict_basic(builder, "Security", 's',
 				diagnostic_akm_suite_to_security(hs->akm_suite,
 								hs->wpa_ie));
