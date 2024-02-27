@@ -3152,7 +3152,7 @@ static bool station_retry_owe_default_group(struct station *station)
 		return false;
 
 	/* If we already forced group 19, allow the BSS to be blacklisted */
-	if (network_get_force_default_owe_group(station->connected_network))
+	if (network_get_force_default_ecc_group(station->connected_network))
 		return false;
 
 	l_warn("Failed to connect to OWE BSS "MAC" possibly because the AP is "
@@ -3160,7 +3160,7 @@ static bool station_retry_owe_default_group(struct station *station)
 		"Retrying with group 19 as a workaround",
 		MAC_STR(station->connected_bss->addr));
 
-	network_set_force_default_owe_group(station->connected_network);
+	network_set_force_default_ecc_group(station->connected_network);
 
 	return true;
 }
@@ -3456,6 +3456,18 @@ static void station_event_roaming(struct station *station)
 	station_enter_state(station, STATION_STATE_FW_ROAMING);
 }
 
+static void station_ecc_group_retry(struct station *station)
+{
+	struct network *network = station_get_connected_network(station);
+
+	if (L_WARN_ON(!network))
+		return;
+
+	station_debug_event(station, "ecc-group-rejected");
+
+	network_set_force_default_ecc_group(network);
+}
+
 static void station_netdev_event(struct netdev *netdev, enum netdev_event event,
 					void *event_data, void *user_data)
 {
@@ -3496,6 +3508,9 @@ static void station_netdev_event(struct netdev *netdev, enum netdev_event event,
 		break;
 	case NETDEV_EVENT_BEACON_LOSS_NOTIFY:
 		station_beacon_lost(station);
+		break;
+	case NETDEV_EVENT_ECC_GROUP_RETRY:
+		station_ecc_group_retry(station);
 		break;
 	}
 }
