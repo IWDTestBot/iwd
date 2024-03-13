@@ -758,6 +758,9 @@ static void dpp_configuration_start(struct dpp_sm *dpp, const uint8_t *addr)
 	size_t json_len = strlen(json);
 	uint8_t *ptr = frame;
 	uint8_t *lptr;
+	struct mmpdu_header *hdr = (struct mmpdu_header *)frame;
+
+	memset(frame, 0, sizeof(frame));
 
 	l_getrandom(&dpp->diag_token, 1);
 
@@ -779,7 +782,8 @@ static void dpp_configuration_start(struct dpp_sm *dpp, const uint8_t *addr)
 	 * In this case there is no query request/response fields, nor any
 	 * attributes besides wrapped data meaning zero AD components.
 	 */
-	ptr += dpp_append_wrapped_data(NULL, 0, NULL, 0, ptr, sizeof(frame),
+	ptr += dpp_append_wrapped_data(mmpdu_body(hdr) + 1,
+			sizeof(frame) - mmpdu_header_len(hdr) - 1, ptr,
 			dpp->ke, dpp->key_len, 2,
 			DPP_ATTR_ENROLLEE_NONCE, dpp->nonce_len, dpp->e_nonce,
 			DPP_ATTR_CONFIGURATION_REQUEST, json_len, json);
@@ -800,11 +804,15 @@ static void send_config_result(struct dpp_sm *dpp, const uint8_t *to)
 	uint8_t frame[256];
 	uint8_t *ptr = frame;
 	uint8_t zero = 0;
+	struct mmpdu_header *hdr = (struct mmpdu_header *)frame;
+
+	memset(frame, 0, sizeof(frame));
 
 	ptr += dpp_build_header(netdev_get_address(dpp->netdev), to,
 					DPP_FRAME_CONFIGURATION_RESULT, ptr);
-	ptr += dpp_append_wrapped_data(frame + 26, 6, ptr, 0, ptr,
-			sizeof(frame), dpp->ke, dpp->key_len, 2,
+	ptr += dpp_append_wrapped_data(mmpdu_body(hdr) + 1,
+			sizeof(frame) - mmpdu_header_len(hdr) - 1, ptr,
+			dpp->ke, dpp->key_len, 2,
 			DPP_ATTR_STATUS, (size_t) 1, &zero,
 			DPP_ATTR_ENROLLEE_NONCE, dpp->nonce_len, dpp->e_nonce);
 
@@ -1163,6 +1171,7 @@ static void dpp_send_config_response(struct dpp_sm *dpp, uint8_t status)
 	size_t json_len;
 	uint8_t *ptr = frame;
 	uint8_t *lptr;
+	struct mmpdu_header *hdr = (struct mmpdu_header *)frame;
 
 	memset(frame, 0, sizeof(frame));
 
@@ -1205,19 +1214,19 @@ static void dpp_send_config_response(struct dpp_sm *dpp, uint8_t status)
 		json = dpp_configuration_to_json(dpp->config);
 		json_len = strlen(json);
 
-		ptr += dpp_append_wrapped_data(lptr + 2, ptr - lptr - 2,
-						NULL, 0, ptr, sizeof(frame),
-						dpp->ke, dpp->key_len, 2,
-						DPP_ATTR_ENROLLEE_NONCE,
-						dpp->nonce_len, dpp->e_nonce,
-						DPP_ATTR_CONFIGURATION_OBJECT,
-						json_len, json);
+		ptr += dpp_append_wrapped_data(mmpdu_body(hdr) + 1,
+				sizeof(frame) - mmpdu_header_len(hdr) - 1,
+				ptr, dpp->ke, dpp->key_len, 2,
+				DPP_ATTR_ENROLLEE_NONCE,
+				dpp->nonce_len, dpp->e_nonce,
+				DPP_ATTR_CONFIGURATION_OBJECT,
+				json_len, json);
 	} else
-		ptr += dpp_append_wrapped_data(lptr + 2, ptr - lptr - 2,
-						NULL, 0, ptr, sizeof(frame),
-						dpp->ke, dpp->key_len, 2,
-						DPP_ATTR_ENROLLEE_NONCE,
-						dpp->nonce_len, dpp->e_nonce);
+		ptr += dpp_append_wrapped_data(mmpdu_body(hdr) + 1,
+				sizeof(frame) - mmpdu_header_len(hdr) - 1,
+				ptr, dpp->ke, dpp->key_len, 2,
+				DPP_ATTR_ENROLLEE_NONCE,
+				dpp->nonce_len, dpp->e_nonce);
 
 	l_put_le16(ptr - lptr - 2, lptr);
 
@@ -1494,7 +1503,6 @@ static void send_authenticate_response(struct dpp_sm *dpp)
 {
 	uint8_t frame[512];
 	uint8_t *ptr = frame;
-	uint8_t *attrs;
 	uint8_t status = DPP_STATUS_OK;
 	uint64_t r_proto_key[L_ECC_MAX_DIGITS * 2];
 	uint8_t version = 2;
@@ -1502,6 +1510,9 @@ static void send_authenticate_response(struct dpp_sm *dpp)
 	uint8_t wrapped2_plaintext[dpp->key_len + 4];
 	uint8_t wrapped2[dpp->key_len + 16 + 8];
 	size_t wrapped2_len;
+	struct mmpdu_header *hdr = (struct mmpdu_header *)frame;
+
+	memset(frame, 0, sizeof(frame));
 
 	l_ecc_point_get_data(dpp->own_proto_public, r_proto_key,
 				sizeof(r_proto_key));
@@ -1509,7 +1520,6 @@ static void send_authenticate_response(struct dpp_sm *dpp)
 	ptr += dpp_build_header(netdev_get_address(dpp->netdev),
 				dpp->peer_addr,
 				DPP_FRAME_AUTHENTICATION_RESPONSE, ptr);
-	attrs = ptr;
 	ptr += dpp_append_attr(ptr, DPP_ATTR_STATUS, &status, 1);
 	ptr += dpp_append_attr(ptr, DPP_ATTR_RESPONDER_BOOT_KEY_HASH,
 				dpp->own_boot_hash, 32);
@@ -1538,8 +1548,9 @@ static void send_authenticate_response(struct dpp_sm *dpp)
 
 	wrapped2_len += 16;
 
-	ptr += dpp_append_wrapped_data(frame + 26, 6, attrs, ptr - attrs,
-			ptr, sizeof(frame), dpp->k2, dpp->key_len, 4,
+	ptr += dpp_append_wrapped_data(mmpdu_body(hdr) + 1,
+			sizeof(frame) - mmpdu_header_len(hdr) - 1, ptr,
+			dpp->k2, dpp->key_len, 4,
 			DPP_ATTR_RESPONDER_NONCE, dpp->nonce_len, dpp->r_nonce,
 			DPP_ATTR_INITIATOR_NONCE, dpp->nonce_len, dpp->i_nonce,
 			DPP_ATTR_RESPONDER_CAPABILITIES, (size_t) 1, &dpp->role,
@@ -1694,23 +1705,25 @@ static void dpp_auth_request_failed(struct dpp_sm *dpp,
 {
 	uint8_t frame[128];
 	uint8_t *ptr = frame;
-	uint8_t *attrs;
 	uint8_t version = 2;
 	uint8_t s = status;
 	struct iovec iov;
+	struct mmpdu_header *hdr = (struct mmpdu_header *)frame;
+
+	memset(frame, 0, sizeof(frame));
 
 	ptr += dpp_build_header(netdev_get_address(dpp->netdev),
 				dpp->peer_addr,
 				DPP_FRAME_AUTHENTICATION_RESPONSE, ptr);
-	attrs = ptr;
 	ptr += dpp_append_attr(ptr, DPP_ATTR_STATUS, &s, 1);
 	ptr += dpp_append_attr(ptr, DPP_ATTR_RESPONDER_BOOT_KEY_HASH,
 				dpp->own_boot_hash, 32);
 
 	ptr += dpp_append_attr(ptr, DPP_ATTR_PROTOCOL_VERSION, &version, 1);
 
-	ptr += dpp_append_wrapped_data(frame + 26, 6, attrs, ptr - attrs,
-			ptr, sizeof(frame) - (ptr - attrs), k1, dpp->key_len, 2,
+	ptr += dpp_append_wrapped_data(mmpdu_body(hdr) + 1,
+			sizeof(frame) - mmpdu_header_len(hdr) - 1, ptr,
+			k1, dpp->key_len, 2,
 			DPP_ATTR_INITIATOR_NONCE, dpp->nonce_len, dpp->i_nonce,
 			DPP_ATTR_RESPONDER_CAPABILITIES,
 			(size_t) 1, &dpp->role);
@@ -1765,12 +1778,14 @@ static bool dpp_send_authenticate_request(struct dpp_sm *dpp)
 {
 	uint8_t frame[256];
 	uint8_t *ptr = frame;
-	uint8_t *attrs;
 	uint64_t i_proto_key[L_ECC_MAX_DIGITS * 2];
 	uint8_t version = 2;
 	struct iovec iov;
 	struct station *station = station_find(netdev_get_ifindex(dpp->netdev));
 	struct scan_bss *bss = station_get_connected_bss(station);
+	struct mmpdu_header *hdr = (struct mmpdu_header *)frame;
+
+	memset(frame, 0, sizeof(frame));
 
 	/* Got disconnected by the time the peer was discovered */
 	if (dpp->role == DPP_CAPABILITY_CONFIGURATOR && !bss) {
@@ -1784,8 +1799,6 @@ static bool dpp_send_authenticate_request(struct dpp_sm *dpp)
 	ptr += dpp_build_header(netdev_get_address(dpp->netdev),
 				dpp->peer_addr,
 				DPP_FRAME_AUTHENTICATION_REQUEST, ptr);
-	attrs = ptr;
-
 	ptr += dpp_append_attr(ptr, DPP_ATTR_RESPONDER_BOOT_KEY_HASH,
 				dpp->peer_boot_hash, 32);
 	ptr += dpp_append_attr(ptr, DPP_ATTR_INITIATOR_BOOT_KEY_HASH,
@@ -1802,8 +1815,9 @@ static bool dpp_send_authenticate_request(struct dpp_sm *dpp)
 		ptr += dpp_append_attr(ptr, DPP_ATTR_CHANNEL, pair, 2);
 	}
 
-	ptr += dpp_append_wrapped_data(frame + 26, 6, attrs, ptr - attrs,
-			ptr, sizeof(frame), dpp->k1, dpp->key_len, 2,
+	ptr += dpp_append_wrapped_data(mmpdu_body(hdr) + 1,
+			sizeof(frame) - mmpdu_header_len(hdr) - 1, ptr,
+			dpp->k1, dpp->key_len, 2,
 			DPP_ATTR_INITIATOR_NONCE, dpp->nonce_len, dpp->i_nonce,
 			DPP_ATTR_INITIATOR_CAPABILITIES,
 			(size_t) 1, &dpp->role);
@@ -1857,9 +1871,11 @@ static void dpp_send_commit_reveal_request(struct dpp_sm *dpp)
 	struct iovec iov;
 	uint8_t frame[512];
 	uint8_t *ptr = frame;
-	uint8_t zero = 0;
 	uint8_t a_pub[L_ECC_POINT_MAX_BYTES];
 	ssize_t a_len;
+	struct mmpdu_header *hdr = (struct mmpdu_header *)frame;
+
+	memset(frame, 0, sizeof(frame));
 
 	a_len = l_ecc_point_get_data(dpp->boot_public, a_pub, sizeof(a_pub));
 
@@ -1867,8 +1883,9 @@ static void dpp_send_commit_reveal_request(struct dpp_sm *dpp)
 					dpp->peer_addr,
 					DPP_FRAME_PKEX_COMMIT_REVEAL_REQUEST,
 					ptr);
-	ptr += dpp_append_wrapped_data(frame + 26, 6, &zero, 1, ptr,
-			sizeof(frame), dpp->z, dpp->z_len, 2,
+	ptr += dpp_append_wrapped_data(mmpdu_body(hdr) + 1,
+			sizeof(frame) - mmpdu_header_len(hdr) - 1, ptr,
+			dpp->z, dpp->z_len, 2,
 			DPP_ATTR_BOOTSTRAPPING_KEY, a_len, a_pub,
 			DPP_ATTR_INITIATOR_AUTH_TAG, dpp->u_len, dpp->u);
 
@@ -2264,13 +2281,14 @@ static void dpp_send_authenticate_confirm(struct dpp_sm *dpp)
 	struct iovec iov;
 	uint8_t frame[256];
 	uint8_t *ptr = frame;
-	uint8_t *attrs;
 	uint8_t zero = 0;
+	struct mmpdu_header *hdr = (struct mmpdu_header *)frame;
+
+	memset(frame, 0, sizeof(frame));
 
 	ptr += dpp_build_header(netdev_get_address(dpp->netdev),
 					dpp->peer_addr,
 					DPP_FRAME_AUTHENTICATION_CONFIRM, ptr);
-	attrs = ptr;
 	ptr += dpp_append_attr(ptr, DPP_ATTR_STATUS, &zero, 1);
 	ptr += dpp_append_attr(ptr, DPP_ATTR_RESPONDER_BOOT_KEY_HASH,
 					dpp->peer_boot_hash, 32);
@@ -2278,8 +2296,9 @@ static void dpp_send_authenticate_confirm(struct dpp_sm *dpp)
 		ptr += dpp_append_attr(ptr, DPP_ATTR_INITIATOR_BOOT_KEY_HASH,
 					dpp->own_boot_hash, 32);
 
-	ptr += dpp_append_wrapped_data(frame + 26, 6, attrs, ptr - attrs, ptr,
-			sizeof(frame), dpp->ke, dpp->key_len, 1,
+	ptr += dpp_append_wrapped_data(mmpdu_body(hdr) + 1,
+			sizeof(frame) - mmpdu_header_len(hdr) - 1, ptr,
+			dpp->ke, dpp->key_len, 1,
 			DPP_ATTR_INITIATOR_AUTH_TAG, dpp->key_len,
 			dpp->auth_tag);
 
@@ -3301,19 +3320,21 @@ static void dpp_send_commit_reveal_response(struct dpp_sm *dpp,
 {
 	uint8_t frame[256];
 	uint8_t *ptr = frame;
-	uint8_t one = 1;
 	struct iovec iov;
 	const uint8_t *own_mac = netdev_get_address(dpp->netdev);
 	uint8_t b_pub[L_ECC_POINT_MAX_BYTES];
 	size_t b_len;
+	struct mmpdu_header *hdr = (struct mmpdu_header *)frame;
+
+	memset(frame, 0, sizeof(frame));
 
 	b_len = l_ecc_point_get_data(dpp->boot_public, b_pub, sizeof(b_pub));
 
-
 	ptr += dpp_build_header(own_mac, dpp->peer_addr,
 				DPP_FRAME_PKEX_COMMIT_REVEAL_RESPONSE, ptr);
-	ptr += dpp_append_wrapped_data(frame + 26, 6, &one, 1, ptr,
-			sizeof(frame), dpp->z, dpp->z_len, 2,
+	ptr += dpp_append_wrapped_data(mmpdu_body(hdr) + 1,
+			sizeof(frame) - mmpdu_header_len(hdr) - 1, ptr,
+			dpp->z, dpp->z_len, 2,
 			DPP_ATTR_BOOTSTRAPPING_KEY, b_len, b_pub,
 			DPP_ATTR_RESPONDER_AUTH_TAG, v_len, v);
 
