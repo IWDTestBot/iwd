@@ -2982,8 +2982,13 @@ static void netdev_authenticate_event(struct l_genl_msg *msg,
 						NULL, netdev->user_data);
 
 		/* We have sent another CMD_AUTHENTICATE / CMD_ASSOCIATE */
-		if (ret == 0 || ret == -EAGAIN)
+		if (ret == 0 || ret == -EAGAIN) {
+			if (!netdev->sm) {
+				netdev->sm = eapol_sm_new(netdev->handshake);
+				eapol_register(netdev->sm);
+			}
 			return;
+		}
 
 		retry = kernel_will_retry_auth(status_code,
 				L_CPU_TO_LE16(auth->algorithm),
@@ -3098,9 +3103,6 @@ static void netdev_associate_event(struct l_genl_msg *msg,
 			auth_proto_free(netdev->ap);
 			netdev->ap = NULL;
 		}
-
-		netdev->sm = eapol_sm_new(netdev->handshake);
-		eapol_register(netdev->sm);
 
 		/* Just in case this was a retry */
 		netdev->ignore_connect_event = false;
