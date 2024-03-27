@@ -1504,7 +1504,6 @@ static void send_authenticate_response(struct dpp_sm *dpp)
 	uint8_t frame[512];
 	uint8_t *ptr = frame;
 	uint8_t status = DPP_STATUS_OK;
-	uint64_t r_proto_key[L_ECC_MAX_DIGITS * 2];
 	uint8_t version = 2;
 	struct iovec iov;
 	uint8_t wrapped2_plaintext[dpp->key_len + 4];
@@ -1513,9 +1512,6 @@ static void send_authenticate_response(struct dpp_sm *dpp)
 	struct mmpdu_header *hdr = (struct mmpdu_header *)frame;
 
 	memset(frame, 0, sizeof(frame));
-
-	l_ecc_point_get_data(dpp->own_proto_public, r_proto_key,
-				sizeof(r_proto_key));
 
 	ptr += dpp_build_header(netdev_get_address(dpp->netdev),
 				dpp->peer_addr,
@@ -1526,8 +1522,8 @@ static void send_authenticate_response(struct dpp_sm *dpp)
 	if (dpp->mutual_auth)
 		ptr += dpp_append_attr(ptr, DPP_ATTR_INITIATOR_BOOT_KEY_HASH,
 				dpp->peer_boot_hash, 32);
-	ptr += dpp_append_attr(ptr, DPP_ATTR_RESPONDER_PROTOCOL_KEY,
-				r_proto_key, dpp->key_len * 2);
+	ptr += dpp_append_point(ptr, DPP_ATTR_RESPONDER_PROTOCOL_KEY,
+				dpp->own_proto_public);
 	ptr += dpp_append_attr(ptr, DPP_ATTR_PROTOCOL_VERSION, &version, 1);
 
 	/* Wrap up secondary data (R-Auth) */
@@ -1778,7 +1774,6 @@ static bool dpp_send_authenticate_request(struct dpp_sm *dpp)
 {
 	uint8_t frame[256];
 	uint8_t *ptr = frame;
-	uint64_t i_proto_key[L_ECC_MAX_DIGITS * 2];
 	uint8_t version = 2;
 	struct iovec iov;
 	struct station *station = station_find(netdev_get_ifindex(dpp->netdev));
@@ -1793,9 +1788,6 @@ static bool dpp_send_authenticate_request(struct dpp_sm *dpp)
 		return false;
 	}
 
-	l_ecc_point_get_data(dpp->own_proto_public, i_proto_key,
-				sizeof(i_proto_key));
-
 	ptr += dpp_build_header(netdev_get_address(dpp->netdev),
 				dpp->peer_addr,
 				DPP_FRAME_AUTHENTICATION_REQUEST, ptr);
@@ -1803,8 +1795,8 @@ static bool dpp_send_authenticate_request(struct dpp_sm *dpp)
 				dpp->peer_boot_hash, 32);
 	ptr += dpp_append_attr(ptr, DPP_ATTR_INITIATOR_BOOT_KEY_HASH,
 				dpp->own_boot_hash, 32);
-	ptr += dpp_append_attr(ptr, DPP_ATTR_INITIATOR_PROTOCOL_KEY,
-				i_proto_key, dpp->key_len * 2);
+	ptr += dpp_append_point(ptr, DPP_ATTR_INITIATOR_PROTOCOL_KEY,
+				dpp->own_proto_public);
 	ptr += dpp_append_attr(ptr, DPP_ATTR_PROTOCOL_VERSION, &version, 1);
 
 	if (dpp->role == DPP_CAPABILITY_CONFIGURATOR &&
@@ -1835,7 +1827,6 @@ static void dpp_send_pkex_exchange_request(struct dpp_sm *dpp)
 	uint8_t hdr[32];
 	uint8_t attrs[256];
 	uint8_t *ptr = attrs;
-	uint64_t m_data[L_ECC_MAX_DIGITS * 2];
 	uint16_t group;
 	struct iovec iov[2];
 	const uint8_t *own_mac = netdev_get_address(dpp->netdev);
@@ -1855,10 +1846,7 @@ static void dpp_send_pkex_exchange_request(struct dpp_sm *dpp)
 		ptr += dpp_append_attr(ptr, DPP_ATTR_CODE_IDENTIFIER,
 					dpp->pkex_id, strlen(dpp->pkex_id));
 
-	l_ecc_point_get_data(dpp->pkex_m, m_data, sizeof(m_data));
-
-	ptr += dpp_append_attr(ptr, DPP_ATTR_ENCRYPTED_KEY,
-				m_data, dpp->key_len * 2);
+	ptr += dpp_append_point(ptr, DPP_ATTR_ENCRYPTED_KEY, dpp->pkex_m);
 
 	iov[1].iov_base = attrs;
 	iov[1].iov_len = ptr - attrs;
@@ -3018,7 +3006,6 @@ static void dpp_send_pkex_exchange_response(struct dpp_sm *dpp,
 	uint8_t hdr[32];
 	uint8_t attrs[256];
 	uint8_t *ptr = attrs;
-	uint64_t n_data[L_ECC_MAX_DIGITS * 2];
 	uint16_t group;
 	uint8_t status = DPP_STATUS_OK;
 	struct iovec iov[2];
@@ -3036,10 +3023,7 @@ static void dpp_send_pkex_exchange_response(struct dpp_sm *dpp,
 		ptr += dpp_append_attr(ptr, DPP_ATTR_CODE_IDENTIFIER,
 					dpp->pkex_id, strlen(dpp->pkex_id));
 
-	l_ecc_point_get_data(n, n_data, sizeof(n_data));
-
-	ptr += dpp_append_attr(ptr, DPP_ATTR_ENCRYPTED_KEY,
-				n_data, dpp->key_len * 2);
+	ptr += dpp_append_point(ptr, DPP_ATTR_ENCRYPTED_KEY, n);
 
 	iov[1].iov_base = attrs;
 	iov[1].iov_len = ptr - attrs;
