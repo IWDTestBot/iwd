@@ -2896,6 +2896,14 @@ static bool kernel_will_retry_auth(uint16_t status_code,
 	return false;
 }
 
+static void netdev_ensure_registered(struct netdev *netdev)
+{
+	if (!netdev->sm) {
+		netdev->sm = eapol_sm_new(netdev->handshake);
+		eapol_register(netdev->sm);
+	}
+}
+
 static void netdev_authenticate_event(struct l_genl_msg *msg,
 							struct netdev *netdev)
 {
@@ -2982,8 +2990,10 @@ static void netdev_authenticate_event(struct l_genl_msg *msg,
 						NULL, netdev->user_data);
 
 		/* We have sent another CMD_AUTHENTICATE / CMD_ASSOCIATE */
-		if (ret == 0 || ret == -EAGAIN)
+		if (ret == 0 || ret == -EAGAIN) {
+			netdev_ensure_registered(netdev);
 			return;
+		}
 
 		retry = kernel_will_retry_auth(status_code,
 				L_CPU_TO_LE16(auth->algorithm),
@@ -3098,9 +3108,6 @@ static void netdev_associate_event(struct l_genl_msg *msg,
 			auth_proto_free(netdev->ap);
 			netdev->ap = NULL;
 		}
-
-		netdev->sm = eapol_sm_new(netdev->handshake);
-		eapol_register(netdev->sm);
 
 		/* Just in case this was a retry */
 		netdev->ignore_connect_event = false;
@@ -4279,6 +4286,8 @@ int netdev_ft_reassociate(struct netdev *netdev,
 	if (netdev->sm) {
 		eapol_sm_free(netdev->sm);
 		netdev->sm = NULL;
+
+		netdev_ensure_registered(netdev);
 	}
 
 	msg = netdev_build_cmd_associate_common(netdev);
