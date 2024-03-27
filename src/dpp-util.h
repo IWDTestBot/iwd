@@ -151,6 +151,8 @@ size_t dpp_append_attr(uint8_t *to, enum dpp_attribute_type type,
 size_t dpp_append_wrapped_data(const uint8_t *frame, size_t frame_len,
 				uint8_t *to, const void *key, size_t key_len,
 				size_t num_attrs, ...);
+size_t dpp_append_point(uint8_t *to, enum dpp_attribute_type type,
+				struct l_ecc_point *point);
 
 char *dpp_generate_uri(const uint8_t *asn1, size_t asn1_len, uint8_t version,
 			const uint8_t *mac, const uint32_t *freqs,

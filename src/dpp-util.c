@@ -697,6 +697,19 @@ size_t dpp_append_wrapped_data(const uint8_t *frame, size_t frame_len,
 	return attrs_len + 4 + 16;
 }
 
+size_t dpp_append_point(uint8_t *to, enum dpp_attribute_type type,
+				struct l_ecc_point *point)
+{
+	const struct l_ecc_curve *c = l_ecc_point_get_curve(point);
+	size_t len = l_ecc_curve_get_scalar_bytes(c) * 2;
+
+	l_put_le16(type, to);
+	l_put_le16(len, to + 2);
+	l_ecc_point_get_data(point, to + 4, len);
+
+	return len + 4;
+}
+
 /*
  * EasyConnect 2.0 Table 3. Key and Nonce Length Dependency on Prime Length
  */
