@@ -39,6 +39,11 @@
 #include "ell/asn1-private.h"
 #include "src/ie.h"
 
+#define DPP_ACTION_VENDOR_SPECIFIC	0x09
+#define DPP_ACTION_GAS_REQUEST		0x0a
+#define DPP_ACTION_GAS_RESPONSE		0x0b
+#define DPP_HDR_LEN			6
+
 /* WFA Easy Connect v3.0 C.1 Role-specific Elements for NIST p256 */
 static const uint8_t dpp_pkex_initiator_p256[64] = {
 	/* X */
@@ -463,22 +468,91 @@ uint8_t *dpp_unwrap_attr(const void *ad0, size_t ad0_len, const void *ad1,
 	return unwrapped;
 }
 
+static bool dpp_aad(const uint8_t *frame, size_t frame_len, uint8_t *to,
+			const uint8_t **ad0, size_t *ad0_len,
+			const uint8_t **ad1, size_t *ad1_len)
+{
+	/* For PKEX frames */
+	static uint8_t zero = 0;
+	static uint8_t one = 1;
+	enum dpp_frame_type type;
+	/* OUI field (inclusive) */
+	const uint8_t *start = frame + 1;
+
+	if (frame_len < 6)
+		return false;
+
+	type = l_get_u8(frame + 6);
+
+	switch (type) {
+
+	case DPP_FRAME_AUTHENTICATION_REQUEST:
+	case DPP_FRAME_AUTHENTICATION_RESPONSE:
+	case DPP_FRAME_AUTHENTICATION_CONFIRM:
+	case DPP_FRAME_CONFIGURATION_RESULT:
+		/*
+		 * Section 6.3.1.4 Protocol Conventions
+		 * All other invocations of AES-SIV in the DPP Authentication
+		 * protocol shall pass a vector of AAD having two components of
+		 * AAD in the following order:
+		 *     (1) the DPP header, as defined in Table 34, from the OUI
+		 *         field (inclusive) to the DPP Frame Type field
+		 *         (inclusive); and
+		 *     (2) all octets in a DPP Public Action frame after the DPP
+		 *         Frame Type field up to and including the last octet
+		 *         of the last attribute before the Wrapped Data
+		 *         attribute
+		 *
+		 * Note: The configuration result frame uses identical wordage
+		 *       but is in Section 6.4.1
+		 */
+		*ad0 = start;
+		*ad0_len = DPP_HDR_LEN;
+		*ad1 = start + DPP_HDR_LEN;
+		*ad1_len = to - start - DPP_HDR_LEN;
+		return true;
+	case DPP_FRAME_PKEX_COMMIT_REVEAL_REQUEST:
+		/*
+		 * The AAD for this operation shall consist of two components:
+		 *     (1) the DPP header, as defined in Table 34, from the OUI
+		 *         field (inclusive) to the DPP Frame Type field
+		 *         (inclusive); and
+		 *     (2) a single octet of the value zero
+		 */
+		*ad0 = start;
+		*ad0_len = DPP_HDR_LEN;
+		*ad1 = &zero;
+		*ad1_len = 1;
+		return true;
+	case DPP_FRAME_PKEX_COMMIT_REVEAL_RESPONSE:
+		/*
+		 * The AAD for this operation shall consist of two components:
+		 *     (1) the DPP header, as defined in Table 34, from the OUI
+		 *         field (inclusive) to the DPP Frame Type field
+		 *         (inclusive); and
+		 *     (2) a single octet of the value one
+		 */
+		*ad0 = start;
+		*ad0_len = DPP_HDR_LEN;
+		*ad1 = &one;
+		*ad1_len = 1;
+		return true;
+	default:
+		return false;
+	}
+}
+
 /*
- * Encrypt DPP attributes encapsulated in DPP wrapped data.
- *
- * ad0/ad0_len - frame specific AD0 component
- * ad1/ad0_len - frame specific AD1 component
- * to - buffer to encrypt data.
- * to_len - size of 'to'
+ * frame - start of action frame (excluding mpdu header and category)
+ * frame_len - total frame buffer size
+ * to - current position of DPP attributes (where wrapped data will start)
  * key - key used to encrypt
  * key_len - size of 'key'
  * num_attrs - number of attributes listed (type, length, data triplets)
  * ... - List of attributes, Type, Length, and data
  */
-size_t dpp_append_wrapped_data(const void *ad0, size_t ad0_len,
-				const void *ad1, size_t ad1_len,
-				uint8_t *to, size_t to_len,
-				const void *key, size_t key_len,
+size_t dpp_append_wrapped_data(const uint8_t *frame, size_t frame_len,
+				uint8_t *to, const void *key, size_t key_len,
 				size_t num_attrs, ...)
 {
 	size_t i;
@@ -488,6 +562,77 @@ size_t dpp_append_wrapped_data(const void *ad0, size_t ad0_len,
 	struct iovec ad[2];
 	size_t ad_size = 0;
 	va_list va;
+	uint8_t action;
+	const uint8_t *ad0 = NULL;
+	const uint8_t *ad1 = NULL;
+	size_t ad0_len, ad1_len;
+
+	/*
+	 * First determine the frame type. This could be passed in but due to
+	 * The config protocol using GAS request/response frames not all frames
+	 * map to a dpp_frame_type enum. Due to this, minimal parsing is done
+	 * on the frame to determine the type, and in turn the AAD
+	 * offsets/lengths.
+	 */
+	if (frame_len < 1)
+		return 0;
+
+	action = *frame;
+
+	switch (action) {
+	case DPP_ACTION_VENDOR_SPECIFIC:
+		if (!dpp_aad(frame, frame_len, to, &ad0, &ad0_len,
+				&ad1, &ad1_len))
+			return 0;
+
+		break;
+	/*
+	 * Section 6.4.1 Overview
+	 *
+	 * "AAD for use with AES-SIV for protected messages in the DPP
+	 * Configuration protocol shall consist of all octets in the
+	 * Query Request and Query Response fields up to the first octet
+	 * of the Wrapped Data attribute, which is the last attribute in a DPP
+	 * Configuration frame. When the number of octets of AAD is zero, the
+	 * number of components of AAD passed to AES-SIV is zero
+	 */
+	case DPP_ACTION_GAS_REQUEST:
+		/*
+		 * 8.3.2 DPP Configuration Request frame
+		 * The attributes begin 14 bytes after the action (inclusive)
+		 */
+		if (frame_len < 14)
+			return 0;
+
+		/* Start of query request */
+		ad0 = frame + 14;
+		/* "up to the first octet of the Wrapped Data attribute" */
+		ad0_len = to - frame - 14;
+
+		if (!ad0_len)
+			ad0 = NULL;
+
+		break;
+	case DPP_ACTION_GAS_RESPONSE:
+		/*
+		 * 8.3.3 DPP Configuration Response frame
+		 * The attributes begin 18 bytes after the action (inclusive)
+		 */
+		if (frame_len < 18)
+			return 0;
+
+		/* Start of query response */
+		ad0 = frame + 18;
+		/* "up to the first octet of the Wrapped Data attribute" */
+		ad0_len = to - frame - 18;
+
+		if (!ad0_len)
+			ad0 = NULL;
+
+		break;
+	default:
+		return 0;
+	}
 
 	va_start(va, num_attrs);
 
@@ -500,7 +645,7 @@ size_t dpp_append_wrapped_data(const void *ad0, size_t ad0_len,
 
 	va_end(va);
 
-	if (to_len < attrs_len + 4 + 16)
+	if (frame_len - (to - frame) < attrs_len + 4 + 16)
 		return false;
 
 	plaintext = l_malloc(attrs_len);
