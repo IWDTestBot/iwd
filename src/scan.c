@@ -1608,7 +1608,7 @@ static struct scan_bss *scan_parse_attr_bss(struct l_genl_attr *attr,
 
 		ret = wiphy_estimate_data_rate(wiphy, ies, ies_len, bss,
 						&bss->data_rate);
-		if (ret < 0 && ret != -ENETUNREACH)
+		if (ret < 0 && ret != -ENOTSUP)
 			l_warn("wiphy_estimate_data_rate() failed");
 	}
 
