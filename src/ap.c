@@ -80,6 +80,7 @@ struct ap_state {
 
 	unsigned int ciphers;
 	enum ie_rsn_cipher_suite group_cipher;
+	unsigned int akm_suites;
 	uint32_t beacon_interval;
 	struct l_uintset *rates;
 	uint32_t start_stop_cmd_id;
@@ -631,7 +632,7 @@ static void ap_drop_rsna(struct sta_state *sta)
 static void ap_set_rsn_info(struct ap_state *ap, struct ie_rsn_info *rsn)
 {
 	memset(rsn, 0, sizeof(*rsn));
-	rsn->akm_suites = IE_RSN_AKM_SUITE_PSK;
+	rsn->akm_suites = ap->akm_suites;
 	rsn->pairwise_ciphers = ap->ciphers;
 	rsn->group_cipher = ap->group_cipher;
 }
@@ -3620,6 +3621,7 @@ static int ap_load_config(struct ap_state *ap, const struct l_settings *config,
 	size_t len;
 	L_AUTO_FREE_VAR(char *, strval) = NULL;
 	_auto_(l_strv_free) char **ciphers_str = NULL;
+	_auto_(l_strv_free) char **akms_str = NULL;
 	uint16_t cipher_mask;
 	int err;
 	int i;
@@ -3836,6 +3838,28 @@ static int ap_load_config(struct ap_state *ap, const struct l_settings *config,
 		}
 
 		ap->ciphers |= cipher;
+	}
+
+	akms_str = l_settings_get_string_list(config, "Security",
+						"AKMSuites", ',');
+	for (i = 0; akms_str && akms_str[i]; i++) {
+		if (!strcmp(akms_str[i], "PSK"))
+			ap->akm_suites |= IE_RSN_AKM_SUITE_PSK;
+		else if (!strcmp(akms_str[i], "SAE"))
+			ap->akm_suites |= IE_RSN_AKM_SUITE_SAE_SHA256;
+		else {
+			l_warn("Unsupported or unknown AKM suite %s",
+					akms_str[i]);
+			return -ENOTSUP;
+		}
+	}
+
+	if (ap->akm_suites == 0) {
+		/*
+		 * Default behavior if no AKMs are specified but a passphrase
+		 * is to only enable PSK == WPA2.
+		 */
+		 ap->akm_suites |= IE_RSN_AKM_SUITE_PSK;
 	}
 
 	if (!ap->ciphers) {
