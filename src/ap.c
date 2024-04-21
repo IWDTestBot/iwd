@@ -59,6 +59,8 @@
 #include "src/diagnostic.h"
 #include "src/band.h"
 #include "src/common.h"
+#include "src/sae.h"
+#include "src/auth-proto.h"
 
 struct ap_state {
 	struct netdev *netdev;
@@ -132,6 +134,7 @@ struct sta_state {
 	uint8_t *assoc_ies;
 	size_t assoc_ies_len;
 	uint8_t *assoc_rsne;
+	struct auth_proto *auth_proto;
 	enum ie_rsn_akm_suite akm_suite;
 	struct eapol_sm *sm;
 	struct handshake_state *hs;
@@ -2595,6 +2598,35 @@ static void ap_auth_reply(struct ap_state *ap, const uint8_t *dest,
 				ap_auth_reply_cb, NULL);
 }
 
+static void sae_auth_reply(const uint8_t *data, size_t len, void *user_data)
+{
+	struct sta_state *sta = (struct sta_state *)user_data;
+	struct ap_state *ap = (struct ap_state *)sta->ap;
+	const uint8_t *addr = netdev_get_address(ap->netdev);
+	uint8_t sae_buf[2048];
+	struct mmpdu_header *mpdu = (struct mmpdu_header *) sae_buf;
+	struct mmpdu_authentication *auth;
+
+	memset(mpdu, 0, sizeof(*mpdu));
+
+	/* Header */
+	mpdu->fc.protocol_version = 0;
+	mpdu->fc.type = MPDU_TYPE_MANAGEMENT;
+	mpdu->fc.subtype = MPDU_MANAGEMENT_SUBTYPE_AUTHENTICATION;
+	memcpy(mpdu->address_1, sta->addr, 6);	/* DA */
+	memcpy(mpdu->address_2, addr, 6);	/* SA */
+	memcpy(mpdu->address_3, addr, 6);	/* BSSID */
+
+	/* Authentication body */
+	auth = (void *) mmpdu_body(mpdu);
+	auth->algorithm = L_CPU_TO_LE16(MMPDU_AUTH_ALGO_SAE);
+
+	/* SAE elements */
+	memcpy(sae_buf + 26, data, len);
+	ap_send_mgmt_frame(ap, mpdu, 26 + len,
+				ap_auth_reply_cb, NULL);
+}
+
 /*
  * 802.11-2016 9.3.3.12 (frame format), 802.11-2016 11.3.4.3 and
  * 802.11-2016 12.3.3.2 (MLME/SME)
@@ -2664,7 +2696,7 @@ static void ap_auth_cb(const struct mmpdu_header *hdr, const void *body,
 	 * than State 1."
 	 */
 	if (sta)
-		goto done;
+		goto have_sta;
 
 	/*
 	 * Per 12.3.3.2.3 with Open System the state change is immediate,
@@ -2679,18 +2711,32 @@ static void ap_auth_cb(const struct mmpdu_header *hdr, const void *body,
 		ap->sta_states = l_queue_new();
 
 	sta->akm_suite = akm_suite;
+	if (sta->akm_suite == IE_RSN_AKM_SUITE_SAE_SHA256) {
+		sta->hs = netdev_handshake_state_new(sta->ap->netdev);
+		handshake_state_set_authenticator(sta->hs, true);
+		handshake_state_set_passphrase(sta->hs, ap->passphrase);
+		handshake_state_set_supplicant_address(sta->hs, sta->addr);
+		handshake_state_set_authenticator_address(sta->hs, bssid);
+
+		sta->auth_proto = sae_sm_new(sta->hs, sae_auth_reply, NULL, sta);
+	}
 
 	l_queue_push_tail(ap->sta_states, sta);
 
-	/*
-	 * Nothing to do here netlink-wise as we can't receive any data
-	 * frames until after association anyway.  We do need to add a
-	 * timeout for the authentication and possibly the kernel could
-	 * handle that if we registered the STA with NEW_STATION now (TODO)
-	 */
 
-done:
-	ap_auth_reply(ap, from, 0);
+have_sta:
+	if (sta->akm_suite == IE_RSN_AKM_SUITE_SAE_SHA256) {
+		auth_proto_rx_authenticate(sta->auth_proto, (const uint8_t *)hdr,
+					   body + body_len - (void *) hdr);
+	} else {
+		/*
+		 * Nothing to do here netlink-wise as we can't receive any data
+		 * frames until after association anyway.  We do need to add a
+		 * timeout for the authentication and possibly the kernel could
+		 * handle that if we registered the STA with NEW_STATION now (TODO)
+		 */
+		ap_auth_reply(ap, from, 0);
+	}
 }
 
 /* 802.11-2016 9.3.3.13 (frame format), 802.11-2016 11.3.4.5 (MLME/SME) */
