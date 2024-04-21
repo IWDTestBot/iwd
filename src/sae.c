@@ -148,6 +148,16 @@ static void sae_reset_state(struct sae_sm *sm)
 	sm->pwe = NULL;
 }
 
+static int sae_set_group(struct sae_sm *sm, int group)
+{
+	sae_debug("Using group %u", group);
+
+	sm->group = group;
+	sm->curve = l_ecc_curve_from_ike_group(group);
+
+	return 0;
+}
+
 static int sae_choose_next_group(struct sae_sm *sm)
 {
 	const unsigned int *ecc_groups = l_ecc_supported_ike_groups();
@@ -166,9 +176,7 @@ static int sae_choose_next_group(struct sae_sm *sm)
 		sae_debug("Forcing default SAE group 19");
 
 		sm->group_retry++;
-		sm->group = 19;
-
-		goto get_curve;
+		return sae_set_group(sm, 19);
 	}
 
 	do {
@@ -182,14 +190,7 @@ static int sae_choose_next_group(struct sae_sm *sm)
 	if (reset)
 		sae_reset_state(sm);
 
-	sm->group = ecc_groups[sm->group_retry];
-
-get_curve:
-	sae_debug("Using group %u", sm->group);
-
-	sm->curve = l_ecc_curve_from_ike_group(sm->group);
-
-	return 0;
+	return sae_set_group(sm, ecc_groups[sm->group_retry]);
 }
 
 static int sae_valid_group(struct sae_sm *sm, unsigned int group)
