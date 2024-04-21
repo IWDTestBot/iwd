@@ -48,6 +48,8 @@ static bool debug;
 #define SAE_SYNC_MAX		3
 #define SAE_MAX_ASSOC_RETRY	3
 
+static bool sae_send_commit(struct sae_sm *sm, bool retry);
+
 #define sae_debug(fmat, ...) \
 ({	\
 	if (debug) \
@@ -148,6 +150,16 @@ static void sae_reset_state(struct sae_sm *sm)
 	sm->pwe = NULL;
 }
 
+static int sae_set_group(struct sae_sm *sm, int group)
+{
+	sae_debug("Using group %u", group);
+
+	sm->group = group;
+	sm->curve = l_ecc_curve_from_ike_group(group);
+
+	return 0;
+}
+
 static int sae_choose_next_group(struct sae_sm *sm)
 {
 	const unsigned int *ecc_groups = l_ecc_supported_ike_groups();
@@ -166,9 +178,7 @@ static int sae_choose_next_group(struct sae_sm *sm)
 		sae_debug("Forcing default SAE group 19");
 
 		sm->group_retry++;
-		sm->group = 19;
-
-		goto get_curve;
+		return sae_set_group(sm, 19);
 	}
 
 	do {
@@ -182,14 +192,7 @@ static int sae_choose_next_group(struct sae_sm *sm)
 	if (reset)
 		sae_reset_state(sm);
 
-	sm->group = ecc_groups[sm->group_retry];
-
-get_curve:
-	sae_debug("Using group %u", sm->group);
-
-	sm->curve = l_ecc_curve_from_ike_group(sm->group);
-
-	return 0;
+	return sae_set_group(sm, ecc_groups[sm->group_retry]);
 }
 
 static int sae_valid_group(struct sae_sm *sm, unsigned int group)
@@ -209,6 +212,18 @@ static int sae_valid_group(struct sae_sm *sm, unsigned int group)
 	}
 
 	return -ENOENT;
+}
+
+static int sae_supported_group(struct sae_sm *sm, unsigned int group)
+{
+	const unsigned int *ecc_groups = l_ecc_supported_ike_groups();
+	unsigned int i;
+
+	for (i = 0; ecc_groups[i]; i++)
+		if (ecc_groups[i] == group)
+			return true;
+
+	return false;
 }
 
 static bool sae_pwd_seed(const uint8_t *addr1, const uint8_t *addr2,
@@ -682,10 +697,9 @@ static bool sae_send_confirm(struct sae_sm *sm)
 	return true;
 }
 
-static int sae_process_commit(struct sae_sm *sm, const uint8_t *from,
-					const uint8_t *frame, size_t len)
+
+static int sae_calculate_keys(struct sae_sm *sm)
 {
-	uint8_t *ptr = (uint8_t *) frame;
 	unsigned int nbytes = l_ecc_curve_get_scalar_bytes(sm->curve);
 	enum l_checksum_type hash =
 		crypto_sae_hash_from_ecc_prime_len(sm->sae_type, nbytes);
@@ -700,39 +714,6 @@ static int sae_process_commit(struct sae_sm *sm, const uint8_t *from,
 	uint8_t tmp[L_ECC_SCALAR_MAX_BYTES];
 	struct l_ecc_scalar *tmp_scalar;
 	struct l_ecc_scalar *order;
-
-	ptr += 2;
-
-	sm->p_scalar = l_ecc_scalar_new(sm->curve, ptr, nbytes);
-	if (!sm->p_scalar) {
-		l_error("Server sent invalid P_Scalar during commit");
-		return sae_reject(sm, SAE_STATE_COMMITTED,
-				MMPDU_STATUS_CODE_UNSUPP_FINITE_CYCLIC_GROUP);
-	}
-
-	ptr += nbytes;
-
-	sm->p_element = l_ecc_point_from_data(sm->curve, L_ECC_POINT_TYPE_FULL,
-						ptr, nbytes * 2);
-	if (!sm->p_element) {
-		l_error("Server sent invalid P_Element during commit");
-		return sae_reject(sm, SAE_STATE_COMMITTED,
-				MMPDU_STATUS_CODE_UNSUPP_FINITE_CYCLIC_GROUP);
-	}
-
-	/*
-	 * If they match those sent as part of the protocol instance's own
-	 * SAE Commit message, the frame shall be silently discarded (because
-	 * it is evidence of a reflection attack) and the t0 (retransmission)
-	 * timer shall be set.
-	 */
-	if (l_ecc_scalars_are_equal(sm->p_scalar, sm->scalar) ||
-			l_ecc_points_are_equal(sm->p_element, sm->element)) {
-		l_warn("peer scalar or element matched own, discarding frame");
-		return -ENOMSG;
-	}
-
-	sm->sc++;
 
 	/*
 	 * K = scalar-op(rand, (element-op(scalar-op(peer-commit-scalar, PWE),
@@ -822,10 +803,61 @@ static int sae_process_commit(struct sae_sm *sm, const uint8_t *from,
 	/* don't set the handshakes pmkid until confirm is verified */
 	memcpy(sm->pmkid, tmp, 16);
 
-	if (!sae_send_confirm(sm))
-		return -EPROTO;
+	return 0;
+}
 
-	sm->state = SAE_STATE_CONFIRMED;
+
+static int sae_process_commit(struct sae_sm *sm, const uint8_t *from,
+					const uint8_t *frame, size_t len)
+{
+	uint8_t *ptr = (uint8_t *) frame;
+	unsigned int nbytes;
+
+	if (sm->handshake->authenticator && sae_set_group(sm, l_get_le16(frame)) < 0)
+		return -1;
+
+	nbytes = l_ecc_curve_get_scalar_bytes(sm->curve);
+	ptr += 2;
+
+	sm->p_scalar = l_ecc_scalar_new(sm->curve, ptr, nbytes);
+	if (!sm->p_scalar) {
+		l_error("Server sent invalid P_Scalar during commit");
+		return sae_reject(sm, SAE_STATE_COMMITTED,
+				MMPDU_STATUS_CODE_UNSUPP_FINITE_CYCLIC_GROUP);
+	}
+
+	ptr += nbytes;
+
+	sm->p_element = l_ecc_point_from_data(sm->curve, L_ECC_POINT_TYPE_FULL,
+						ptr, nbytes * 2);
+	if (!sm->p_element) {
+		l_error("Server sent invalid P_Element during commit");
+		return sae_reject(sm, SAE_STATE_COMMITTED,
+				MMPDU_STATUS_CODE_UNSUPP_FINITE_CYCLIC_GROUP);
+	}
+
+	/*
+	 * If they match those sent as part of the protocol instance's own
+	 * SAE Commit message, the frame shall be silently discarded (because
+	 * it is evidence of a reflection attack) and the t0 (retransmission)
+	 * timer shall be set.
+	 */
+	if ((sm->scalar && l_ecc_scalars_are_equal(sm->p_scalar, sm->scalar)) ||
+			(sm->element && l_ecc_points_are_equal(sm->p_element, sm->element)))
+		return -ENOMSG;
+
+	sm->sc++;
+
+	if (sm->handshake->authenticator) {
+		sae_send_commit(sm, false);
+		sae_calculate_keys(sm);
+		sm->state = SAE_STATE_COMMITTED;
+	} else {
+		sae_calculate_keys(sm);
+		if (!sae_send_confirm(sm))
+			return -EPROTO;
+		sm->state = SAE_STATE_CONFIRMED;
+	}
 
 	return 0;
 }
@@ -874,9 +906,13 @@ static int sae_process_confirm(struct sae_sm *sm, const uint8_t *from,
 
 	sm->state = SAE_STATE_ACCEPTED;
 
-	sae_debug("Sending Associate to "MAC, MAC_STR(sm->handshake->aa));
-
-	sm->tx_assoc(sm->user_data);
+	if (!sm->handshake->authenticator) {
+		sae_debug("Sending Associate to "MAC, MAC_STR(sm->handshake->aa));
+		sm->tx_assoc(sm->user_data);
+	} else {
+		if (!sae_send_confirm(sm))
+			return -EPROTO;
+	}
 
 	return 0;
 }
@@ -996,7 +1032,7 @@ static int sae_verify_nothing(struct sae_sm *sm, uint16_t transaction,
 	/*
 	 * TODO: This does not handle the transition from NOTHING -> CONFIRMED
 	 * as this is only relevant to the AP or in Mesh mode which is not
-	 * yet supported.
+	 * yet fully supported.
 	 */
 	if (transaction != SAE_STATE_COMMITTED)
 		return -EBADMSG;
@@ -1009,7 +1045,8 @@ static int sae_verify_nothing(struct sae_sm *sm, uint16_t transaction,
 		return -EBADMSG;
 
 	/* reject with unsupported group */
-	if (l_get_le16(frame) != sm->group)
+	if ((sm->handshake->authenticator && sae_supported_group(sm, l_get_le16(frame)) < 0) ||
+	    (!sm->handshake->authenticator && l_get_le16(frame) != sm->group))
 		return sae_reject(sm, SAE_STATE_COMMITTED,
 				MMPDU_STATUS_CODE_UNSUPP_FINITE_CYCLIC_GROUP);
 
@@ -1026,16 +1063,24 @@ static int sae_verify_committed(struct sae_sm *sm, uint16_t transaction,
 	unsigned int skip;
 	struct ie_tlv_iter iter;
 
-	/*
-	 * Upon receipt of a Con event...
-	 * Then the protocol instance checks the value of Sync. If it
-	 * is greater than dot11RSNASAESync, the protocol instance shall send a
-	 * Del event to the parent process and transition back to Nothing state.
-	 * If Sync is not greater than dot11RSNASAESync, the protocol instance
-	 * shall increment Sync, transmit the last SAE Commit message sent to
-	 * the peer...
-	 */
-	if (transaction == SAE_STATE_CONFIRMED) {
+	if (sm->handshake->authenticator && transaction == SAE_STATE_CONFIRMED) {
+		/*
+		 * TODO: Sanity-check received Confirm frame from the client. For now
+		 * AP-mode SAE support is experimental and we simply accept the frame.
+		 * Note that the cryptographic confirm field value will still be checked
+		 * before replying with a Confirm frame.
+		 */
+		return 0;
+	} else if (transaction == SAE_STATE_CONFIRMED) {
+		/*
+		 * Upon receipt of a Con event...
+		 * Then the protocol instance checks the value of Sync. If it
+		 * is greater than dot11RSNASAESync, the protocol instance shall send a
+		 * Del event to the parent process and transition back to Nothing state.
+		 * If Sync is not greater than dot11RSNASAESync, the protocol instance
+		 * shall increment Sync, transmit the last SAE Commit message sent to
+		 * the peer...
+		 */
 		if (sm->sync > SAE_SYNC_MAX)
 			return -ETIMEDOUT;
 
