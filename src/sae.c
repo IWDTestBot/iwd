@@ -906,9 +906,13 @@ static int sae_process_confirm(struct sae_sm *sm, const uint8_t *from,
 
 	sm->state = SAE_STATE_ACCEPTED;
 
-	sae_debug("Sending Associate to "MAC, MAC_STR(sm->handshake->aa));
-
-	sm->tx_assoc(sm->user_data);
+	if (!sm->handshake->authenticator) {
+		sae_debug("Sending Associate to "MAC, MAC_STR(sm->handshake->aa));
+		sm->tx_assoc(sm->user_data);
+	} else {
+		if (!sae_send_confirm(sm))
+			return -EPROTO;
+	}
 
 	return 0;
 }
@@ -1059,16 +1063,24 @@ static int sae_verify_committed(struct sae_sm *sm, uint16_t transaction,
 	unsigned int skip;
 	struct ie_tlv_iter iter;
 
-	/*
-	 * Upon receipt of a Con event...
-	 * Then the protocol instance checks the value of Sync. If it
-	 * is greater than dot11RSNASAESync, the protocol instance shall send a
-	 * Del event to the parent process and transition back to Nothing state.
-	 * If Sync is not greater than dot11RSNASAESync, the protocol instance
-	 * shall increment Sync, transmit the last SAE Commit message sent to
-	 * the peer...
-	 */
-	if (transaction == SAE_STATE_CONFIRMED) {
+	if (sm->handshake->authenticator && transaction == SAE_STATE_CONFIRMED) {
+		/*
+		 * TODO: Sanity-check received Confirm frame from the client. For now
+		 * AP-mode SAE support is experimental and we simply accept the frame.
+		 * Note that the cryptographic confirm field value will still be checked
+		 * before replying with a Confirm frame.
+		 */
+		return 0;
+	} else if (transaction == SAE_STATE_CONFIRMED) {
+		/*
+		 * Upon receipt of a Con event...
+		 * Then the protocol instance checks the value of Sync. If it
+		 * is greater than dot11RSNASAESync, the protocol instance shall send a
+		 * Del event to the parent process and transition back to Nothing state.
+		 * If Sync is not greater than dot11RSNASAESync, the protocol instance
+		 * shall increment Sync, transmit the last SAE Commit message sent to
+		 * the peer...
+		 */
 		if (sm->sync > SAE_SYNC_MAX)
 			return -ETIMEDOUT;
 
