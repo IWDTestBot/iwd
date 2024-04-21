@@ -48,6 +48,8 @@ static bool debug;
 #define SAE_SYNC_MAX		3
 #define SAE_MAX_ASSOC_RETRY	3
 
+static bool sae_send_commit(struct sae_sm *sm, bool retry);
+
 #define sae_debug(fmat, ...) \
 ({	\
 	if (debug) \
@@ -797,8 +799,12 @@ static int sae_process_commit(struct sae_sm *sm, const uint8_t *from,
 					const uint8_t *frame, size_t len)
 {
 	uint8_t *ptr = (uint8_t *) frame;
-	unsigned int nbytes = l_ecc_curve_get_scalar_bytes(sm->curve);
+	unsigned int nbytes;
 
+	if (sm->handshake->authenticator && sae_set_group(sm, l_get_le16(frame)) < 0)
+		return -1;
+
+	nbytes = l_ecc_curve_get_scalar_bytes(sm->curve);
 	ptr += 2;
 
 	sm->p_scalar = l_ecc_scalar_new(sm->curve, ptr, nbytes);
@@ -824,20 +830,22 @@ static int sae_process_commit(struct sae_sm *sm, const uint8_t *from,
 	 * it is evidence of a reflection attack) and the t0 (retransmission)
 	 * timer shall be set.
 	 */
-	if (l_ecc_scalars_are_equal(sm->p_scalar, sm->scalar) ||
-			l_ecc_points_are_equal(sm->p_element, sm->element)) {
-		l_warn("peer scalar or element matched own, discarding frame");
+	if ((sm->scalar && l_ecc_scalars_are_equal(sm->p_scalar, sm->scalar)) ||
+			(sm->element && l_ecc_points_are_equal(sm->p_element, sm->element)))
 		return -ENOMSG;
-	}
 
 	sm->sc++;
 
-	sae_calculate_keys(sm);
-
-	if (!sae_send_confirm(sm))
-		return -EPROTO;
-
-	sm->state = SAE_STATE_CONFIRMED;
+	if (sm->handshake->authenticator) {
+		sae_send_commit(sm, false);
+		sae_calculate_keys(sm);
+		sm->state = SAE_STATE_COMMITTED;
+	} else {
+		sae_calculate_keys(sm);
+		if (!sae_send_confirm(sm))
+			return -EPROTO;
+		sm->state = SAE_STATE_CONFIRMED;
+	}
 
 	return 0;
 }
@@ -1008,7 +1016,7 @@ static int sae_verify_nothing(struct sae_sm *sm, uint16_t transaction,
 	/*
 	 * TODO: This does not handle the transition from NOTHING -> CONFIRMED
 	 * as this is only relevant to the AP or in Mesh mode which is not
-	 * yet supported.
+	 * yet fully supported.
 	 */
 	if (transaction != SAE_STATE_COMMITTED)
 		return -EBADMSG;
