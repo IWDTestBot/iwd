@@ -59,6 +59,8 @@
 #include "src/diagnostic.h"
 #include "src/band.h"
 #include "src/common.h"
+#include "src/sae.h"
+#include "src/auth-proto.h"
 
 struct ap_state {
 	struct netdev *netdev;
@@ -80,16 +82,21 @@ struct ap_state {
 
 	unsigned int ciphers;
 	enum ie_rsn_cipher_suite group_cipher;
+	enum ie_rsn_cipher_suite group_management_cipher;
+	unsigned int akm_suites;
 	uint32_t beacon_interval;
 	struct l_uintset *rates;
 	uint32_t start_stop_cmd_id;
 	uint32_t mlme_watch;
 	uint8_t gtk[CRYPTO_MAX_GTK_LEN];
 	uint8_t gtk_index;
+	uint8_t igtk[CRYPTO_MAX_GTK_LEN];
+	uint8_t igtk_index;
 	struct l_queue *wsc_pbc_probes;
 	struct l_timeout *wsc_pbc_timeout;
 	uint16_t wsc_dpid;
 	uint8_t wsc_uuid_r[16];
+	bool mfpc;
 
 	uint16_t last_aid;
 	struct l_queue *sta_states;
@@ -111,6 +118,7 @@ struct ap_state {
 
 	bool started : 1;
 	bool gtk_set : 1;
+	bool igtk_set : 1;
 	bool netconfig_set_addr4 : 1;
 	bool in_event : 1;
 	bool free_pending : 1;
@@ -131,9 +139,12 @@ struct sta_state {
 	uint8_t *assoc_ies;
 	size_t assoc_ies_len;
 	uint8_t *assoc_rsne;
+	struct auth_proto *auth_proto;
+	enum ie_rsn_akm_suite akm_suite;
 	struct eapol_sm *sm;
 	struct handshake_state *hs;
 	uint32_t gtk_query_cmd_id;
+	uint8_t prev_igtk_rsc[6];
 	struct l_idle *stop_handshake_work;
 	struct l_settings *wsc_settings;
 	uint8_t wsc_uuid_e[16];
@@ -144,6 +155,7 @@ struct sta_state {
 
 	bool ht_support : 1;
 	bool ht_greenfield : 1;
+	bool mfp : 1;
 };
 
 struct ap_wsc_pbc_probe_record {
@@ -631,9 +643,12 @@ static void ap_drop_rsna(struct sta_state *sta)
 static void ap_set_rsn_info(struct ap_state *ap, struct ie_rsn_info *rsn)
 {
 	memset(rsn, 0, sizeof(*rsn));
-	rsn->akm_suites = IE_RSN_AKM_SUITE_PSK;
+	rsn->akm_suites = ap->akm_suites;
 	rsn->pairwise_ciphers = ap->ciphers;
 	rsn->group_cipher = ap->group_cipher;
+
+	rsn->group_management_cipher = ap->group_management_cipher;
+	rsn->mfpc = ap->mfpc;
 }
 
 static void ap_wsc_exit_pbc(struct ap_state *ap)
@@ -1366,7 +1381,7 @@ static uint32_t ap_send_mgmt_frame(struct ap_state *ap,
 	}))
 
 static void ap_start_handshake(struct sta_state *sta, bool use_eapol_start,
-				const uint8_t *gtk_rsc)
+				const uint8_t *gtk_rsc, const uint8_t *igtk_rsc)
 {
 	struct ap_state *ap = sta->ap;
 	const uint8_t *own_addr = netdev_get_address(ap->netdev);
@@ -1388,6 +1403,9 @@ static void ap_start_handshake(struct sta_state *sta, bool use_eapol_start,
 	if (gtk_rsc)
 		handshake_state_set_gtk(sta->hs, sta->ap->gtk,
 					sta->ap->gtk_index, gtk_rsc);
+	if (sta->mfp && igtk_rsc)
+		handshake_state_set_igtk(sta->hs, sta->ap->igtk,
+					 sta->ap->igtk_index, igtk_rsc);
 
 	if (ap->netconfig_dhcp)
 		sta->hs->support_ip_allocation = true;
@@ -1493,15 +1511,23 @@ static void ap_handshake_event(struct handshake_state *hs,
 	va_end(args);
 }
 
-static void ap_start_rsna(struct sta_state *sta, const uint8_t *gtk_rsc)
+static void ap_start_rsna(struct sta_state *sta, const uint8_t *gtk_rsc,
+			  const uint8_t *igtk_rsc)
 {
-	/* this handshake setup assumes PSK network */
-	sta->hs = netdev_handshake_state_new(sta->ap->netdev);
-	handshake_state_set_authenticator(sta->hs, true);
+	/* this handshake setup assumes SAE or PSK network */
+	if (sta->hs && sta->akm_suite == IE_RSN_AKM_SUITE_SAE_SHA256) {
+		handshake_state_set_pmk(sta->hs, sta->hs->pmk, 32);
+		handshake_state_set_pmkid(sta->hs, sta->hs->pmkid);
+	} else {
+		sta->hs = netdev_handshake_state_new(sta->ap->netdev);
+		handshake_state_set_authenticator(sta->hs, true);
+		handshake_state_set_pmk(sta->hs, sta->ap->psk, 32);
+	}
+
 	handshake_state_set_event_func(sta->hs, ap_handshake_event, sta);
 	handshake_state_set_supplicant_ie(sta->hs, sta->assoc_rsne);
-	handshake_state_set_pmk(sta->hs, sta->ap->psk, 32);
-	ap_start_handshake(sta, false, gtk_rsc);
+
+	ap_start_handshake(sta, false, gtk_rsc, igtk_rsc);
 }
 
 static void ap_gtk_query_cb(struct l_genl_msg *msg, void *user_data)
@@ -1526,11 +1552,46 @@ zero_rsc:
 		gtk_rsc = zero_gtk_rsc;
 	}
 
-	ap_start_rsna(sta, gtk_rsc);
+	ap_start_rsna(sta, gtk_rsc, sta->prev_igtk_rsc);
 	return;
 
 error:
 	ap_del_station(sta, MMPDU_REASON_CODE_UNSPECIFIED, true);
+}
+
+static void ap_igtk_query_cb(struct l_genl_msg *msg, void *user_data)
+{
+	struct sta_state *sta = user_data;
+	struct ap_state *ap = sta->ap;
+
+	const void *igtk_rsc;
+	uint8_t zero_igtk_rsc[6];
+	int err;
+
+	sta->gtk_query_cmd_id = 0;
+
+	err = l_genl_msg_get_error(msg);
+	if (err == -ENOTSUP)
+		goto zero_rsc;
+	else if (err < 0)
+		return;
+
+	igtk_rsc = nl80211_parse_get_key_seq(msg);
+	if (!igtk_rsc) {
+zero_rsc:
+		memset(zero_igtk_rsc, 0, 6);
+		igtk_rsc = zero_igtk_rsc;
+	}
+
+	memcpy(sta->prev_igtk_rsc, igtk_rsc, 6);
+
+	msg = nl80211_build_get_key(netdev_get_ifindex(ap->netdev),
+				    ap->gtk_index);
+	sta->gtk_query_cmd_id = l_genl_family_send(ap->nl80211, msg, ap_gtk_query_cb, sta, NULL);
+	if (!sta->gtk_query_cmd_id) {
+		l_genl_msg_unref(msg);
+		l_error("Issuing GET_KEY failed");
+	}
 }
 
 static void ap_stop_handshake_schedule(struct sta_state *sta)
@@ -1636,10 +1697,10 @@ static void ap_start_eap_wsc(struct sta_state *sta)
 	handshake_state_set_event_func(sta->hs, ap_wsc_handshake_event, sta);
 	handshake_state_set_8021x_config(sta->hs, sta->wsc_settings);
 
-	ap_start_handshake(sta, wait_for_eapol_start, NULL);
+	ap_start_handshake(sta, wait_for_eapol_start, NULL, NULL);
 }
 
-static struct l_genl_msg *ap_build_cmd_del_key(struct ap_state *ap)
+static struct l_genl_msg *ap_build_cmd_del_key(struct ap_state *ap, uint8_t index)
 {
 	uint32_t ifindex = netdev_get_ifindex(ap->netdev);
 	struct l_genl_msg *msg;
@@ -1648,7 +1709,7 @@ static struct l_genl_msg *ap_build_cmd_del_key(struct ap_state *ap)
 
 	l_genl_msg_append_attr(msg, NL80211_ATTR_IFINDEX, 4, &ifindex);
 	l_genl_msg_enter_nested(msg, NL80211_ATTR_KEY);
-	l_genl_msg_append_attr(msg, NL80211_KEY_IDX, 1, &ap->gtk_index);
+	l_genl_msg_append_attr(msg, NL80211_KEY_IDX, 1, &index);
 	l_genl_msg_leave_nested(msg);
 
 	return msg;
@@ -1692,7 +1753,7 @@ static void ap_gtk_op_cb(struct l_genl_msg *msg, void *user_data)
 			cmd == NL80211_CMD_SET_KEY ? "SET_KEY" :
 			"DEL_KEY";
 
-		l_error("%s failed for the GTK: %i",
+		l_error("%s failed for the (I)GTK: %i",
 			cmd_name, l_genl_msg_get_error(msg));
 	}
 }
@@ -1780,14 +1841,47 @@ static void ap_associate_sta_cb(struct l_genl_msg *msg, void *user_data)
 		ap->gtk_set = true;
 	}
 
+	if (ap->mfpc && !ap->igtk_set) {
+		enum crypto_cipher group_management_cipher =
+			ie_rsn_cipher_suite_to_cipher(ap->group_management_cipher);
+		int igtk_len = crypto_cipher_key_len(group_management_cipher);
+
+		l_getrandom(ap->igtk, igtk_len);
+		ap->igtk_index = 4;
+
+		msg = nl80211_build_new_key_group(
+						netdev_get_ifindex(ap->netdev),
+						group_management_cipher, ap->igtk_index,
+						ap->igtk, igtk_len, NULL,
+						0, NULL);
+
+		if (!l_genl_family_send(ap->nl80211, msg, ap_gtk_op_cb, NULL,
+					NULL)) {
+			l_genl_msg_unref(msg);
+			l_error("Issuing NEW_KEY failed");
+			goto error;
+		}
+
+		msg = nl80211_build_set_key(netdev_get_ifindex(ap->netdev),
+						ap->igtk_index);
+		if (!l_genl_family_send(ap->nl80211, msg, ap_gtk_op_cb, NULL,
+					NULL)) {
+			l_genl_msg_unref(msg);
+			l_error("Issuing SET_KEY failed");
+			goto error;
+		}
+
+		ap->igtk_set = true;
+	}
+
 	if (ap->group_cipher == IE_RSN_CIPHER_SUITE_NO_GROUP_TRAFFIC)
-		ap_start_rsna(sta, NULL);
+		ap_start_rsna(sta, NULL, NULL);
 	else {
 		msg = nl80211_build_get_key(netdev_get_ifindex(ap->netdev),
-					ap->gtk_index);
+					    sta->mfp ? ap->igtk_index : ap->gtk_index);
 		sta->gtk_query_cmd_id = l_genl_family_send(ap->nl80211, msg,
-								ap_gtk_query_cb,
-								sta, NULL);
+							   sta->mfp ? ap_igtk_query_cb : ap_gtk_query_cb,
+							   sta, NULL);
 		if (!sta->gtk_query_cmd_id) {
 			l_genl_msg_unref(msg);
 			l_error("Issuing GET_KEY failed");
@@ -2253,7 +2347,7 @@ static void ap_assoc_reassoc(struct sta_state *sta, bool reassoc,
 			goto unsupported;
 		}
 
-		if (rsn_info.akm_suites != IE_RSN_AKM_SUITE_PSK) {
+		if ((rsn_info.akm_suites & ap->akm_suites) == 0) {
 			err = MMPDU_REASON_CODE_INVALID_AKMP;
 			goto unsupported;
 		}
@@ -2262,6 +2356,8 @@ static void ap_assoc_reassoc(struct sta_state *sta, bool reassoc,
 			err = MMPDU_REASON_CODE_INVALID_GROUP_CIPHER;
 			goto unsupported;
 		}
+
+		sta->mfp = rsn_info.mfpc && ap->mfpc;
 	}
 
 	/* 802.11-2016 11.3.5.3 j) */
@@ -2593,6 +2689,38 @@ static void ap_auth_reply(struct ap_state *ap, const uint8_t *dest,
 				ap_auth_reply_cb, NULL);
 }
 
+static void sae_auth_reply(const uint8_t *data, size_t len, void *user_data)
+{
+	struct sta_state *sta = (struct sta_state *)user_data;
+	struct ap_state *ap = (struct ap_state *)sta->ap;
+	const uint8_t *addr = netdev_get_address(ap->netdev);
+	uint8_t sae_buf[512];
+	struct mmpdu_header *mpdu = (struct mmpdu_header *) sae_buf;
+	struct mmpdu_authentication *auth;
+
+	if (L_WARN_ON(26 + len > sizeof(sae_buf)))
+		return;
+
+	memset(mpdu, 0, sizeof(*mpdu));
+
+	/* Header */
+	mpdu->fc.protocol_version = 0;
+	mpdu->fc.type = MPDU_TYPE_MANAGEMENT;
+	mpdu->fc.subtype = MPDU_MANAGEMENT_SUBTYPE_AUTHENTICATION;
+	memcpy(mpdu->address_1, sta->addr, 6);	/* DA */
+	memcpy(mpdu->address_2, addr, 6);	/* SA */
+	memcpy(mpdu->address_3, addr, 6);	/* BSSID */
+
+	/* Authentication body */
+	auth = (void *) mmpdu_body(mpdu);
+	auth->algorithm = L_CPU_TO_LE16(MMPDU_AUTH_ALGO_SAE);
+
+	/* SAE elements */
+	memcpy(sae_buf + 26, data, len);
+	ap_send_mgmt_frame(ap, mpdu, 26 + len,
+				ap_auth_reply_cb, NULL);
+}
+
 /*
  * 802.11-2016 9.3.3.12 (frame format), 802.11-2016 11.3.4.3 and
  * 802.11-2016 12.3.3.2 (MLME/SME)
@@ -2605,6 +2733,7 @@ static void ap_auth_cb(const struct mmpdu_header *hdr, const void *body,
 	const uint8_t *from = hdr->address_2;
 	const uint8_t *bssid = netdev_get_address(ap->netdev);
 	struct sta_state *sta;
+	enum ie_rsn_akm_suite akm_suite;
 
 	l_info("AP Authentication from %s", util_address_to_string(from));
 
@@ -2626,17 +2755,28 @@ static void ap_auth_cb(const struct mmpdu_header *hdr, const void *body,
 		}
 	}
 
-	/* Only Open System authentication implemented here */
-	if (L_LE16_TO_CPU(auth->algorithm) !=
-			MMPDU_AUTH_ALGO_OPEN_SYSTEM) {
+	if ((ap->akm_suites & IE_RSN_AKM_SUITE_SAE_SHA256) &&
+	    (L_LE16_TO_CPU(auth->algorithm) == MMPDU_AUTH_ALGO_SAE) ) {
+		/* When using SAE it must be COMMIT or CONFIRM frame */
+		if (L_LE16_TO_CPU(auth->transaction_sequence) != 1 &&
+		    L_LE16_TO_CPU(auth->transaction_sequence) != 2) {
+			ap_auth_reply(ap, from, MMPDU_REASON_CODE_UNSPECIFIED);
+			return;
+		}
+		akm_suite = IE_RSN_AKM_SUITE_SAE_SHA256;
+	} else if ((ap->akm_suites & IE_RSN_AKM_SUITE_PSK) &&
+		   (L_LE16_TO_CPU(auth->algorithm) == MMPDU_AUTH_ALGO_OPEN_SYSTEM) ) {
+		/* When using PSK it must be Open System authentication */
+		if (L_LE16_TO_CPU(auth->transaction_sequence) != 1) {
+			ap_auth_reply(ap, from, MMPDU_REASON_CODE_UNSPECIFIED);
+			return;
+		}
+		akm_suite = IE_RSN_AKM_SUITE_PSK;
+	} else {
 		ap_auth_reply(ap, from, MMPDU_REASON_CODE_UNSPECIFIED);
 		return;
 	}
 
-	if (L_LE16_TO_CPU(auth->transaction_sequence) != 1) {
-		ap_auth_reply(ap, from, MMPDU_REASON_CODE_UNSPECIFIED);
-		return;
-	}
 
 	sta = l_queue_find(ap->sta_states, ap_sta_match_addr, from);
 
@@ -2651,7 +2791,7 @@ static void ap_auth_cb(const struct mmpdu_header *hdr, const void *body,
 	 * than State 1."
 	 */
 	if (sta)
-		goto done;
+		goto have_sta;
 
 	/*
 	 * Per 12.3.3.2.3 with Open System the state change is immediate,
@@ -2665,17 +2805,33 @@ static void ap_auth_cb(const struct mmpdu_header *hdr, const void *body,
 	if (!ap->sta_states)
 		ap->sta_states = l_queue_new();
 
+	sta->akm_suite = akm_suite;
+	if (sta->akm_suite == IE_RSN_AKM_SUITE_SAE_SHA256) {
+		sta->hs = netdev_handshake_state_new(sta->ap->netdev);
+		handshake_state_set_authenticator(sta->hs, true);
+		handshake_state_set_passphrase(sta->hs, ap->passphrase);
+		handshake_state_set_supplicant_address(sta->hs, sta->addr);
+		handshake_state_set_authenticator_address(sta->hs, bssid);
+
+		sta->auth_proto = sae_sm_new(sta->hs, sae_auth_reply, NULL, sta);
+	}
+
 	l_queue_push_tail(ap->sta_states, sta);
 
-	/*
-	 * Nothing to do here netlink-wise as we can't receive any data
-	 * frames until after association anyway.  We do need to add a
-	 * timeout for the authentication and possibly the kernel could
-	 * handle that if we registered the STA with NEW_STATION now (TODO)
-	 */
 
-done:
-	ap_auth_reply(ap, from, 0);
+have_sta:
+	if (sta->akm_suite == IE_RSN_AKM_SUITE_SAE_SHA256) {
+		auth_proto_rx_authenticate(sta->auth_proto, (const uint8_t *)hdr,
+					   body + body_len - (void *) hdr);
+	} else {
+		/*
+		 * Nothing to do here netlink-wise as we can't receive any data
+		 * frames until after association anyway.  We do need to add a
+		 * timeout for the authentication and possibly the kernel could
+		 * handle that if we registered the STA with NEW_STATION now (TODO)
+		 */
+		ap_auth_reply(ap, from, 0);
+	}
 }
 
 /* 802.11-2016 9.3.3.13 (frame format), 802.11-2016 11.3.4.5 (MLME/SME) */
@@ -3620,6 +3776,7 @@ static int ap_load_config(struct ap_state *ap, const struct l_settings *config,
 	size_t len;
 	L_AUTO_FREE_VAR(char *, strval) = NULL;
 	_auto_(l_strv_free) char **ciphers_str = NULL;
+	_auto_(l_strv_free) char **akms_str = NULL;
 	uint16_t cipher_mask;
 	int err;
 	int i;
@@ -3838,6 +3995,32 @@ static int ap_load_config(struct ap_state *ap, const struct l_settings *config,
 		ap->ciphers |= cipher;
 	}
 
+	akms_str = l_settings_get_string_list(config, "Security",
+						"AKMSuites", ',');
+	for (i = 0; akms_str && akms_str[i]; i++) {
+		if (!strcmp(akms_str[i], "PSK"))
+			ap->akm_suites |= IE_RSN_AKM_SUITE_PSK;
+		else if (!strcmp(akms_str[i], "SAE")) {
+			if (!wiphy_can_connect_sae(wiphy))
+				return -ENOTSUP;
+			ap->akm_suites |= IE_RSN_AKM_SUITE_SAE_SHA256;
+			ap->group_management_cipher = IE_RSN_CIPHER_SUITE_BIP_CMAC;
+			ap->mfpc = true;
+		} else {
+			l_warn("Unsupported or unknown AKM suite %s",
+					akms_str[i]);
+			return -ENOTSUP;
+		}
+	}
+
+	if (ap->akm_suites == 0) {
+		/*
+		 * Default behavior if no AKMs are specified but a passphrase
+		 * is to only enable PSK == WPA2.
+		 */
+		 ap->akm_suites |= IE_RSN_AKM_SUITE_PSK;
+	}
+
 	if (!ap->ciphers) {
 		/*
 		 * Default behavior if no ciphers are specified, disable TKIP
@@ -4033,10 +4216,27 @@ void ap_shutdown(struct ap_state *ap, ap_stopped_func_t stopped_func,
 
 	ap_reset(ap);
 
+	if (ap->igtk_set) {
+		ap->igtk_set = false;
+
+		cmd = ap_build_cmd_del_key(ap, ap->igtk_index);
+		if (!cmd) {
+			l_error("ap_build_cmd_del_key failed");
+			goto free_ap;
+		}
+
+		if (!l_genl_family_send(ap->nl80211, cmd, ap_gtk_op_cb, NULL,
+					NULL)) {
+			l_genl_msg_unref(cmd);
+			l_error("Issuing DEL_KEY failed");
+			goto free_ap;
+		}
+	}
+
 	if (ap->gtk_set) {
 		ap->gtk_set = false;
 
-		cmd = ap_build_cmd_del_key(ap);
+		cmd = ap_build_cmd_del_key(ap, ap->gtk_index);
 		if (!cmd) {
 			l_error("ap_build_cmd_del_key failed");
 			goto free_ap;

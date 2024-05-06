@@ -195,7 +195,7 @@ uint16_t wiphy_get_supported_ciphers(struct wiphy *wiphy, uint16_t mask)
 	return wiphy->supported_ciphers & mask;
 }
 
-static bool wiphy_can_connect_sae(struct wiphy *wiphy)
+bool wiphy_can_connect_sae(struct wiphy *wiphy)
 {
 	/*
 	 * WPA3 Specification version 3, Section 2.2:
