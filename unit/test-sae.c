@@ -631,6 +631,116 @@ static void test_end_to_end(const void *arg)
 	l_free(td2);
 }
 
+static void ap_to_client_tx_func(const uint8_t *frame, size_t len, void *user_data)
+{
+	struct test_data *td = user_data;
+	uint16_t trans;
+
+	memcpy(td->tx_packet, frame, len);
+	td->tx_packet_len = len;
+
+	if (len <= 6 && l_get_le16(frame + 2) != 0) {
+		td->tx_reject_occurred = true;
+		return;
+	}
+
+	trans = l_get_le16(frame);	/* transaction */
+
+	switch (trans) {
+	case 1:
+		assert(l_get_le16(frame + 2) == 0);	/* status */
+		assert(l_get_le16(frame + 4) == 19);	/* group */
+
+		td->commit_success = true;
+
+		return;
+	case 2:
+		assert(l_get_le16(frame + 2) == 0);
+		assert(len == 38);
+
+		td->confirm_success = true;
+
+		return;
+	}
+
+	assert(false);
+}
+
+static void test_client_to_ap(const void *arg)
+{
+	struct auth_proto *ap_sta;
+	struct auth_proto *ap_ap;
+	struct test_data *td_sta = l_new(struct test_data, 1);
+	struct test_data *td_ap = l_new(struct test_data, 1);
+	struct handshake_state *hs_sta = test_handshake_state_new(1);
+	struct handshake_state *hs_ap = test_handshake_state_new(2);
+	struct authenticate_frame *frame = alloca(
+				sizeof(struct authenticate_frame) + 512);
+	struct associate_frame *assoc = alloca(sizeof(struct associate_frame));
+	size_t frame_len;
+
+	td_sta->status = 0xffff;
+	td_ap->status = 0xffff;
+
+	handshake_state_set_supplicant_address(hs_sta, spa);
+	handshake_state_set_authenticator_address(hs_sta, aa);
+	handshake_state_set_passphrase(hs_sta, passphrase);
+
+	handshake_state_set_supplicant_address(hs_ap, aa);
+	handshake_state_set_authenticator_address(hs_ap, spa);
+	handshake_state_set_passphrase(hs_ap, passphrase);
+	handshake_state_set_authenticator(hs_ap, true);
+
+	ap_sta = sae_sm_new(hs_sta, end_to_end_tx_func, test_tx_assoc_func, td_sta);
+	ap_ap = sae_sm_new(hs_ap, ap_to_client_tx_func, test_tx_assoc_func, td_ap);
+
+	/* let client send a commit */
+	auth_proto_start(ap_sta);
+
+	/* forward commit from client to the AP */
+	frame_len = setup_auth_frame(frame, aa, 1, 0, td_sta->tx_packet + 4,
+					td_sta->tx_packet_len - 4);
+	assert(auth_proto_rx_authenticate(ap_ap, (uint8_t *)frame,
+						frame_len) == 0);
+
+	/* forward commit from AP to the client */
+	frame_len = setup_auth_frame(frame, spa, 1, 0, td_ap->tx_packet + 4,
+					td_ap->tx_packet_len - 4);
+	assert(auth_proto_rx_authenticate(ap_sta, (uint8_t *)frame,
+						frame_len) == 0);
+
+	/* forward confirm from client to the AP */
+	frame_len = setup_auth_frame(frame, aa, 2, 0, td_sta->tx_packet + 4,
+					td_sta->tx_packet_len - 4);
+	assert(auth_proto_rx_authenticate(ap_ap, (uint8_t *)frame,
+						frame_len) == 0);
+
+	/* forward confirm from AP to the client */
+	frame_len = setup_auth_frame(frame, spa, 2, 0, td_ap->tx_packet + 4,
+					td_ap->tx_packet_len - 4);
+	assert(auth_proto_rx_authenticate(ap_sta, (uint8_t *)frame,
+						frame_len) == 0);
+
+	/* client should by now have sent association request to AP */
+	assert(td_sta->tx_assoc_called);
+	/* AP should have sent a confirm frame to complete handshake */
+	assert(td_ap->confirm_success);
+
+	/* confirm association frame doesn't return an error */
+	frame_len = setup_assoc_frame(assoc, 0);
+	assert(auth_proto_rx_associate(ap_sta, (uint8_t *)assoc, frame_len) == 0);
+	assert(auth_proto_rx_associate(ap_ap, (uint8_t *)assoc, frame_len) == 0);
+
+	handshake_state_free(hs_sta);
+	handshake_state_free(hs_ap);
+
+	auth_proto_free(ap_sta);
+	auth_proto_free(ap_ap);
+
+	l_free(td_sta);
+	l_free(td_ap);
+}
+
 static void test_pt_pwe(const void *data)
 {
 	static const char *ssid = "byteme";
@@ -893,6 +1003,7 @@ int main(int argc, char *argv[])
 	l_test_add("SAE bad confirm", test_bad_confirm, NULL);
 	l_test_add("SAE confirm after accept", test_confirm_after_accept, NULL);
 	l_test_add("SAE end-to-end", test_end_to_end, NULL);
+	l_test_add("SAE client-to-ap", test_client_to_ap, NULL);
 
 	l_test_add("SAE pt-pwe", test_pt_pwe, NULL);
 
