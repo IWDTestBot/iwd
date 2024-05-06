@@ -132,6 +132,7 @@ struct sta_state {
 	uint8_t *assoc_ies;
 	size_t assoc_ies_len;
 	uint8_t *assoc_rsne;
+	enum ie_rsn_akm_suite akm_suite;
 	struct eapol_sm *sm;
 	struct handshake_state *hs;
 	uint32_t gtk_query_cmd_id;
@@ -2606,6 +2607,7 @@ static void ap_auth_cb(const struct mmpdu_header *hdr, const void *body,
 	const uint8_t *from = hdr->address_2;
 	const uint8_t *bssid = netdev_get_address(ap->netdev);
 	struct sta_state *sta;
+	enum ie_rsn_akm_suite akm_suite;
 
 	l_info("AP Authentication from %s", util_address_to_string(from));
 
@@ -2627,17 +2629,28 @@ static void ap_auth_cb(const struct mmpdu_header *hdr, const void *body,
 		}
 	}
 
-	/* Only Open System authentication implemented here */
-	if (L_LE16_TO_CPU(auth->algorithm) !=
-			MMPDU_AUTH_ALGO_OPEN_SYSTEM) {
+	if ((ap->akm_suites & IE_RSN_AKM_SUITE_SAE_SHA256) &&
+	    (L_LE16_TO_CPU(auth->algorithm) == MMPDU_AUTH_ALGO_SAE) ) {
+		/* When using SAE it must be COMMIT or CONFIRM frame */
+		if (L_LE16_TO_CPU(auth->transaction_sequence) != 1 &&
+		    L_LE16_TO_CPU(auth->transaction_sequence) != 2) {
+			ap_auth_reply(ap, from, MMPDU_REASON_CODE_UNSPECIFIED);
+			return;
+		}
+		akm_suite = IE_RSN_AKM_SUITE_SAE_SHA256;
+	} else if ((ap->akm_suites & IE_RSN_AKM_SUITE_PSK) &&
+		   (L_LE16_TO_CPU(auth->algorithm) == MMPDU_AUTH_ALGO_OPEN_SYSTEM) ) {
+		/* When using PSK it must be Open System authentication */
+		if (L_LE16_TO_CPU(auth->transaction_sequence) != 1) {
+			ap_auth_reply(ap, from, MMPDU_REASON_CODE_UNSPECIFIED);
+			return;
+		}
+		akm_suite = IE_RSN_AKM_SUITE_PSK;
+	} else {
 		ap_auth_reply(ap, from, MMPDU_REASON_CODE_UNSPECIFIED);
 		return;
 	}
 
-	if (L_LE16_TO_CPU(auth->transaction_sequence) != 1) {
-		ap_auth_reply(ap, from, MMPDU_REASON_CODE_UNSPECIFIED);
-		return;
-	}
 
 	sta = l_queue_find(ap->sta_states, ap_sta_match_addr, from);
 
@@ -2665,6 +2678,8 @@ static void ap_auth_cb(const struct mmpdu_header *hdr, const void *body,
 
 	if (!ap->sta_states)
 		ap->sta_states = l_queue_new();
+
+	sta->akm_suite = akm_suite;
 
 	l_queue_push_tail(ap->sta_states, sta);
 
