@@ -82,6 +82,7 @@ struct ap_state {
 
 	unsigned int ciphers;
 	enum ie_rsn_cipher_suite group_cipher;
+	enum ie_rsn_cipher_suite group_management_cipher;
 	unsigned int akm_suites;
 	uint32_t beacon_interval;
 	struct l_uintset *rates;
@@ -93,6 +94,7 @@ struct ap_state {
 	struct l_timeout *wsc_pbc_timeout;
 	uint16_t wsc_dpid;
 	uint8_t wsc_uuid_r[16];
+	bool mfpc;
 
 	uint16_t last_aid;
 	struct l_queue *sta_states;
@@ -639,6 +641,9 @@ static void ap_set_rsn_info(struct ap_state *ap, struct ie_rsn_info *rsn)
 	rsn->akm_suites = ap->akm_suites;
 	rsn->pairwise_ciphers = ap->ciphers;
 	rsn->group_cipher = ap->group_cipher;
+
+	rsn->group_management_cipher = ap->group_management_cipher;
+	rsn->mfpc = ap->mfpc;
 }
 
 static void ap_wsc_exit_pbc(struct ap_state *ap)
@@ -3916,9 +3921,13 @@ static int ap_load_config(struct ap_state *ap, const struct l_settings *config,
 	for (i = 0; akms_str && akms_str[i]; i++) {
 		if (!strcmp(akms_str[i], "PSK"))
 			ap->akm_suites |= IE_RSN_AKM_SUITE_PSK;
-		else if (!strcmp(akms_str[i], "SAE"))
+		else if (!strcmp(akms_str[i], "SAE")) {
+			if (!wiphy_can_connect_sae(wiphy))
+				return -ENOTSUP;
 			ap->akm_suites |= IE_RSN_AKM_SUITE_SAE_SHA256;
-		else {
+			ap->group_management_cipher = IE_RSN_CIPHER_SUITE_BIP_CMAC;
+			ap->mfpc = true;
+		} else {
 			l_warn("Unsupported or unknown AKM suite %s",
 					akms_str[i]);
 			return -ENOTSUP;
