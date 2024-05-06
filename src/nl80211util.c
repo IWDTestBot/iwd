@@ -486,14 +486,19 @@ struct l_genl_msg *nl80211_build_set_station_unauthorized(uint32_t ifindex,
 struct l_genl_msg *nl80211_build_set_key(uint32_t ifindex, uint8_t key_index)
 {
 	struct l_genl_msg *msg;
+	int key_type;
 
 	msg = l_genl_msg_new_sized(NL80211_CMD_SET_KEY, 128);
 
 	l_genl_msg_append_attr(msg, NL80211_ATTR_IFINDEX, 4, &ifindex);
 
+	key_type = NL80211_KEY_DEFAULT;
+	if (key_index == 4 || key_index == 5)
+		key_type = NL80211_KEY_DEFAULT_MGMT;
+
 	l_genl_msg_enter_nested(msg, NL80211_ATTR_KEY);
 	l_genl_msg_append_attr(msg, NL80211_KEY_IDX, 1, &key_index);
-	l_genl_msg_append_attr(msg, NL80211_KEY_DEFAULT, 0, NULL);
+	l_genl_msg_append_attr(msg, key_type, 0, NULL);
 	l_genl_msg_enter_nested(msg, NL80211_KEY_DEFAULT_TYPES);
 	l_genl_msg_append_attr(msg, NL80211_KEY_DEFAULT_TYPE_MULTICAST,
 				0, NULL);

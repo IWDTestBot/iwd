@@ -90,6 +90,8 @@ struct ap_state {
 	uint32_t mlme_watch;
 	uint8_t gtk[CRYPTO_MAX_GTK_LEN];
 	uint8_t gtk_index;
+	uint8_t igtk[CRYPTO_MAX_GTK_LEN];
+	uint8_t igtk_index;
 	struct l_queue *wsc_pbc_probes;
 	struct l_timeout *wsc_pbc_timeout;
 	uint16_t wsc_dpid;
@@ -116,6 +118,7 @@ struct ap_state {
 
 	bool started : 1;
 	bool gtk_set : 1;
+	bool igtk_set : 1;
 	bool netconfig_set_addr4 : 1;
 	bool in_event : 1;
 	bool free_pending : 1;
@@ -1656,7 +1659,7 @@ static void ap_start_eap_wsc(struct sta_state *sta)
 	ap_start_handshake(sta, wait_for_eapol_start, NULL);
 }
 
-static struct l_genl_msg *ap_build_cmd_del_key(struct ap_state *ap)
+static struct l_genl_msg *ap_build_cmd_del_key(struct ap_state *ap, uint8_t index)
 {
 	uint32_t ifindex = netdev_get_ifindex(ap->netdev);
 	struct l_genl_msg *msg;
@@ -1665,7 +1668,7 @@ static struct l_genl_msg *ap_build_cmd_del_key(struct ap_state *ap)
 
 	l_genl_msg_append_attr(msg, NL80211_ATTR_IFINDEX, 4, &ifindex);
 	l_genl_msg_enter_nested(msg, NL80211_ATTR_KEY);
-	l_genl_msg_append_attr(msg, NL80211_KEY_IDX, 1, &ap->gtk_index);
+	l_genl_msg_append_attr(msg, NL80211_KEY_IDX, 1, &index);
 	l_genl_msg_leave_nested(msg);
 
 	return msg;
@@ -1709,7 +1712,7 @@ static void ap_gtk_op_cb(struct l_genl_msg *msg, void *user_data)
 			cmd == NL80211_CMD_SET_KEY ? "SET_KEY" :
 			"DEL_KEY";
 
-		l_error("%s failed for the GTK: %i",
+		l_error("%s failed for the (I)GTK: %i",
 			cmd_name, l_genl_msg_get_error(msg));
 	}
 }
@@ -1795,6 +1798,39 @@ static void ap_associate_sta_cb(struct l_genl_msg *msg, void *user_data)
 		 * just use NL80211_CMD_GET_KEY from now.
 		 */
 		ap->gtk_set = true;
+	}
+
+	if (ap->mfpc && !ap->igtk_set) {
+		enum crypto_cipher group_management_cipher =
+			ie_rsn_cipher_suite_to_cipher(ap->group_management_cipher);
+		int igtk_len = crypto_cipher_key_len(group_management_cipher);
+
+		l_getrandom(ap->igtk, igtk_len);
+		ap->igtk_index = 4;
+
+		msg = nl80211_build_new_key_group(
+						netdev_get_ifindex(ap->netdev),
+						group_management_cipher, ap->igtk_index,
+						ap->igtk, igtk_len, NULL,
+						0, NULL);
+
+		if (!l_genl_family_send(ap->nl80211, msg, ap_gtk_op_cb, NULL,
+					NULL)) {
+			l_genl_msg_unref(msg);
+			l_error("Issuing NEW_KEY failed");
+			goto error;
+		}
+
+		msg = nl80211_build_set_key(netdev_get_ifindex(ap->netdev),
+						ap->igtk_index);
+		if (!l_genl_family_send(ap->nl80211, msg, ap_gtk_op_cb, NULL,
+					NULL)) {
+			l_genl_msg_unref(msg);
+			l_error("Issuing SET_KEY failed");
+			goto error;
+		}
+
+		ap->igtk_set = true;
 	}
 
 	if (ap->group_cipher == IE_RSN_CIPHER_SUITE_NO_GROUP_TRAFFIC)
@@ -4137,10 +4173,27 @@ void ap_shutdown(struct ap_state *ap, ap_stopped_func_t stopped_func,
 
 	ap_reset(ap);
 
+	if (ap->igtk_set) {
+		ap->igtk_set = false;
+
+		cmd = ap_build_cmd_del_key(ap, ap->igtk_index);
+		if (!cmd) {
+			l_error("ap_build_cmd_del_key failed");
+			goto free_ap;
+		}
+
+		if (!l_genl_family_send(ap->nl80211, cmd, ap_gtk_op_cb, NULL,
+					NULL)) {
+			l_genl_msg_unref(cmd);
+			l_error("Issuing DEL_KEY failed");
+			goto free_ap;
+		}
+	}
+
 	if (ap->gtk_set) {
 		ap->gtk_set = false;
 
-		cmd = ap_build_cmd_del_key(ap);
+		cmd = ap_build_cmd_del_key(ap, ap->gtk_index);
 		if (!cmd) {
 			l_error("ap_build_cmd_del_key failed");
 			goto free_ap;
