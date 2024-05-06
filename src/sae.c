@@ -216,6 +216,18 @@ static int sae_valid_group(struct sae_sm *sm, unsigned int group)
 	return -ENOENT;
 }
 
+static int sae_supported_group(struct sae_sm *sm, unsigned int group)
+{
+	const unsigned int *ecc_groups = l_ecc_supported_ike_groups();
+	unsigned int i;
+
+	for (i = 0; ecc_groups[i]; i++)
+		if (ecc_groups[i] == group)
+			return true;
+
+	return false;
+}
+
 static bool sae_pwd_seed(const uint8_t *addr1, const uint8_t *addr2,
 				uint8_t *base, size_t base_len,
 				uint8_t counter, uint8_t *out)
@@ -1053,7 +1065,8 @@ static int sae_verify_nothing(struct sae_sm *sm, uint16_t transaction,
 		return -EBADMSG;
 
 	/* reject with unsupported group */
-	if (l_get_le16(frame) != sm->group)
+	if ((sm->handshake->authenticator && sae_supported_group(sm, l_get_le16(frame)) < 0) ||
+	    (!sm->handshake->authenticator && l_get_le16(frame) != sm->group))
 		return sae_reject(sm, SAE_STATE_COMMITTED,
 				MMPDU_STATUS_CODE_UNSUPP_FINITE_CYCLIC_GROUP);
 
