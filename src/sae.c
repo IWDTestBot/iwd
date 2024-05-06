@@ -48,6 +48,8 @@ static bool debug;
 #define SAE_SYNC_MAX		3
 #define SAE_MAX_ASSOC_RETRY	3
 
+static bool sae_send_commit(struct sae_sm *sm, bool retry);
+
 #define sae_debug(fmat, ...) \
 ({	\
 	if (debug) \
@@ -319,6 +321,21 @@ static ssize_t sae_cn(struct sae_sm *sm, uint16_t send_confirm,
 	l_checksum_free(hmac);
 
 	return ret;
+}
+
+static bool sae_check_reflection(struct sae_sm *sm)
+{
+	/*
+	 * If they match those sent as part of the protocol instance's own
+	 * SAE Commit message, the frame shall be silently discarded (because
+	 * it is evidence of a reflection attack) and the t0 (retransmission)
+	 * timer shall be set.
+	 */
+	if ((sm->scalar && sm->p_scalar && l_ecc_scalars_are_equal(sm->scalar, sm->p_scalar)) ||
+	    (sm->element && sm->p_element && l_ecc_points_are_equal(sm->element, sm->p_element)))
+		return false;
+
+	return true;
 }
 
 static int sae_reject(struct sae_sm *sm, uint16_t transaction, uint16_t status)
@@ -593,6 +610,10 @@ static int sae_build_commit(struct sae_sm *sm, const uint8_t *addr1,
 
 	l_ecc_scalar_free(mask);
 
+	/* ensure the scalar and element are different from peer */
+	if (!sae_check_reflection(sm))
+		return -EPROTO;
+
 	/*
 	 * Several cases require retransmitting the same commit message. The
 	 * anti-clogging code path requires this as well as the retransmission
@@ -799,9 +820,13 @@ static int sae_process_commit(struct sae_sm *sm, const uint8_t *from,
 					const uint8_t *frame, size_t len)
 {
 	uint8_t *ptr = (uint8_t *) frame;
-	unsigned int nbytes = l_ecc_curve_get_scalar_bytes(sm->curve);
+	unsigned int nbytes;
 	int r;
 
+	if (sm->handshake->authenticator && sae_set_group(sm, l_get_le16(frame)) < 0)
+		return -1;
+
+	nbytes = l_ecc_curve_get_scalar_bytes(sm->curve);
 	ptr += 2;
 
 	sm->p_scalar = l_ecc_scalar_new(sm->curve, ptr, nbytes);
@@ -821,28 +846,30 @@ static int sae_process_commit(struct sae_sm *sm, const uint8_t *from,
 				MMPDU_STATUS_CODE_UNSUPP_FINITE_CYCLIC_GROUP);
 	}
 
-	/*
-	 * If they match those sent as part of the protocol instance's own
-	 * SAE Commit message, the frame shall be silently discarded (because
-	 * it is evidence of a reflection attack) and the t0 (retransmission)
-	 * timer shall be set.
-	 */
-	if (l_ecc_scalars_are_equal(sm->p_scalar, sm->scalar) ||
-			l_ecc_points_are_equal(sm->p_element, sm->element)) {
-		l_warn("peer scalar or element matched own, discarding frame");
-		return -ENOMSG;
-	}
-
 	sm->sc++;
 
-	r = sae_calculate_keys(sm);
-	if (r != 0)
-		return r;
+	if (sm->handshake->authenticator) {
+		if (!sae_send_commit(sm, false))
+			return -EPROTO;
 
-	if (!sae_send_confirm(sm))
-		return -EPROTO;
+		r = sae_calculate_keys(sm);
+		if (r != 0)
+			return r;
 
-	sm->state = SAE_STATE_CONFIRMED;
+		sm->state = SAE_STATE_COMMITTED;
+	} else {
+		if (!sae_check_reflection(sm))
+			return -EPROTO;
+
+		r = sae_calculate_keys(sm);
+		if (r != 0)
+			return r;
+
+		if (!sae_send_confirm(sm))
+			return -EPROTO;
+
+		sm->state = SAE_STATE_CONFIRMED;
+	}
 
 	return 0;
 }
@@ -1013,7 +1040,7 @@ static int sae_verify_nothing(struct sae_sm *sm, uint16_t transaction,
 	/*
 	 * TODO: This does not handle the transition from NOTHING -> CONFIRMED
 	 * as this is only relevant to the AP or in Mesh mode which is not
-	 * yet supported.
+	 * yet fully supported.
 	 */
 	if (transaction != SAE_STATE_COMMITTED)
 		return -EBADMSG;
