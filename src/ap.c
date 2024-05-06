@@ -1500,12 +1500,19 @@ static void ap_handshake_event(struct handshake_state *hs,
 
 static void ap_start_rsna(struct sta_state *sta, const uint8_t *gtk_rsc)
 {
-	/* this handshake setup assumes PSK network */
-	sta->hs = netdev_handshake_state_new(sta->ap->netdev);
-	handshake_state_set_authenticator(sta->hs, true);
+	/* this handshake setup assumes SAE or PSK network */
+	if (sta->hs && sta->akm_suite == IE_RSN_AKM_SUITE_SAE_SHA256) {
+		handshake_state_set_pmk(sta->hs, sta->hs->pmk, 32);
+		handshake_state_set_pmkid(sta->hs, sta->hs->pmkid);
+	} else {
+		sta->hs = netdev_handshake_state_new(sta->ap->netdev);
+		handshake_state_set_authenticator(sta->hs, true);
+		handshake_state_set_pmk(sta->hs, sta->ap->psk, 32);
+	}
+
 	handshake_state_set_event_func(sta->hs, ap_handshake_event, sta);
 	handshake_state_set_supplicant_ie(sta->hs, sta->assoc_rsne);
-	handshake_state_set_pmk(sta->hs, sta->ap->psk, 32);
+
 	ap_start_handshake(sta, false, gtk_rsc);
 }
 
@@ -2258,7 +2265,7 @@ static void ap_assoc_reassoc(struct sta_state *sta, bool reassoc,
 			goto unsupported;
 		}
 
-		if (rsn_info.akm_suites != IE_RSN_AKM_SUITE_PSK) {
+		if ((rsn_info.akm_suites & ap->akm_suites) == 0) {
 			err = MMPDU_REASON_CODE_INVALID_AKMP;
 			goto unsupported;
 		}
