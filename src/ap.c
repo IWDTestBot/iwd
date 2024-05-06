@@ -144,6 +144,7 @@ struct sta_state {
 	struct eapol_sm *sm;
 	struct handshake_state *hs;
 	uint32_t gtk_query_cmd_id;
+	uint8_t prev_igtk_rsc[6];
 	struct l_idle *stop_handshake_work;
 	struct l_settings *wsc_settings;
 	uint8_t wsc_uuid_e[16];
@@ -154,6 +155,7 @@ struct sta_state {
 
 	bool ht_support : 1;
 	bool ht_greenfield : 1;
+	bool mfp : 1;
 };
 
 struct ap_wsc_pbc_probe_record {
@@ -1379,7 +1381,7 @@ static uint32_t ap_send_mgmt_frame(struct ap_state *ap,
 	}))
 
 static void ap_start_handshake(struct sta_state *sta, bool use_eapol_start,
-				const uint8_t *gtk_rsc)
+				const uint8_t *gtk_rsc, const uint8_t *igtk_rsc)
 {
 	struct ap_state *ap = sta->ap;
 	const uint8_t *own_addr = netdev_get_address(ap->netdev);
@@ -1401,6 +1403,9 @@ static void ap_start_handshake(struct sta_state *sta, bool use_eapol_start,
 	if (gtk_rsc)
 		handshake_state_set_gtk(sta->hs, sta->ap->gtk,
 					sta->ap->gtk_index, gtk_rsc);
+	if (sta->mfp && igtk_rsc)
+		handshake_state_set_igtk(sta->hs, sta->ap->igtk,
+					 sta->ap->igtk_index, igtk_rsc);
 
 	if (ap->netconfig_dhcp)
 		sta->hs->support_ip_allocation = true;
@@ -1506,7 +1511,8 @@ static void ap_handshake_event(struct handshake_state *hs,
 	va_end(args);
 }
 
-static void ap_start_rsna(struct sta_state *sta, const uint8_t *gtk_rsc)
+static void ap_start_rsna(struct sta_state *sta, const uint8_t *gtk_rsc,
+			  const uint8_t *igtk_rsc)
 {
 	/* this handshake setup assumes SAE or PSK network */
 	if (sta->hs && sta->akm_suite == IE_RSN_AKM_SUITE_SAE_SHA256) {
@@ -1521,7 +1527,7 @@ static void ap_start_rsna(struct sta_state *sta, const uint8_t *gtk_rsc)
 	handshake_state_set_event_func(sta->hs, ap_handshake_event, sta);
 	handshake_state_set_supplicant_ie(sta->hs, sta->assoc_rsne);
 
-	ap_start_handshake(sta, false, gtk_rsc);
+	ap_start_handshake(sta, false, gtk_rsc, igtk_rsc);
 }
 
 static void ap_gtk_query_cb(struct l_genl_msg *msg, void *user_data)
@@ -1546,11 +1552,46 @@ zero_rsc:
 		gtk_rsc = zero_gtk_rsc;
 	}
 
-	ap_start_rsna(sta, gtk_rsc);
+	ap_start_rsna(sta, gtk_rsc, sta->prev_igtk_rsc);
 	return;
 
 error:
 	ap_del_station(sta, MMPDU_REASON_CODE_UNSPECIFIED, true);
+}
+
+static void ap_igtk_query_cb(struct l_genl_msg *msg, void *user_data)
+{
+	struct sta_state *sta = user_data;
+	struct ap_state *ap = sta->ap;
+
+	const void *igtk_rsc;
+	uint8_t zero_igtk_rsc[6];
+	int err;
+
+	sta->gtk_query_cmd_id = 0;
+
+	err = l_genl_msg_get_error(msg);
+	if (err == -ENOTSUP)
+		goto zero_rsc;
+	else if (err < 0)
+		return;
+
+	igtk_rsc = nl80211_parse_get_key_seq(msg);
+	if (!igtk_rsc) {
+zero_rsc:
+		memset(zero_igtk_rsc, 0, 6);
+		igtk_rsc = zero_igtk_rsc;
+	}
+
+	memcpy(sta->prev_igtk_rsc, igtk_rsc, 6);
+
+	msg = nl80211_build_get_key(netdev_get_ifindex(ap->netdev),
+				    ap->gtk_index);
+	sta->gtk_query_cmd_id = l_genl_family_send(ap->nl80211, msg, ap_gtk_query_cb, sta, NULL);
+	if (!sta->gtk_query_cmd_id) {
+		l_genl_msg_unref(msg);
+		l_error("Issuing GET_KEY failed");
+	}
 }
 
 static void ap_stop_handshake_schedule(struct sta_state *sta)
@@ -1656,7 +1697,7 @@ static void ap_start_eap_wsc(struct sta_state *sta)
 	handshake_state_set_event_func(sta->hs, ap_wsc_handshake_event, sta);
 	handshake_state_set_8021x_config(sta->hs, sta->wsc_settings);
 
-	ap_start_handshake(sta, wait_for_eapol_start, NULL);
+	ap_start_handshake(sta, wait_for_eapol_start, NULL, NULL);
 }
 
 static struct l_genl_msg *ap_build_cmd_del_key(struct ap_state *ap, uint8_t index)
@@ -1834,13 +1875,13 @@ static void ap_associate_sta_cb(struct l_genl_msg *msg, void *user_data)
 	}
 
 	if (ap->group_cipher == IE_RSN_CIPHER_SUITE_NO_GROUP_TRAFFIC)
-		ap_start_rsna(sta, NULL);
+		ap_start_rsna(sta, NULL, NULL);
 	else {
 		msg = nl80211_build_get_key(netdev_get_ifindex(ap->netdev),
-					ap->gtk_index);
+					    sta->mfp ? ap->igtk_index : ap->gtk_index);
 		sta->gtk_query_cmd_id = l_genl_family_send(ap->nl80211, msg,
-								ap_gtk_query_cb,
-								sta, NULL);
+							   sta->mfp ? ap_igtk_query_cb : ap_gtk_query_cb,
+							   sta, NULL);
 		if (!sta->gtk_query_cmd_id) {
 			l_genl_msg_unref(msg);
 			l_error("Issuing GET_KEY failed");
@@ -2315,6 +2356,8 @@ static void ap_assoc_reassoc(struct sta_state *sta, bool reassoc,
 			err = MMPDU_REASON_CODE_INVALID_GROUP_CIPHER;
 			goto unsupported;
 		}
+
+		sta->mfp = rsn_info.mfpc && ap->mfpc;
 	}
 
 	/* 802.11-2016 11.3.5.3 j) */
