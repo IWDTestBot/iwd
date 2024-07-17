@@ -1244,6 +1244,8 @@ static void netdev_disconnect_event(struct l_genl_msg *msg,
 	uint16_t reason_code = 0;
 	bool disconnect_by_ap = false;
 	netdev_event_func_t event_filter;
+	netdev_connect_cb_t connect_cb;
+	void *user_data;
 	void *event_data;
 
 	l_debug("");
@@ -1284,9 +1286,20 @@ static void netdev_disconnect_event(struct l_genl_msg *msg,
 
 	event_filter = netdev->event_filter;
 	event_data = netdev->user_data;
+	connect_cb = netdev->connect_cb;
+	user_data = netdev->user_data;
 	netdev_connect_free(netdev);
 
-	if (!event_filter)
+	/*
+	 * If a deauth frame come in after the connect event during the 4-way
+	 * handshake we need to handle this via the connect callback since its
+	 * still effectively a connection failure.
+	 */
+	if (connect_cb) {
+		connect_cb(netdev, NETDEV_RESULT_AUTHENTICATION_FAILED,
+				&reason_code, user_data);
+		return;
+	} else if (!event_filter)
 		return;
 
 	if (disconnect_by_ap)
