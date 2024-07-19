@@ -3744,14 +3744,14 @@ static void dpp_station_state_watch(enum station_state state, void *user_data)
 		return;
 
 	switch (state) {
-	case STATION_STATE_DISCONNECTED:
-	case STATION_STATE_DISCONNECTING:
 	case STATION_STATE_ROAMING:
 	case STATION_STATE_FT_ROAMING:
 	case STATION_STATE_FW_ROAMING:
 		if (L_WARN_ON(dpp->role == DPP_CAPABILITY_ENROLLEE))
 			dpp_reset(dpp);
-
+		/* fall through */
+	case STATION_STATE_DISCONNECTED:
+	case STATION_STATE_DISCONNECTING:
 		if (dpp->role == DPP_CAPABILITY_CONFIGURATOR) {
 			l_debug("Disconnected while configuring, stopping DPP");
 			dpp_reset(dpp);
@@ -3927,6 +3927,44 @@ static void dpp_start_presence(struct dpp_sm *dpp, uint32_t *limit_freqs,
 	dpp_start_offchannel(dpp, dpp->current_freq);
 }
 
+static bool dpp_can_start(struct station *station)
+{
+	enum station_state state = station_get_state(station);
+
+	/*
+	 * The obvious cases where DPP can start without a second thought are
+	 * disconnected/disconnecting/autoconnecting.
+	 *
+	 * The reason DPP is allowed to start while connecting, and even
+	 * netconfig is to handle misconfigured profiles e.g. an incorrect
+	 * passphrase. If IWD has been misconfigured either by a prior DPP run
+	 * or other means it remains in a connecting state failing repeatedly.
+	 * This will prevent DPP from being started, or cancel it each time a
+	 * connection is attempted. This will render the device unconfigurable
+	 * via DPP until that invalid profile is removed. Since all offchannel
+	 * work is gated by the wiphy work queue there should be no contention
+	 * between station trying to connect and DPP trying to configure.
+	 */
+
+	switch (state) {
+	case STATION_STATE_DISCONNECTED:
+	case STATION_STATE_DISCONNECTING:
+	case STATION_STATE_AUTOCONNECT_QUICK:
+	case STATION_STATE_AUTOCONNECT_FULL:
+	case STATION_STATE_CONNECTING:
+	case STATION_STATE_CONNECTING_AUTO:
+	case STATION_STATE_NETCONFIG:
+		return true;
+	case STATION_STATE_CONNECTED:
+	case STATION_STATE_ROAMING:
+	case STATION_STATE_FT_ROAMING:
+	case STATION_STATE_FW_ROAMING:
+		return false;
+	default:
+		return false;
+	}
+}
+
 static struct l_dbus_message *dpp_dbus_start_enrollee(struct l_dbus *dbus,
 						struct l_dbus_message *message,
 						void *user_data)
@@ -3943,7 +3981,7 @@ static struct l_dbus_message *dpp_dbus_start_enrollee(struct l_dbus *dbus,
 	 * Station isn't actually required for DPP itself, although this will
 	 * prevent connecting to the network once configured.
 	 */
-	if (station && station_get_connected_network(station)) {
+	if (station && !dpp_can_start(station)) {
 		l_warn("cannot be enrollee while connected, please disconnect");
 		return dbus_error_busy(message);
 	} else if (!station)
@@ -4370,7 +4408,7 @@ static struct l_dbus_message *dpp_dbus_pkex_start_enrollee(struct l_dbus *dbus,
 				dpp->interface != DPP_INTERFACE_UNBOUND)
 		return dbus_error_busy(message);
 
-	if (station && station_get_connected_network(station))
+	if (station && !dpp_can_start(station))
 		return dbus_error_busy(message);
 
 	if (!dpp_parse_pkex_args(message, &key, &id))
