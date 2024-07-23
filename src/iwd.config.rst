@@ -130,6 +130,14 @@ The group ``[General]`` contains general settings.
        This value can be used to control how aggressively **iwd** roams when
        connected to a 5GHz access point.
 
+   * - CriticalRoamThreshold
+     - Value: rssi dBm value, from -100 to 1, default: **-82**
+
+       The threshold at which IWD will roam regardless of the affinity set to
+       the current BSS. This is only used if the SetConnectedBssAffinity() DBus
+       method is called, at which point this value becomes the new roam
+       threshold.
+
    * - RoamRetryInterval
      - Value: unsigned int value in seconds (default: **60**)
 

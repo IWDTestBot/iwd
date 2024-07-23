@@ -135,6 +135,28 @@ Methods		void Scan()
 			Possible Errors: [service].Error.InvalidArguments
 					 [service].Error.NotFound
 
+		void SetConnectedBssAffinity()
+
+			Sets a high affinity/preference to the currently
+			connected BSS. Specifically, calling this will reduce
+			the roam threshold down to a critical level set by
+			[General].CriticalRoamThreshold. This effectively locks
+			the client onto the current BSS unless the signal
+			quality becomes extremely poor.
+
+			If IWD roams or disconnects the affinity will be reset.
+
+			Possible Errors: net.connman.iwd.NotConnected
+
+		void UnsetConnectedBssAffinity()
+
+			Unset a prior call to SetConnectedBssAffinity(). This
+			moves the roaming threshold back up to the default level
+			(RoamThreshold/RoamThreshold5GHz).
+
+			Possible Errors: net.connman.iwd.NotConnected
+					 net.connman.iwd.NotConfigured
+
 Properties	string State [readonly]
 
 			Reflects the general network connection state.  One of:
