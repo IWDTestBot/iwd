@@ -187,6 +187,7 @@ struct netdev {
 	bool retry_auth : 1;
 	bool in_reassoc : 1;
 	bool privacy : 1;
+	bool cqm_poll_fallback : 1;
 };
 
 struct netdev_preauth_state {
@@ -206,6 +207,9 @@ static struct l_genl_family *nl80211;
 static struct l_queue *netdev_list;
 static struct watchlist netdev_watches;
 static bool mac_per_ssid;
+/* Threshold RSSI for roaming to trigger, configurable in main.conf */
+static int LOW_SIGNAL_THRESHOLD;
+static int LOW_SIGNAL_THRESHOLD_5GHZ;
 
 static unsigned int iov_ie_append(struct iovec *iov,
 					unsigned int n_iov, unsigned int c,
@@ -642,6 +646,46 @@ static void netdev_set_rssi_level_idx(struct netdev *netdev)
 	netdev->cur_rssi_level_idx = new_level;
 }
 
+static void netdev_cqm_event_rssi_value(struct netdev *netdev, int rssi_val)
+{
+	bool new_rssi_low;
+	uint8_t prev_rssi_level_idx = netdev->cur_rssi_level_idx;
+	int threshold = netdev->frequency > 4000 ? LOW_SIGNAL_THRESHOLD_5GHZ :
+						LOW_SIGNAL_THRESHOLD;
+
+	if (!netdev->connected)
+		return;
+
+	if (rssi_val > 127)
+		rssi_val = 127;
+	else if (rssi_val < -127)
+		rssi_val = -127;
+
+	netdev->cur_rssi = rssi_val;
+
+	if (!netdev->event_filter)
+		return;
+
+	new_rssi_low = rssi_val < threshold;
+	if (netdev->cur_rssi_low != new_rssi_low) {
+		int event = new_rssi_low ?
+			NETDEV_EVENT_RSSI_THRESHOLD_LOW :
+			NETDEV_EVENT_RSSI_THRESHOLD_HIGH;
+
+		netdev->cur_rssi_low = new_rssi_low;
+		netdev->event_filter(netdev, event, NULL, netdev->user_data);
+	}
+
+	if (!netdev->rssi_levels_num)
+		return;
+
+	netdev_set_rssi_level_idx(netdev);
+	if (netdev->cur_rssi_level_idx != prev_rssi_level_idx)
+		netdev->event_filter(netdev, NETDEV_EVENT_RSSI_LEVEL_NOTIFY,
+					&netdev->cur_rssi_level_idx,
+					netdev->user_data);
+}
+
 static void netdev_rssi_poll_cb(struct l_genl_msg *msg, void *user_data)
 {
 	struct netdev *netdev = user_data;
@@ -678,11 +722,16 @@ static void netdev_rssi_poll_cb(struct l_genl_msg *msg, void *user_data)
 	netdev->cur_rssi = info.cur_rssi;
 
 	/*
-	 * Note we don't have to handle LOW_SIGNAL_THRESHOLD here.  The
-	 * CQM single threshold RSSI monitoring should work even if the
-	 * kernel driver doesn't support multiple thresholds.  So the
-	 * polling only handles the client-supplied threshold list.
+	 * If the CMD_SET_CQM call failed RSSI polling was started. In this case
+	 * we should behave just like its a CQM event and check both the RSSI
+	 * level indexes and the HIGH/LOW thresholds.
 	 */
+	if (netdev->cqm_poll_fallback) {
+		netdev_cqm_event_rssi_value(netdev, info.cur_rssi);
+		goto done;
+	}
+
+	/* Otherwise just update the level notifications, CQM events work */
 	netdev_set_rssi_level_idx(netdev);
 	if (netdev->cur_rssi_level_idx != prev_rssi_level_idx)
 		netdev->event_filter(netdev, NETDEV_EVENT_RSSI_LEVEL_NOTIFY,
@@ -1027,6 +1076,9 @@ static void netdev_free(void *data)
 		netdev->get_link_cmd_id = 0;
 	}
 
+	if (netdev->rssi_poll_timeout)
+		l_timeout_remove(netdev->rssi_poll_timeout);
+
 	scan_wdev_remove(netdev->wdev_id);
 
 	watchlist_destroy(&netdev->station_watches);
@@ -1058,10 +1110,6 @@ struct netdev *netdev_find(int ifindex)
 	return l_queue_find(netdev_list, netdev_match, L_UINT_TO_PTR(ifindex));
 }
 
-/* Threshold RSSI for roaming to trigger, configurable in main.conf */
-static int LOW_SIGNAL_THRESHOLD;
-static int LOW_SIGNAL_THRESHOLD_5GHZ;
-
 static void netdev_cqm_event_rssi_threshold(struct netdev *netdev,
 						uint32_t rssi_event)
 {
@@ -1083,46 +1131,6 @@ static void netdev_cqm_event_rssi_threshold(struct netdev *netdev,
 		NETDEV_EVENT_RSSI_THRESHOLD_HIGH;
 
 	netdev->event_filter(netdev, event, NULL, netdev->user_data);
-}
-
-static void netdev_cqm_event_rssi_value(struct netdev *netdev, int rssi_val)
-{
-	bool new_rssi_low;
-	uint8_t prev_rssi_level_idx = netdev->cur_rssi_level_idx;
-	int threshold = netdev->frequency > 4000 ? LOW_SIGNAL_THRESHOLD_5GHZ :
-						LOW_SIGNAL_THRESHOLD;
-
-	if (!netdev->connected)
-		return;
-
-	if (rssi_val > 127)
-		rssi_val = 127;
-	else if (rssi_val < -127)
-		rssi_val = -127;
-
-	netdev->cur_rssi = rssi_val;
-
-	if (!netdev->event_filter)
-		return;
-
-	new_rssi_low = rssi_val < threshold;
-	if (netdev->cur_rssi_low != new_rssi_low) {
-		int event = new_rssi_low ?
-			NETDEV_EVENT_RSSI_THRESHOLD_LOW :
-			NETDEV_EVENT_RSSI_THRESHOLD_HIGH;
-
-		netdev->cur_rssi_low = new_rssi_low;
-		netdev->event_filter(netdev, event, NULL, netdev->user_data);
-	}
-
-	if (!netdev->rssi_levels_num)
-		return;
-
-	netdev_set_rssi_level_idx(netdev);
-	if (netdev->cur_rssi_level_idx != prev_rssi_level_idx)
-		netdev->event_filter(netdev, NETDEV_EVENT_RSSI_LEVEL_NOTIFY,
-					&netdev->cur_rssi_level_idx,
-					netdev->user_data);
 }
 
 static void netdev_cqm_event(struct l_genl_msg *msg, struct netdev *netdev)
@@ -3634,11 +3642,48 @@ static struct l_genl_msg *netdev_build_cmd_cqm_rssi_update(
 
 static void netdev_cmd_set_cqm_cb(struct l_genl_msg *msg, void *user_data)
 {
+	struct netdev *netdev = user_data;
 	int err = l_genl_msg_get_error(msg);
 	const char *ext_error;
 
-	if (err >= 0)
+	if (err >= 0) {
+		/*
+		 * Looking at some driver code it appears that the -ENOTSUP CQM
+		 * failure could be transient. Just in case, reset the fallback
+		 * flag if CQM happens to start working again.
+		 */
+		if (netdev->cqm_poll_fallback) {
+			l_debug("CMD_SET_CQM succeeded, stop polling fallback");
+
+			if (netdev->rssi_poll_timeout) {
+				l_timeout_remove(netdev->rssi_poll_timeout);
+				netdev->rssi_poll_timeout = NULL;
+			}
+
+			netdev->cqm_poll_fallback = false;
+		}
+
 		return;
+	}
+
+	/*
+	 * Some drivers enable beacon filtering but also use software CQM which
+	 * mac80211 detects and returns -ENOTSUP. There is no way to check this
+	 * ahead of time so if we see this start polling in order to get RSSI
+	 * updates.
+	 */
+	if (err == -ENOTSUP) {
+		l_debug("CMD_SET_CQM not supported, falling back to polling");
+		netdev->cqm_poll_fallback = true;
+
+		if (netdev->rssi_poll_timeout)
+			return;
+
+		netdev->rssi_poll_timeout = l_timeout_create(1,
+						netdev_rssi_poll, netdev, NULL);
+
+		return;
+	}
 
 	ext_error = l_genl_msg_get_extended_error(msg);
 	l_error("CMD_SET_CQM failed: %s",
@@ -3662,7 +3707,7 @@ static int netdev_cqm_rssi_update(struct netdev *netdev)
 		return -EINVAL;
 
 	if (!l_genl_family_send(nl80211, msg, netdev_cmd_set_cqm_cb,
-				NULL, NULL)) {
+				netdev, NULL)) {
 		l_genl_msg_unref(msg);
 		return -EIO;
 	}
@@ -5260,7 +5305,7 @@ int netdev_set_rssi_report_levels(struct netdev *netdev, const int8_t *levels,
 		return -EINVAL;
 
 	if (!l_genl_family_send(nl80211, cmd_set_cqm, netdev_cmd_set_cqm_cb,
-				NULL, NULL)) {
+				netdev, NULL)) {
 		l_genl_msg_unref(cmd_set_cqm);
 		return -EIO;
 	}
