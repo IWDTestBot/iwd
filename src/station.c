@@ -128,6 +128,8 @@ struct station {
 
 	uint64_t last_roam_scan;
 
+	unsigned int affinity_watch;
+
 	bool preparing_roam : 1;
 	bool roam_scan_full : 1;
 	bool signal_low : 1;
@@ -1660,6 +1662,13 @@ static void station_enter_state(struct station *station,
 		station_set_evict_nocarrier(station, true);
 		station_set_drop_neighbor_discovery(station, false);
 		station_set_drop_unicast_l2_multicast(station, false);
+
+		if (station->affinity_watch) {
+			l_dbus_remove_watch(dbus_get_bus(),
+						station->affinity_watch);
+			station->affinity_watch = 0;
+		}
+
 		break;
 	case STATION_STATE_DISCONNECTING:
 	case STATION_STATE_NETCONFIG:
@@ -1668,6 +1677,13 @@ static void station_enter_state(struct station *station,
 	case STATION_STATE_FT_ROAMING:
 	case STATION_STATE_FW_ROAMING:
 		station_set_evict_nocarrier(station, false);
+
+		if (station->affinity_watch) {
+			l_dbus_remove_watch(dbus_get_bus(),
+						station->affinity_watch);
+			station->affinity_watch = 0;
+		}
+
 		break;
 	}
 
@@ -4328,6 +4344,79 @@ static struct l_dbus_message *station_dbus_signal_agent_unregister(
 	return l_dbus_message_new_method_return(message);
 }
 
+static int station_change_affinity(struct station *station, bool lower)
+{
+	if (!station->connected_network)
+		return -ENOTCONN;
+
+	if (lower)
+		return netdev_lower_signal_threshold(station->netdev);
+	else
+		return netdev_raise_signal_threshold(station->netdev);
+}
+
+static void station_affinity_disconnected_cb(struct l_dbus *dbus,
+						void *user_data)
+{
+	struct station *station = user_data;
+
+	l_debug("client that set affinity has disconnected, setting default");
+
+	/* The client who set the affinity disconnected, raise the threshold */
+	station_change_affinity(station, false);
+
+	station->affinity_watch = 0;
+}
+
+static struct l_dbus_message *station_dbus_set_affinity(
+						struct l_dbus *dbus,
+						struct l_dbus_message *message,
+						void *user_data)
+{
+	struct station *station = user_data;
+	int ret;
+
+	if (station->affinity_watch) {
+		l_warn("A client already set the affinity!");
+		return dbus_error_already_exists(message);
+	}
+
+	ret = station_change_affinity(station, true);
+	if (ret < 0)
+		return dbus_error_from_errno(ret, message);
+
+	station->affinity_watch = l_dbus_add_disconnect_watch(dbus,
+					l_dbus_message_get_sender(message),
+					station_affinity_disconnected_cb,
+					station,
+					NULL);
+
+	return l_dbus_message_new_method_return(message);
+}
+
+static struct l_dbus_message *station_dbus_unset_affinity(
+						struct l_dbus *dbus,
+						struct l_dbus_message *message,
+						void *user_data)
+{
+	struct station *station = user_data;
+	int ret;
+
+	if (!station->affinity_watch) {
+		l_warn("A client has not set the affinity!");
+		return dbus_error_not_configured(message);
+	}
+
+	ret = station_change_affinity(station, false);
+	if (ret < 0)
+		return dbus_error_from_errno(ret, message);
+
+	l_dbus_remove_watch(dbus, station->affinity_watch);
+	station->affinity_watch = 0;
+
+	return l_dbus_message_new_method_return(message);
+}
+
 static bool station_property_get_connected_network(struct l_dbus *dbus,
 					struct l_dbus_message *message,
 					struct l_dbus_message_builder *builder,
@@ -4722,6 +4811,9 @@ static void station_free(struct station *station)
 
 	l_queue_destroy(station->roam_bss_list, l_free);
 
+	if (station->affinity_watch)
+		l_dbus_remove_watch(dbus_get_bus(), station->affinity_watch);
+
 	l_free(station);
 }
 
@@ -4747,6 +4839,10 @@ static void station_setup_interface(struct l_dbus_interface *interface)
 	l_dbus_interface_method(interface, "UnregisterSignalLevelAgent", 0,
 				station_dbus_signal_agent_unregister,
 				"", "o", "path");
+	l_dbus_interface_method(interface, "SetConnectedBssAffinity", 0,
+				station_dbus_set_affinity, "", "");
+	l_dbus_interface_method(interface, "UnsetConnectedBssAffinity", 0,
+				station_dbus_unset_affinity, "", "");
 
 	l_dbus_interface_property(interface, "ConnectedNetwork", 0, "o",
 					station_property_get_connected_network,
