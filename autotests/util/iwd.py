@@ -940,6 +940,16 @@ class Device(IWDDBusAbstract):
 
         return ret
 
+    def set_connected_bss_affinity(self):
+        self._station.SetConnectedBssAffinity(reply_handler=self._success,
+                                        error_handler=self._failure)
+        self._wait_for_async_op()
+
+    def unset_connected_bss_affinity(self):
+        self._station.UnsetConnectedBssAffinity(reply_handler=self._success,
+                                        error_handler=self._failure)
+        self._wait_for_async_op()
+
     def __str__(self, prefix = ''):
         s = prefix + 'Device: ' + self.device_path + '\n'\
                + prefix + '\tName:\t\t' + self.name + '\n'\
