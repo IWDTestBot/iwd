@@ -3776,7 +3776,8 @@ static int netdev_handshake_state_setup_connection_type(
 	case IE_RSN_AKM_SUITE_FT_OVER_FILS_SHA256:
 	case IE_RSN_AKM_SUITE_FT_OVER_FILS_SHA384:
 		/* FILS has no offload in any upstream driver */
-		if (softmac)
+		if (softmac && wiphy_has_ext_feature(wiphy,
+						NL80211_EXT_FEATURE_FILS_STA))
 			goto softmac;
 
 		return -ENOTSUP;
@@ -3826,6 +3827,20 @@ static void netdev_connect_common(struct netdev *netdev,
 	if (!is_rsn)
 		goto build_cmd_connect;
 
+	/* For OWE, always use the CMD_CONNECT path */
+	if (IE_AKM_IS_OWE(hs->akm_suite)) {
+		netdev->owe_sm = owe_sm_new(hs);
+		goto build_cmd_connect;
+	}
+
+	if (IE_AKM_IS_FILS(hs->akm_suite)) {
+		netdev->ap = fils_sm_new(hs, netdev_fils_tx_authenticate,
+						netdev_fils_tx_associate,
+						netdev_get_oci,
+						netdev);
+		goto done;
+	}
+
 	if (nhs->type != CONNECTION_TYPE_SOFTMAC)
 		goto build_cmd_connect;
 
@@ -3848,19 +3863,6 @@ static void netdev_connect_common(struct netdev *netdev,
 		}
 
 		break;
-	case IE_RSN_AKM_SUITE_OWE:
-		netdev->owe_sm = owe_sm_new(hs);
-
-		goto build_cmd_connect;
-	case IE_RSN_AKM_SUITE_FILS_SHA256:
-	case IE_RSN_AKM_SUITE_FILS_SHA384:
-	case IE_RSN_AKM_SUITE_FT_OVER_FILS_SHA256:
-	case IE_RSN_AKM_SUITE_FT_OVER_FILS_SHA384:
-		netdev->ap = fils_sm_new(hs, netdev_fils_tx_authenticate,
-						netdev_fils_tx_associate,
-						netdev_get_oci,
-						netdev);
-		break;
 	default:
 build_cmd_connect:
 		cmd_connect = netdev_build_cmd_connect(netdev, hs, prev_bssid);
@@ -3873,6 +3875,7 @@ build_cmd_connect:
 		}
 	}
 
+done:
 	netdev->connect_cmd = cmd_connect;
 	netdev->event_filter = event_filter;
 	netdev->connect_cb = cb;

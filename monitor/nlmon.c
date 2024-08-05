@@ -7597,8 +7597,15 @@ static void flags_str(const struct flag_names *table,
 	pos += sprintf(str + pos, "]");
 }
 
+static struct attr_entry link_info_data_entry[] = {
+	{ IFLA_RMNET_MUX_ID,	"RMNet Mux Id",		ATTR_U16 },
+	{ },
+};
+
 static struct attr_entry link_info_entry[] = {
 	{ IFLA_INFO_KIND,	"Kind",		ATTR_STRING },
+	{ IFLA_INFO_DATA,	"Info Data",
+				ATTR_NESTED, { link_info_data_entry } },
 	{ },
 };
 
@@ -7755,7 +7762,7 @@ static void print_rtnl_attributes(int indent, const struct attr_entry *table,
 		return;
 
 	for (attr = rt_attr; RTA_OK(attr, len); attr = RTA_NEXT(attr, len)) {
-		uint16_t rta_type = attr->rta_type;
+		uint16_t rta_type = attr->rta_type & NLA_TYPE_MASK;
 		enum attr_type type = ATTR_UNSPEC;
 		attr_func_t function;
 		const struct attr_entry *nested;
