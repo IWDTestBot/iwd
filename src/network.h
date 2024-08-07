@@ -69,6 +69,8 @@ int network_autoconnect(struct network *network, struct scan_bss *bss);
 void network_connect_failed(struct network *network, bool in_handshake);
 bool network_bss_add(struct network *network, struct scan_bss *bss);
 bool network_bss_update(struct network *network, struct scan_bss *bss);
+const char *network_bss_get_path(struct network *network,
+						struct scan_bss *bss);
 bool network_bss_list_isempty(struct network *network);
 void network_bss_list_prune(struct network *network, struct l_queue *new_list);
 

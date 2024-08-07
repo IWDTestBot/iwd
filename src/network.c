@@ -1136,13 +1136,64 @@ static bool match_addr(const void *a, const void *b)
 	return memcmp(bss->addr, b, 6) == 0;
 }
 
+const char *network_bss_get_path(struct network *network,
+						struct scan_bss *bss)
+{
+	static char path[256];
+
+	snprintf(path, sizeof(path), "%s/%02x%02x%02x%02x%02x%02x",
+			network->object_path, MAC_STR(bss->addr));
+
+	return path;
+}
+
+static bool network_unregister_bss(void *a, void *user_data)
+{
+	struct scan_bss *bss = a;
+	struct network *network = user_data;
+
+	l_dbus_unregister_object(dbus_get_bus(),
+					network_bss_get_path(network, bss));
+
+	return true;
+}
+
+static bool network_register_bss(struct network *network, struct scan_bss *bss,
+					bool update)
+{
+	const char *path = network_bss_get_path(network, bss);
+
+	if (update)
+		return l_dbus_object_set_data(dbus_get_bus(),
+					network_bss_get_path(network, bss),
+					IWD_BSS_INTERFACE, bss);
+
+	if (!l_dbus_object_add_interface(dbus_get_bus(), path,
+						IWD_BSS_INTERFACE, bss))
+		return false;
+
+	if (!l_dbus_object_add_interface(dbus_get_bus(), path,
+					L_DBUS_INTERFACE_PROPERTIES, bss))
+		return false;
+
+	return true;
+}
+
 bool network_bss_add(struct network *network, struct scan_bss *bss)
 {
-	l_queue_remove_if(network->bss_list, match_addr, bss->addr);
+	bool removed = l_queue_remove_if(network->bss_list,
+					match_addr, bss->addr) != NULL;
 
-	if (!l_queue_insert(network->bss_list, bss, scan_bss_rank_compare,
-									NULL))
+	if (!l_queue_insert(network->bss_list, bss,
+				scan_bss_rank_compare, NULL)) {
+		/* This is essentially impossible... */
+		if (L_WARN_ON(removed))
+			network_unregister_bss(bss, network);
+
 		return false;
+	}
+
+	L_WARN_ON(!network_register_bss(network, bss, removed));
 
 	/* Done if BSS is not HS20 or we already have network_info set */
 	if (!bss->hs20_capable)
@@ -1194,8 +1245,10 @@ static bool scan_bss_prune_missing(void *a, void *user_data)
 	struct scan_bss *bss = a;
 	struct network_prune_data *data = user_data;
 
-	if (!l_queue_find(data->new_list, match_addr, bss->addr))
+	if (!l_queue_find(data->new_list, match_addr, bss->addr)) {
+		network_unregister_bss(bss, data->network);
 		return true;
+	}
 
 	return false;
 }
@@ -1213,7 +1266,12 @@ void network_bss_list_prune(struct network *network, struct l_queue *new_list)
 
 struct scan_bss *network_bss_list_pop(struct network *network)
 {
-	return l_queue_pop_head(network->bss_list);
+	struct scan_bss *bss = l_queue_pop_head(network->bss_list);
+
+	if (bss)
+		network_unregister_bss(bss, network);
+
+	return bss;
 }
 
 struct scan_bss *network_bss_find_by_addr(struct network *network,
@@ -1931,6 +1989,8 @@ void network_remove(struct network *network, int reason)
 	if (network->info)
 		network->info->seen_count -= 1;
 
+	l_queue_foreach_remove(network->bss_list,
+				network_unregister_bss, network);
 	l_queue_destroy(network->bss_list, NULL);
 	l_queue_destroy(network->blacklist, NULL);
 
@@ -2178,12 +2238,35 @@ static void setup_network_interface(struct l_dbus_interface *interface)
 				network_property_get_known_network, NULL);
 }
 
+static bool network_bss_property_get_bssid(struct l_dbus *dbus,
+					struct l_dbus_message *message,
+					struct l_dbus_message_builder *builder,
+					void *user_data)
+{
+	struct scan_bss *bss = user_data;
+
+	l_dbus_message_builder_append_basic(builder, 's',
+					util_address_to_string(bss->addr));
+	return true;
+}
+
+static void setup_bss_interface(struct l_dbus_interface *interface)
+{
+	l_dbus_interface_property(interface, "Bssid", 0, "s",
+					network_bss_property_get_bssid, NULL);
+}
+
 static int network_init(void)
 {
 	if (!l_dbus_register_interface(dbus_get_bus(), IWD_NETWORK_INTERFACE,
 					setup_network_interface, NULL, false))
 		l_error("Unable to register %s interface",
 						IWD_NETWORK_INTERFACE);
+
+	if (!l_dbus_register_interface(dbus_get_bus(), IWD_BSS_INTERFACE,
+					setup_bss_interface, NULL, false))
+		l_error("Unable to register %s interface",
+						IWD_BSS_INTERFACE);
 
 	known_networks_watch =
 		known_networks_watch_add(known_networks_changed, NULL, NULL);
@@ -2202,6 +2285,7 @@ static void network_exit(void)
 	event_watch = 0;
 
 	l_dbus_unregister_interface(dbus_get_bus(), IWD_NETWORK_INTERFACE);
+	l_dbus_unregister_interface(dbus_get_bus(), IWD_BSS_INTERFACE);
 }
 
 IWD_MODULE(network, network_init, network_exit)
