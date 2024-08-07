@@ -943,7 +943,7 @@ void station_set_scan_results(struct station *station,
 	l_queue_foreach_remove(new_bss_list, bss_free_if_ssid_not_utf8, NULL);
 
 	while ((network = l_queue_pop_head(station->networks_sorted)))
-		network_bss_list_clear(network);
+		network_bss_list_prune(network, new_bss_list);
 
 	l_queue_clear(station->hidden_bss_list_sorted, NULL);
 
@@ -4363,6 +4363,23 @@ static bool station_property_get_connected_network(struct l_dbus *dbus,
 	return true;
 }
 
+static bool station_property_get_connected_bss(struct l_dbus *dbus,
+					struct l_dbus_message *message,
+					struct l_dbus_message_builder *builder,
+					void *user_data)
+{
+	struct station *station = user_data;
+
+	if (!station->connected_network)
+		return false;
+
+	l_dbus_message_builder_append_basic(builder, 'o',
+			network_bss_get_path(station->connected_network,
+						station->connected_bss));
+
+	return true;
+}
+
 static bool station_property_get_scanning(struct l_dbus *dbus,
 					struct l_dbus_message *message,
 					struct l_dbus_message_builder *builder,
@@ -4769,6 +4786,9 @@ static void station_setup_interface(struct l_dbus_interface *interface)
 
 	l_dbus_interface_property(interface, "ConnectedNetwork", 0, "o",
 					station_property_get_connected_network,
+					NULL);
+	l_dbus_interface_property(interface, "ConnectedBss", 0, "o",
+					station_property_get_connected_bss,
 					NULL);
 	l_dbus_interface_property(interface, "Scanning", 0, "b",
 					station_property_get_scanning, NULL);
