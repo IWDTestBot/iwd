@@ -1184,12 +1184,6 @@ bool network_bss_list_isempty(struct network *network)
 	return l_queue_isempty(network->bss_list);
 }
 
-void network_bss_list_clear(struct network *network)
-{
-	l_queue_destroy(network->bss_list, NULL);
-	network->bss_list = l_queue_new();
-}
-
 struct network_prune_data {
 	struct network *network;
 	struct l_queue *new_list;
