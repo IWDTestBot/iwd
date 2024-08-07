@@ -1129,8 +1129,17 @@ bool network_update_known_frequencies(struct network *network)
 	return true;
 }
 
+static bool match_addr(const void *a, const void *b)
+{
+	const struct scan_bss *bss = a;
+
+	return memcmp(bss->addr, b, 6) == 0;
+}
+
 bool network_bss_add(struct network *network, struct scan_bss *bss)
 {
+	l_queue_remove_if(network->bss_list, match_addr, bss->addr);
+
 	if (!l_queue_insert(network->bss_list, bss, scan_bss_rank_compare,
 									NULL))
 		return false;
@@ -1148,13 +1157,6 @@ bool network_bss_add(struct network *network, struct scan_bss *bss)
 	known_networks_foreach(match_hotspot_network, network);
 
 	return true;
-}
-
-static bool match_addr(const void *a, const void *b)
-{
-	const struct scan_bss *bss = a;
-
-	return memcmp(bss->addr, b, 6) == 0;
 }
 
 /*
@@ -1186,6 +1188,33 @@ void network_bss_list_clear(struct network *network)
 {
 	l_queue_destroy(network->bss_list, NULL);
 	network->bss_list = l_queue_new();
+}
+
+struct network_prune_data {
+	struct network *network;
+	struct l_queue *new_list;
+};
+
+static bool scan_bss_prune_missing(void *a, void *user_data)
+{
+	struct scan_bss *bss = a;
+	struct network_prune_data *data = user_data;
+
+	if (!l_queue_find(data->new_list, match_addr, bss->addr))
+		return true;
+
+	return false;
+}
+
+void network_bss_list_prune(struct network *network, struct l_queue *new_list)
+{
+	struct network_prune_data data;
+
+	data.network = network;
+	data.new_list = new_list;
+
+	l_queue_foreach_remove(network->bss_list,
+				scan_bss_prune_missing, &data);
 }
 
 struct scan_bss *network_bss_list_pop(struct network *network)
