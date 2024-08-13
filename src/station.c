@@ -1682,6 +1682,11 @@ static void station_enter_state(struct station *station,
 		if (station->connected_bss->hs20_dgaf_disable)
 			station_set_drop_unicast_l2_multicast(station, true);
 
+		if (l_strv_contains(station->affinities,
+				network_bss_get_path(station->connected_network,
+						station->connected_bss)))
+			netdev_lower_signal_threshold(station->netdev);
+
 		break;
 	case STATION_STATE_DISCONNECTED:
 		periodic_scan_stop(station);
@@ -2673,6 +2678,23 @@ static void station_update_roam_bss(struct station *station,
 		scan_bss_free(old);
 }
 
+static bool station_apply_bss_affinity(struct station *station,
+						struct scan_bss *bss)
+{
+	struct network *network = station->connected_network;
+	const char *path = network_bss_get_path(network, bss);
+
+	/*
+	 * Even if the BSS has the affinity set, don't apply the factor if its
+	 * RSSI is below the critical threshold.
+	 */
+	if (bss->signal_strength / 100 <
+			netdev_get_critical_signal_threshold(station->netdev))
+		return false;
+
+	return l_strv_contains(station->affinities, path);
+}
+
 static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 					const struct scan_freq_set *freqs,
 					void *userdata)
@@ -2684,6 +2706,7 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 	struct scan_bss *bss;
 	double cur_bss_rank = 0.0;
 	static const double RANK_FT_FACTOR = 1.3;
+	static const double RANK_AFFINITY_FACTOR = 1.7;
 	uint16_t mdid;
 	enum security orig_security, security;
 
@@ -2715,6 +2738,9 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 
 		if (hs->mde && bss->mde_present && l_get_le16(bss->mde) == mdid)
 			cur_bss_rank *= RANK_FT_FACTOR;
+
+		if (station_apply_bss_affinity(station, bss))
+			cur_bss_rank *= RANK_AFFINITY_FACTOR;
 	}
 
 	/*
@@ -2764,6 +2790,9 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 
 		if (hs->mde && bss->mde_present && l_get_le16(bss->mde) == mdid)
 			rank *= RANK_FT_FACTOR;
+
+		if (station_apply_bss_affinity(station, bss))
+			rank *= RANK_AFFINITY_FACTOR;
 
 		if (rank <= cur_bss_rank)
 			goto next;
@@ -4506,6 +4535,9 @@ static void station_affinity_disconnected_cb(struct l_dbus *dbus,
 	station->affinity_watch = 0;
 
 	l_debug("client that set affinity has disconnected");
+
+	/* The client who set the affinity disconnected, raise the threshold */
+	netdev_raise_signal_threshold(station->netdev);
 }
 
 static void station_affinity_watch_destroy(void *user_data)
@@ -4531,6 +4563,8 @@ static struct l_dbus_message *station_property_set_affinities(
 	const char *sender = l_dbus_message_get_sender(message);
 	const char *path;
 	char **new_affinities;
+	const char *connected_path;
+	bool lower_threshold = false;
 
 	if (!station->connected_network)
 		return dbus_error_not_connected(message);
@@ -4550,6 +4584,8 @@ static struct l_dbus_message *station_property_set_affinities(
 	if (!l_dbus_message_iter_get_variant(new_value, "ao", &array))
 		return dbus_error_invalid_args(message);
 
+	connected_path = network_bss_get_path(station->connected_network,
+						station->connected_bss);
 	new_affinities = l_strv_new();
 
 	while (l_dbus_message_iter_next_entry(&array, &path)) {
@@ -4566,6 +4602,9 @@ static struct l_dbus_message *station_property_set_affinities(
 			return dbus_error_invalid_args(message);
 		}
 
+		if (!strcmp(path, connected_path))
+			lower_threshold = true;
+
 		new_affinities = l_strv_append(new_affinities, path);
 	}
 
@@ -4574,6 +4613,17 @@ static struct l_dbus_message *station_property_set_affinities(
 
 	l_dbus_property_changed(dbus, netdev_get_path(station->netdev),
 				IWD_STATION_INTERFACE, "Affinities");
+
+	/*
+	 * If affinity was set to the current BSS, lower the roam threshold. If
+	 * the connected BSS was not in the list raise the signal threshold.
+	 * The threshold may already be raised, in which case netdev will detect
+	 * this and do nothing.
+	 */
+	if (lower_threshold)
+		netdev_lower_signal_threshold(station->netdev);
+	else
+		netdev_raise_signal_threshold(station->netdev);
 
 	complete(dbus, message, NULL);
 
