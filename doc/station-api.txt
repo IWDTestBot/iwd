@@ -170,6 +170,25 @@ Properties	string State [readonly]
 			BSS the device is currently connected to or to which
 			a connection is in progress.
 
+		ao Affinities [optional]
+
+			Array of net.connman.iwd.BasicServiceSet object paths
+			that will be treated with higher affinity compared to
+			other BSS's. The affinity comes into play in two
+			scenarios:
+
+			1. If the connected BSS is in the Affinities list the
+			   roaming threshold will be lowered to loosly lock IWD
+			   to its current BSS. This prevents IWD from roaming
+			   unless the signal drops below the critical threshold
+			   (i.e. main.conf: [General].CriticalRoamThreshold).
+
+			2. A ranking factor will be applied to all BSS in the
+			   Affinities list while choosing a roaming candidate.
+			   The only exception here is if the BSS's signal
+			   is below the critical roaming threshold.
+			   (i.e. main.conf: [General].CriticalRoamTreshold)
+
 SignalLevelAgent hierarchy
 ==========================
 
