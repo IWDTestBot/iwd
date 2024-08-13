@@ -128,6 +128,10 @@ struct station {
 
 	uint64_t last_roam_scan;
 
+	char **affinities;
+	unsigned int affinity_watch;
+	char *affinity_client;
+
 	bool preparing_roam : 1;
 	bool roam_scan_full : 1;
 	bool signal_low : 1;
@@ -1639,6 +1643,8 @@ static void station_enter_state(struct station *station,
 
 		l_dbus_property_changed(dbus, netdev_get_path(station->netdev),
 				IWD_STATION_INTERFACE, "ConnectedNetwork");
+		l_dbus_property_changed(dbus, netdev_get_path(station->netdev),
+				IWD_STATION_INTERFACE, "ConnectedAccessPoint");
 		l_dbus_property_changed(dbus,
 				network_get_path(station->connected_network),
 				IWD_NETWORK_INTERFACE, "Connected");
@@ -1676,6 +1682,11 @@ static void station_enter_state(struct station *station,
 		if (station->connected_bss->hs20_dgaf_disable)
 			station_set_drop_unicast_l2_multicast(station, true);
 
+		if (l_strv_contains(station->affinities,
+				network_bss_get_path(station->connected_network,
+						station->connected_bss)))
+			netdev_lower_signal_threshold(station->netdev);
+
 		break;
 	case STATION_STATE_DISCONNECTED:
 		periodic_scan_stop(station);
@@ -1683,6 +1694,13 @@ static void station_enter_state(struct station *station,
 		station_set_evict_nocarrier(station, true);
 		station_set_drop_neighbor_discovery(station, false);
 		station_set_drop_unicast_l2_multicast(station, false);
+
+		if (station->affinity_watch) {
+			l_dbus_remove_watch(dbus_get_bus(),
+						station->affinity_watch);
+			station->affinity_watch = 0;
+		}
+
 		break;
 	case STATION_STATE_DISCONNECTING:
 	case STATION_STATE_NETCONFIG:
@@ -1810,6 +1828,8 @@ static void station_reset_connection_state(struct station *station)
 
 	l_dbus_property_changed(dbus, netdev_get_path(station->netdev),
 				IWD_STATION_INTERFACE, "ConnectedNetwork");
+	l_dbus_property_changed(dbus, netdev_get_path(station->netdev),
+				IWD_STATION_INTERFACE, "ConnectedAccessPoint");
 	l_dbus_property_changed(dbus, network_get_path(network),
 				IWD_NETWORK_INTERFACE, "Connected");
 	l_dbus_object_remove_interface(dbus, netdev_get_path(station->netdev),
@@ -2658,6 +2678,23 @@ static void station_update_roam_bss(struct station *station,
 		scan_bss_free(old);
 }
 
+static bool station_apply_bss_affinity(struct station *station,
+						struct scan_bss *bss)
+{
+	struct network *network = station->connected_network;
+	const char *path = network_bss_get_path(network, bss);
+
+	/*
+	 * Even if the BSS has the affinity set, don't apply the factor if its
+	 * RSSI is below the critical threshold.
+	 */
+	if (bss->signal_strength / 100 <
+			netdev_get_critical_signal_threshold(station->netdev))
+		return false;
+
+	return l_strv_contains(station->affinities, path);
+}
+
 static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 					const struct scan_freq_set *freqs,
 					void *userdata)
@@ -2669,6 +2706,7 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 	struct scan_bss *bss;
 	double cur_bss_rank = 0.0;
 	static const double RANK_FT_FACTOR = 1.3;
+	static const double RANK_AFFINITY_FACTOR = 1.7;
 	uint16_t mdid;
 	enum security orig_security, security;
 
@@ -2700,6 +2738,9 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 
 		if (hs->mde && bss->mde_present && l_get_le16(bss->mde) == mdid)
 			cur_bss_rank *= RANK_FT_FACTOR;
+
+		if (station_apply_bss_affinity(station, bss))
+			cur_bss_rank *= RANK_AFFINITY_FACTOR;
 	}
 
 	/*
@@ -2749,6 +2790,9 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 
 		if (hs->mde && bss->mde_present && l_get_le16(bss->mde) == mdid)
 			rank *= RANK_FT_FACTOR;
+
+		if (station_apply_bss_affinity(station, bss))
+			rank *= RANK_AFFINITY_FACTOR;
 
 		if (rank <= cur_bss_rank)
 			goto next;
@@ -4459,6 +4503,133 @@ static bool station_property_get_state(struct l_dbus *dbus,
 	return true;
 }
 
+static bool station_property_get_affinities(struct l_dbus *dbus,
+					struct l_dbus_message *message,
+					struct l_dbus_message_builder *builder,
+					void *user_data)
+{
+	struct station *station = user_data;
+	char **path = station->affinities;
+
+	if (!station->connected_network)
+		return false;
+
+	l_dbus_message_builder_enter_array(builder, "o");
+
+	while (path && *path) {
+		l_dbus_message_builder_append_basic(builder, 'o', *path);
+		path++;
+	}
+
+	l_dbus_message_builder_leave_array(builder);
+
+	return true;
+}
+
+static void station_affinity_disconnected_cb(struct l_dbus *dbus,
+						void *user_data)
+{
+	struct station *station = user_data;
+
+	l_dbus_remove_watch(dbus_get_bus(), station->affinity_watch);
+	station->affinity_watch = 0;
+
+	l_debug("client that set affinity has disconnected");
+
+	/* The client who set the affinity disconnected, raise the threshold */
+	netdev_raise_signal_threshold(station->netdev);
+}
+
+static void station_affinity_watch_destroy(void *user_data)
+{
+	struct station *station = user_data;
+
+	l_free(station->affinity_client);
+	station->affinity_client = NULL;
+
+	l_strv_free(station->affinities);
+	station->affinities = NULL;
+}
+
+static struct l_dbus_message *station_property_set_affinities(
+					struct l_dbus *dbus,
+					struct l_dbus_message *message,
+					struct l_dbus_message_iter *new_value,
+					l_dbus_property_complete_cb_t complete,
+					void *user_data)
+{
+	struct station *station = user_data;
+	struct l_dbus_message_iter array;
+	const char *sender = l_dbus_message_get_sender(message);
+	const char *path;
+	char **new_affinities;
+	const char *connected_path;
+	bool lower_threshold = false;
+
+	if (!station->connected_network)
+		return dbus_error_not_connected(message);
+
+	if (!station->affinity_watch) {
+		station->affinity_client = l_strdup(sender);
+		station->affinity_watch = l_dbus_add_disconnect_watch(dbus,
+					sender,
+					station_affinity_disconnected_cb,
+					station,
+					station_affinity_watch_destroy);
+	} else if (strcmp(station->affinity_client, sender)) {
+		l_warn("Only one client may manage Affinities property");
+		return dbus_error_not_available(message);
+	}
+
+	if (!l_dbus_message_iter_get_variant(new_value, "ao", &array))
+		return dbus_error_invalid_args(message);
+
+	connected_path = network_bss_get_path(station->connected_network,
+						station->connected_bss);
+	new_affinities = l_strv_new();
+
+	while (l_dbus_message_iter_next_entry(&array, &path)) {
+		const char *p = network_get_path(station->connected_network);
+
+		/*
+		 * It can't be assumed that the specific BSS has been seen, but
+		 * at least validate the device/network portion matches the
+		 * connected network.
+		 */
+		if (strncmp(p, path, strlen(p))) {
+			l_warn("Can't set affinity to BSS (%s)", path);
+			l_strv_free(new_affinities);
+			return dbus_error_invalid_args(message);
+		}
+
+		if (!strcmp(path, connected_path))
+			lower_threshold = true;
+
+		new_affinities = l_strv_append(new_affinities, path);
+	}
+
+	l_strv_free(station->affinities);
+	station->affinities = new_affinities;
+
+	l_dbus_property_changed(dbus, netdev_get_path(station->netdev),
+				IWD_STATION_INTERFACE, "Affinities");
+
+	/*
+	 * If affinity was set to the current BSS, lower the roam threshold. If
+	 * the connected BSS was not in the list raise the signal threshold.
+	 * The threshold may already be raised, in which case netdev will detect
+	 * this and do nothing.
+	 */
+	if (lower_threshold)
+		netdev_lower_signal_threshold(station->netdev);
+	else
+		netdev_raise_signal_threshold(station->netdev);
+
+	complete(dbus, message, NULL);
+
+	return NULL;
+}
+
 void station_foreach(station_foreach_func_t func, void *user_data)
 {
 	const struct l_queue_entry *entry;
@@ -4689,6 +4860,7 @@ static struct station *station_create(struct netdev *netdev)
 	station_set_autoconnect(station, autoconnect);
 
 	station->roam_bss_list = l_queue_new();
+	station->affinities = l_strv_new();
 
 	return station;
 }
@@ -4781,6 +4953,9 @@ static void station_free(struct station *station)
 
 	l_queue_destroy(station->roam_bss_list, l_free);
 
+	if (station->affinity_watch)
+		l_dbus_remove_watch(dbus_get_bus(), station->affinity_watch);
+
 	l_free(station);
 }
 
@@ -4817,6 +4992,9 @@ static void station_setup_interface(struct l_dbus_interface *interface)
 					station_property_get_scanning, NULL);
 	l_dbus_interface_property(interface, "State", 0, "s",
 					station_property_get_state, NULL);
+	l_dbus_interface_property(interface, "Affinities", 0, "ao",
+					station_property_get_affinities,
+					station_property_set_affinities);
 }
 
 static void station_destroy_interface(void *user_data)
