@@ -3713,6 +3713,12 @@ int netdev_raise_signal_threshold(struct netdev *netdev)
 						LOW_SIGNAL_THRESHOLD_5GHZ);
 }
 
+int netdev_get_critical_signal_threshold(struct netdev *netdev)
+{
+	return netdev->frequency > 4000 ? CRITICAL_SIGNAL_THRESHOLD_5GHZ :
+					CRITICAL_SIGNAL_THRESHOLD;
+}
+
 static bool netdev_connection_work_ready(struct wiphy_radio_work_item *item)
 {
 	struct netdev *netdev = l_container_of(item, struct netdev, work);
