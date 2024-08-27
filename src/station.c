@@ -2221,7 +2221,7 @@ static void station_roamed(struct station *station)
 	 * Schedule another roaming attempt in case the signal continues to
 	 * remain low. A subsequent high signal notification will cancel it.
 	 */
-	if (station->signal_low)
+	if (station->signal_low && L_WARN_ON(!station->roam_trigger_timeout))
 		station_roam_timeout_rearm(station, roam_retry_interval);
 
 	if (station->netconfig)
@@ -2260,7 +2260,7 @@ static void station_roam_retry(struct station *station)
 	station->roam_scan_full = false;
 	station->ap_directed_roaming = false;
 
-	if (station->signal_low)
+	if (station->signal_low && !station->roam_trigger_timeout)
 		station_roam_timeout_rearm(station, roam_retry_interval);
 }
 
@@ -3200,6 +3200,9 @@ static void station_low_rssi(struct station *station)
 	station->signal_low = true;
 
 	if (station_cannot_roam(station))
+		return;
+
+	if (station->roam_trigger_timeout)
 		return;
 
 	/* Set a 5-second initial timeout */
