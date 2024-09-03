@@ -2056,7 +2056,7 @@ static void get_survey_done(void *user_data)
 
 	sc->get_survey_cmd_id = 0;
 
-	if (!results->sr->canceled)
+	if (results->sr && !results->sr->canceled)
 		get_results(results);
 	else
 		get_scan_done(user_data);
