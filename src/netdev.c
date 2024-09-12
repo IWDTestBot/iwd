@@ -3032,6 +3032,11 @@ static void netdev_authenticate_event(struct l_genl_msg *msg,
 		}
 	}
 
+	if (!netdev->sm) {
+		netdev->sm = eapol_sm_new(netdev->handshake);
+		eapol_register(netdev->sm);
+	}
+
 auth_error:
 	netdev_connect_failed(netdev, NETDEV_RESULT_AUTHENTICATION_FAILED,
 				status_code);
