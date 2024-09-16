@@ -332,7 +332,7 @@ busconfig.dtd\">
 '''
 
 class Namespace:
-	def __init__(self, args, name, radios):
+	def __init__(self, args, name, radios, hwsim_register=False):
 		self.dbus_address = None
 		self.name = name
 		self.radios = radios
@@ -343,6 +343,7 @@ class Namespace:
 			r.set_namespace(self)
 
 		self.start_dbus()
+		self.start_hwsim(register=hwsim_register)
 
 	def reset(self):
 		self._bus = None
@@ -470,6 +471,16 @@ class Namespace:
 
 		return proc
 
+	def start_hwsim(self, register=False):
+		args = ['hwsim']
+
+		if register:
+			# register hwsim as medium
+			args.extend(['--no-register'])
+
+		proc = self.start_process(args)
+		proc.wait_for_service(self, 'net.connman.hwsim', 20)
+
 	@staticmethod
 	def non_block_wait(func, timeout, *args, exception=True):
 		'''
@@ -530,7 +541,8 @@ class Namespace:
 		ret = 'Namespace: %s\n' % self.name
 		ret += 'Processes:\n'
 		for p in Process.get_all():
-			ret += '\t%s' % str(p)
+			if p.namespace == self.name:
+				ret += '\t%s' % str(p)
 
 		ret += 'Radios:\n'
 		if len(self.radios) > 0:
