@@ -319,3 +319,93 @@ Methods		void Release() [noreply]
 
 			Possible Errors:	[service].Error.Canceled
 						[service].Error.NotFound
+
+		string GenerateCertificateSigningRequest(void)
+
+			This is used by enrollees to request client certificates
+			for the network. When called the agent should generate a
+			CSR containing any fields required for the network (this
+			is all dependent on the network/infrastructure). The
+			agent should then return the CSR from this method,
+			base64-encoded in PKCS10 format.
+
+			To support enrolling to enterprise networks through
+			device provisioning an agent must implement this method.
+
+		void GenerateEnterpriseProfile(string ssid, dict creds)
+
+			This is used by enrollees being provisioned for an
+			802.1x network. This is the last step after the DPP
+			protocol has completed and IWD obtained client
+			certificates (following the CSR).
+
+			Requests that the agent generate an enterprise network
+			profile for the SSID, given some credentials obtained
+			via DPP. The contents of the credentials dictionary are
+			parsed from the DPP configuration response:
+
+			"EAPMethod" :	String value of the EAP method being
+					configured. Note: DPP only supports
+					EAP-TLS currently.
+
+			"ClientCert" :	A base64 DER-encoded certificate (or
+					list) for the client. This should be in
+					PKCS7 format. This is a mandatory
+					value.
+
+			"CACert" :	A base64 DER-encoded CA Certificate
+					(or list). This should be in PKCS7
+					format. This is an optional value.
+
+			"ServerDomainMask" :	Domain name contained in the
+						servers certificate, used to
+						validate the authenticity of the
+						server. This is an optional
+						value.
+
+			The agent is responsible for generating the enterprise
+			profile and placing it in IWD's profile directory.
+
+			To support enrolling to enterprise networks through
+			device provisioning an agent must implement this method.
+
+		a{sv} SendCertificateSigningRequest(string csr)
+
+			Requests that the agent send the certificate signing
+			request to the CA server. How this is done is entirely
+			up to the agent as there are many protocols/wrappers
+			around CSRs to accomplish this. Once the CA server
+			responds with the client certificates they should be
+			returned to IWD as the method return value.
+
+			The return value should contain a dictionary of
+			representing the enterprise credentials. This ultimately
+			gets converted into an "Enterprise Credentials" JSON
+			object (defined in the DPP spec 4.3.5.9) but for
+			API convenience/consistency the dictionary keys are
+			similar to what an IWD 8021x profile expects:
+
+			"ClientCert" :	A base64 DER-encoded certificate (or
+					list) for the client. This should be in
+					PKCS7 format. This is a mandatory
+					value.
+
+			"CACert" :	A base64 DER-encoded CA Certificate
+					(or list). This should be in PKCS7
+					format. This is an optional value.
+
+			"ServerDomainMask" :	Domain name contained in the
+						servers certificate, used to
+						validate the authenticity of the
+						server. This is an optional
+						value.
+
+			The EAP method is assumed to be the same as the current
+			connection the configurator is using. For this reason
+			the EAP method is not required.
+
+			To support configuring clients to an enterprise networks
+			through device provisioning an agent must implement this
+			method.
+
+			Possible Errors:	[service].Error.Failed
