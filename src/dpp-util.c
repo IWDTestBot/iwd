@@ -315,17 +315,12 @@ char *dpp_configuration_to_json(struct dpp_configuration *config)
 				config->hidden ? "true" : "false");
 }
 
-struct dpp_configuration *dpp_configuration_new(
-					const struct l_settings *settings,
-					const char *ssid,
-					enum ie_rsn_akm_suite akm_suite)
+static struct dpp_configuration *dpp_configuration_new_psk(
+					const struct l_settings *settings)
 {
 	struct dpp_configuration *config;
 	_auto_(l_free) char *passphrase = NULL;
 	_auto_(l_free) char *psk = NULL;
-	size_t ssid_len = strlen(ssid);
-	bool send_hostname;
-	bool hidden;
 
 	if (!l_settings_has_group(settings, "Security"))
 		return NULL;
@@ -340,15 +335,39 @@ struct dpp_configuration *dpp_configuration_new(
 
 	config = l_new(struct dpp_configuration, 1);
 
-	memcpy(config->ssid, ssid, ssid_len);
-	config->ssid[ssid_len] = '\0';
-	config->ssid_len = ssid_len;
-
 	if (passphrase)
 		config->passphrase = l_steal_ptr(passphrase);
 	else
 		config->psk = l_steal_ptr(psk);
 
+	return config;
+}
+
+struct dpp_configuration *dpp_configuration_new(
+					const struct l_settings *settings,
+					const char *ssid,
+					enum ie_rsn_akm_suite akm_suite)
+{
+	struct dpp_configuration *config;
+	size_t ssid_len = strlen(ssid);
+	bool send_hostname;
+	bool hidden;
+
+	if (IE_AKM_IS_PSK(akm_suite))
+		config = dpp_configuration_new_psk(settings);
+	else {
+		l_warn("DPP not supported using AKM suite %x", akm_suite);
+		return NULL;
+	}
+
+	if (!config) {
+		l_warn("Failed to parse profile settings for DPP");
+		return NULL;
+	}
+
+	memcpy(config->ssid, ssid, ssid_len);
+	config->ssid[ssid_len] = '\0';
+	config->ssid_len = ssid_len;
 
 	config->akm_suites = akm_suite;
 
