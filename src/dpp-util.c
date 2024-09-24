@@ -196,6 +196,7 @@ struct dpp_configuration *dpp_parse_configuration_object(const char *json,
 	_auto_(l_free) char *akm = NULL;
 	_auto_(l_free) char *pass = NULL;
 	_auto_(l_free) char *psk = NULL;
+	uint32_t akm_suites;
 
 	c = json_contents_new(json, json_len);
 	if (!c)
@@ -229,22 +230,27 @@ struct dpp_configuration *dpp_parse_configuration_object(const char *json,
 			JSON_UNDEFINED))
 		goto free_contents;
 
-	if (!pass && (!psk || strlen(psk) != 64))
+	akm_suites = dpp_parse_akm(akm);
+
+	if (!akm_suites)
 		goto free_contents;
 
 	config = l_new(struct dpp_configuration, 1);
+	config->akm_suites = akm_suites;
 
-	if (pass)
-		config->passphrase = l_steal_ptr(pass);
-	else
-		config->psk = l_steal_ptr(psk);
+	if (IE_AKM_IS_PSK(akm_suites)) {
+		if (!pass && (!psk || strlen(psk) != 64))
+			goto free_config;
+
+		if (pass)
+			config->passphrase = l_steal_ptr(pass);
+		else
+			config->psk = l_steal_ptr(psk);
+	} else
+		goto free_config;
 
 	memcpy(config->ssid, ssid, strlen(ssid));
 	config->ssid_len = strlen(ssid);
-
-	config->akm_suites = dpp_parse_akm(akm);
-	if (!config->akm_suites)
-		goto free_config;
 
 	if (json_iter_is_valid(&extra)) {
 		if (!dpp_parse_extra_options(config, &extra))
