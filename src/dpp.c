@@ -54,6 +54,7 @@
 #include "src/handshake.h"
 #include "src/nl80211util.h"
 #include "src/knownnetworks.h"
+#include "src/dpp.h"
 
 #define DPP_FRAME_MAX_RETRIES 5
 #define DPP_FRAME_RETRY_TIMEOUT 1
@@ -80,6 +81,10 @@ static uint32_t mlme_watch;
 static uint32_t unicast_watch;
 
 static uint8_t dpp_prefix[] = { 0x04, 0x09, 0x50, 0x6f, 0x9a, 0x1a, 0x01 };
+
+static char *dpp_agent_name;
+static char *dpp_agent_path;
+static unsigned int dpp_agent_watch;
 
 enum dpp_state {
 	DPP_STATE_NOTHING,
@@ -134,6 +139,7 @@ struct dpp_sm {
 	enum dpp_state state;
 	enum dpp_interface interface;
 
+	uint32_t agent_request_id;
 	struct pkex_agent *agent;
 
 	/*
@@ -373,64 +379,6 @@ static void dpp_free_pending_pkex_data(struct dpp_sm *dpp)
 	}
 }
 
-static void pkex_agent_free(void *data)
-{
-	struct pkex_agent *agent = data;
-
-	l_free(agent->owner);
-	l_free(agent->path);
-	l_dbus_remove_watch(dbus_get_bus(), agent->disconnect_watch);
-	l_free(agent);
-}
-
-static void dpp_agent_cancel(struct dpp_sm *dpp)
-{
-	struct l_dbus_message *msg;
-
-	const char *reason = "shutdown";
-
-	msg = l_dbus_message_new_method_call(dbus_get_bus(),
-						dpp->agent->owner,
-						dpp->agent->path,
-						IWD_SHARED_CODE_AGENT_INTERFACE,
-						"Cancel");
-	l_dbus_message_set_arguments(msg, "s", reason);
-	l_dbus_message_set_no_reply(msg, true);
-	l_dbus_send(dbus_get_bus(), msg);
-}
-
-static void dpp_agent_release(struct dpp_sm *dpp)
-{
-	struct l_dbus_message *msg;
-
-	msg = l_dbus_message_new_method_call(dbus_get_bus(),
-						dpp->agent->owner,
-						dpp->agent->path,
-						IWD_SHARED_CODE_AGENT_INTERFACE,
-						"Release");
-	l_dbus_message_set_arguments(msg, "");
-	l_dbus_message_set_no_reply(msg, true);
-	l_dbus_send(dbus_get_bus(), msg);
-}
-
-static void dpp_destroy_agent(struct dpp_sm *dpp)
-{
-	if (!dpp->agent)
-		return;
-
-	if (dpp->agent->pending_id) {
-		dpp_agent_cancel(dpp);
-		l_dbus_cancel(dbus_get_bus(), dpp->agent->pending_id);
-	}
-
-	dpp_agent_release(dpp);
-
-	l_debug("Released SharedCodeAgent on path %s", dpp->agent->path);
-
-	pkex_agent_free(dpp->agent);
-	dpp->agent = NULL;
-}
-
 static void dpp_free_auth_data(struct dpp_sm *dpp)
 {
 	if (dpp->own_proto_public) {
@@ -479,6 +427,47 @@ static void dpp_free_auth_data(struct dpp_sm *dpp)
 	}
 
 }
+
+static void dpp_agent_cancel(struct dpp_sm *dpp)
+{
+	struct l_dbus_message *msg;
+	const char *reason = "shutdown";
+
+	if (L_WARN_ON(!dpp_agent_name))
+		return;
+
+	msg = l_dbus_message_new_method_call(dbus_get_bus(),
+						dpp_agent_name,
+						dpp_agent_path,
+						IWD_DPP_AGENT_INTERFACE,
+						"CancelSharedCode");
+	l_dbus_message_set_arguments(msg, "s", reason);
+	l_dbus_message_set_no_reply(msg, true);
+	l_dbus_send(dbus_get_bus(), msg);
+
+	l_dbus_cancel(dbus_get_bus(), dpp->agent_request_id);
+	dpp->agent_request_id = 0;
+}
+
+static void dpp_agent_release(void)
+{
+	struct l_dbus_message *msg;
+
+	if (L_WARN_ON(!dpp_agent_name))
+		return;
+
+	msg = l_dbus_message_new_method_call(dbus_get_bus(),
+						dpp_agent_name,
+						dpp_agent_path,
+						IWD_DPP_AGENT_INTERFACE,
+						"Release");
+	l_dbus_message_set_arguments(msg, "");
+	l_dbus_message_set_no_reply(msg, true);
+	l_dbus_send(dbus_get_bus(), msg);
+
+	l_dbus_remove_watch(dbus_get_bus(), dpp_agent_watch);
+}
+
 
 static void dpp_reset(struct dpp_sm *dpp)
 {
@@ -555,7 +544,8 @@ static void dpp_reset(struct dpp_sm *dpp)
 	explicit_bzero(dpp->z, dpp->key_len);
 	explicit_bzero(dpp->u, dpp->u_len);
 
-	dpp_destroy_agent(dpp);
+	if (dpp->agent_request_id)
+		dpp_agent_cancel(dpp);
 
 	dpp_free_pending_pkex_data(dpp);
 
@@ -597,6 +587,63 @@ static void dpp_free(struct dpp_sm *dpp)
 	known_networks_watch_remove(dpp->known_network_watch);
 
 	l_free(dpp);
+}
+
+static void dpp_agent_disconnect_cb(struct l_dbus *dbus, void *user_data)
+{
+	const struct l_queue_entry *e;
+
+	l_debug("DPP agent disconnected");
+
+	for (e = l_queue_get_entries(dpp_list); e; e = e->next) {
+		struct dpp_sm *dpp = e->data;
+
+		/*
+		 * If this DPP SM was in the process of making an agent request
+		 * this protocol run won't complete, reset
+		 */
+		if (dpp->agent_request_id)
+			dpp_reset(dpp);
+	}
+
+	l_dbus_remove_watch(dbus, dpp_agent_watch);
+}
+
+static void dpp_agent_watch_destroy(void *user_data)
+{
+	dpp_agent_watch = 0;
+
+	l_free(dpp_agent_name);
+	dpp_agent_name = NULL;
+	l_free(dpp_agent_path);
+	dpp_agent_path = NULL;
+}
+
+int dpp_register_agent(const char *name, const char *path)
+{
+	if (dpp_agent_path)
+		return -EEXIST;
+
+	dpp_agent_name = l_strdup(name);
+	dpp_agent_path = l_strdup(path);
+	dpp_agent_watch = l_dbus_add_disconnect_watch(dbus_get_bus(),
+						name,
+						dpp_agent_disconnect_cb,
+						NULL, dpp_agent_watch_destroy);
+	return 0;
+}
+
+int dpp_unregister_agent(const char *name, const char *path)
+{
+	if (!dpp_agent_path || strcmp(dpp_agent_path, path))
+		return -ENOENT;
+
+	if (strcmp(dpp_agent_name, name))
+		return -EPERM;
+
+	l_dbus_remove_watch(dbus_get_bus(), dpp_agent_watch);
+
+	return 0;
 }
 
 static void dpp_send_frame_cb(struct l_genl_msg *msg, void *user_data)
@@ -4832,6 +4879,9 @@ static void dpp_exit(void)
 	nl80211 = NULL;
 
 	l_queue_destroy(dpp_list, (l_queue_destroy_func_t) dpp_free);
+
+	if (dpp_agent_name)
+		dpp_agent_release();
 }
 
 IWD_MODULE(dpp, dpp_init, dpp_exit);
