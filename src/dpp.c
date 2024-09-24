@@ -106,13 +106,6 @@ enum dpp_interface {
 	DPP_INTERFACE_PKEX,
 };
 
-struct pkex_agent {
-	char *owner;
-	char *path;
-	unsigned int disconnect_watch;
-	uint32_t pending_id;
-};
-
 struct dpp_sm {
 	struct netdev *netdev;
 	char *uri;
@@ -140,7 +133,6 @@ struct dpp_sm {
 	enum dpp_interface interface;
 
 	uint32_t agent_request_id;
-	struct pkex_agent *agent;
 
 	/*
 	 * List of frequencies to jump between. The presence of this list is
@@ -2088,7 +2080,7 @@ static void dpp_offchannel_timeout(int error, void *user_data)
 
 	switch (dpp->state) {
 	case DPP_STATE_PKEX_EXCHANGE:
-		if (dpp->role != DPP_CAPABILITY_CONFIGURATOR || !dpp->agent)
+		if (dpp->role != DPP_CAPABILITY_CONFIGURATOR || !dpp_agent_name)
 			break;
 
 		/*
@@ -2097,7 +2089,7 @@ static void dpp_offchannel_timeout(int error, void *user_data)
 		 * for our response so cancel the request and continue waiting
 		 * for another request
 		 */
-		if (dpp->agent->pending_id) {
+		if (dpp->agent_request_id) {
 			dpp_free_pending_pkex_data(dpp);
 			dpp_agent_cancel(dpp);
 		}
@@ -3228,10 +3220,10 @@ static void dpp_pkex_agent_reply(struct l_dbus_message *message,
 	const char *error, *text;
 	const char *code;
 
-	dpp->agent->pending_id = 0;
+	dpp->agent_request_id = 0;
 
-	l_debug("SharedCodeAgent %s path %s replied", dpp->agent->owner,
-			dpp->agent->path);
+	l_debug("DeviceProvisioningAgent %s path %s replied", dpp_agent_name,
+			dpp_agent_path);
 
 	if (l_dbus_message_get_error(message, &error, &text)) {
 		l_error("RequestSharedCode(%s) returned %s(\"%s\")",
@@ -3240,7 +3232,7 @@ static void dpp_pkex_agent_reply(struct l_dbus_message *message,
 	}
 
 	if (!l_dbus_message_get_arguments(message, "s", &code)) {
-		l_debug("Invalid arguments, check SharedCodeAgent!");
+		l_debug("Invalid arguments, check DeviceProvisioningAgent!");
 		goto reset;
 	}
 
@@ -3257,25 +3249,25 @@ static bool dpp_pkex_agent_request(struct dpp_sm *dpp)
 {
 	struct l_dbus_message *msg;
 
-	if (!dpp->agent)
+	if (!dpp_agent_name)
 		return false;
 
-	if (L_WARN_ON(dpp->agent->pending_id))
+	if (L_WARN_ON(dpp->agent_request_id))
 		return false;
 
 	msg = l_dbus_message_new_method_call(dbus_get_bus(),
-						dpp->agent->owner,
-						dpp->agent->path,
-						IWD_SHARED_CODE_AGENT_INTERFACE,
+						dpp_agent_name,
+						dpp_agent_path,
+						IWD_DPP_AGENT_INTERFACE,
 						"RequestSharedCode");
 	l_dbus_message_set_arguments(msg, "s", dpp->pkex_id);
 
 
-	dpp->agent->pending_id = l_dbus_send_with_reply(dbus_get_bus(),
+	dpp->agent_request_id = l_dbus_send_with_reply(dbus_get_bus(),
 							msg,
 							dpp_pkex_agent_reply,
 							dpp, NULL);
-	return dpp->agent->pending_id != 0;
+	return dpp->agent_request_id != 0;
 }
 
 static void dpp_handle_pkex_exchange_request(struct dpp_sm *dpp,
@@ -4648,32 +4640,6 @@ invalid_args:
 	return dbus_error_invalid_args(message);
 }
 
-static void pkex_agent_disconnect(struct l_dbus *dbus, void *user_data)
-{
-	struct dpp_sm *dpp = user_data;
-
-	l_debug("SharedCodeAgent %s disconnected", dpp->agent->path);
-
-	dpp_reset(dpp);
-}
-
-static void dpp_create_agent(struct dpp_sm *dpp, const char *path,
-					struct l_dbus_message *message)
-{
-	const char *sender = l_dbus_message_get_sender(message);
-
-	dpp->agent = l_new(struct pkex_agent, 1);
-	dpp->agent->owner = l_strdup(sender);
-	dpp->agent->path = l_strdup(path);
-	dpp->agent->disconnect_watch = l_dbus_add_disconnect_watch(
-							dbus_get_bus(),
-							sender,
-							pkex_agent_disconnect,
-							dpp, NULL);
-
-	l_debug("Registered a SharedCodeAgent on path %s", path);
-}
-
 static struct l_dbus_message *dpp_start_pkex_configurator(struct dpp_sm *dpp,
 					const char *key, const char *identifier,
 					const char *agent_path,
@@ -4707,9 +4673,6 @@ static struct l_dbus_message *dpp_start_pkex_configurator(struct dpp_sm *dpp,
 
 	if (key)
 		dpp->pkex_key = l_strdup(key);
-
-	if (agent_path)
-		dpp_create_agent(dpp, agent_path, message);
 
 	dpp->role = DPP_CAPABILITY_CONFIGURATOR;
 	dpp->state = DPP_STATE_PKEX_EXCHANGE;
