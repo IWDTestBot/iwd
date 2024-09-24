@@ -60,6 +60,17 @@
 #define DPP_AUTH_PROTO_TIMEOUT 10
 #define DPP_PKEX_PROTO_TIMEOUT 120
 #define DPP_PKEX_PROTO_PER_FREQ_TIMEOUT 10
+/*
+ * The default JSON configuration object sent initially. For PSK networks this
+ * is sufficient, but for 802.1x the enrollee will be asked to send another
+ * request containing a CSR
+ */
+#define DPP_CONFIG_REQUEST_DEFAULT_VALUES \
+	"\"name\":\"IWD\"," \
+	"\"wi-fi_tech\":\"infra\"," \
+	"\"netRole\":\"sta\""
+#define DPP_CONFIG_REQUEST_DEFAULT_OBJECT \
+	"{" DPP_CONFIG_REQUEST_DEFAULT_VALUES "}"
 
 static uint32_t netdev_watch;
 static struct l_genl_family *nl80211;
@@ -753,14 +764,13 @@ static void dpp_reset_protocol_timer(struct dpp_sm *dpp, uint32_t time)
  *    does effect the resulting encryption/decryption so this is also what IWD
  *    will do to remain compliant with it.
  */
-static void dpp_configuration_start(struct dpp_sm *dpp, const uint8_t *addr)
+static void dpp_configuration_start(struct dpp_sm *dpp, const uint8_t *addr,
+					const char *json)
 {
-	const char *json = "{\"name\":\"IWD\",\"wi-fi_tech\":\"infra\","
-				"\"netRole\":\"sta\"}";
 	struct iovec iov[3];
 	uint8_t hdr[37];
-	uint8_t attrs[512];
 	size_t json_len = strlen(json);
+	uint8_t attrs[256 + json_len];
 	uint8_t *ptr = attrs;
 
 	l_getrandom(&dpp->diag_token, 1);
@@ -1689,7 +1699,8 @@ static void authenticate_confirm(struct dpp_sm *dpp, const uint8_t *from,
 	dpp_reset_protocol_timer(dpp, DPP_AUTH_PROTO_TIMEOUT);
 
 	if (dpp->role == DPP_CAPABILITY_ENROLLEE)
-		dpp_configuration_start(dpp, from);
+		dpp_configuration_start(dpp, from,
+					DPP_CONFIG_REQUEST_DEFAULT_OBJECT);
 
 	return;
 
@@ -2490,7 +2501,8 @@ static void authenticate_response(struct dpp_sm *dpp, const uint8_t *from,
 	dpp_send_authenticate_confirm(dpp);
 
 	if (dpp->role == DPP_CAPABILITY_ENROLLEE)
-		dpp_configuration_start(dpp, from);
+		dpp_configuration_start(dpp, from,
+					DPP_CONFIG_REQUEST_DEFAULT_OBJECT);
 
 }
 
