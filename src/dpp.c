@@ -4642,7 +4642,6 @@ invalid_args:
 
 static struct l_dbus_message *dpp_start_pkex_configurator(struct dpp_sm *dpp,
 					const char *key, const char *identifier,
-					const char *agent_path,
 					struct l_dbus_message *message)
 {
 	struct handshake_state *hs = netdev_get_handshake(dpp->netdev);
@@ -4715,7 +4714,7 @@ static struct l_dbus_message *dpp_dbus_pkex_configure_enrollee(
 	if (!dpp_parse_pkex_args(message, &key, &id, NULL, NULL))
 		return dbus_error_invalid_args(message);
 
-	return dpp_start_pkex_configurator(dpp, key, id, NULL, message);
+	return dpp_start_pkex_configurator(dpp, key, id, message);
 }
 
 static struct l_dbus_message *dpp_dbus_pkex_start_configurator(
@@ -4724,12 +4723,8 @@ static struct l_dbus_message *dpp_dbus_pkex_start_configurator(
 						void *user_data)
 {
 	struct dpp_sm *dpp = user_data;
-	const char *path;
 
-	if (!l_dbus_message_get_arguments(message, "o", &path))
-		return dbus_error_invalid_args(message);
-
-	return dpp_start_pkex_configurator(dpp, NULL, NULL, path, message);
+	return dpp_start_pkex_configurator(dpp, NULL, NULL, message);
 }
 
 static void dpp_setup_interface(struct l_dbus_interface *interface)
@@ -4774,7 +4769,7 @@ static void dpp_setup_pkex_interface(struct l_dbus_interface *interface)
 	l_dbus_interface_method(interface, "ConfigureEnrollee", 0,
 			dpp_dbus_pkex_configure_enrollee, "", "a{sv}", "args");
 	l_dbus_interface_method(interface, "StartConfigurator", 0,
-			dpp_dbus_pkex_start_configurator, "", "o", "path");
+			dpp_dbus_pkex_start_configurator, "", "");
 
 	l_dbus_interface_property(interface, "Started", 0, "b",
 			dpp_pkex_get_started, NULL);
