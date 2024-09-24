@@ -196,6 +196,7 @@ struct dpp_configuration *dpp_parse_configuration_object(const char *json,
 	_auto_(l_free) char *akm = NULL;
 	_auto_(l_free) char *pass = NULL;
 	_auto_(l_free) char *psk = NULL;
+	uint32_t akm_suites;
 
 	c = json_contents_new(json, json_len);
 	if (!c)
@@ -229,22 +230,27 @@ struct dpp_configuration *dpp_parse_configuration_object(const char *json,
 			JSON_UNDEFINED))
 		goto free_contents;
 
-	if (!pass && (!psk || strlen(psk) != 64))
+	akm_suites = dpp_parse_akm(akm);
+
+	if (!akm_suites)
 		goto free_contents;
 
 	config = l_new(struct dpp_configuration, 1);
+	config->akm_suites = akm_suites;
 
-	if (pass)
-		config->passphrase = l_steal_ptr(pass);
-	else
-		config->psk = l_steal_ptr(psk);
+	if (IE_AKM_IS_PSK(akm_suites)) {
+		if (!pass && (!psk || strlen(psk) != 64))
+			goto free_config;
+
+		if (pass)
+			config->passphrase = l_steal_ptr(pass);
+		else
+			config->psk = l_steal_ptr(psk);
+	} else
+		goto free_config;
 
 	memcpy(config->ssid, ssid, strlen(ssid));
 	config->ssid_len = strlen(ssid);
-
-	config->akm_suites = dpp_parse_akm(akm);
-	if (!config->akm_suites)
-		goto free_config;
 
 	if (json_iter_is_valid(&extra)) {
 		if (!dpp_parse_extra_options(config, &extra))
@@ -282,21 +288,14 @@ static const char *dpp_akm_to_string(enum ie_rsn_akm_suite akm_suite)
 	}
 }
 
-char *dpp_configuration_to_json(struct dpp_configuration *config)
+static char *dpp_configuration_to_json(struct dpp_configuration *config,
+					const char *creds)
 {
-	_auto_(l_free) char *pass_or_psk;
 	_auto_(l_free) char *ssid;
 
 	ssid = l_malloc(config->ssid_len + 1);
 	memcpy(ssid, config->ssid, config->ssid_len);
 	ssid[config->ssid_len] = '\0';
-
-	if (config->passphrase)
-		pass_or_psk = l_strdup_printf("\"pass\":\"%s\"",
-						config->passphrase);
-	else
-		pass_or_psk = l_strdup_printf("\"psk\":\"%s\"",
-						config->psk);
 
 	return l_strdup_printf("{\"wi-fi_tech\":\"infra\","
 				"\"discovery\":{"
@@ -310,22 +309,31 @@ char *dpp_configuration_to_json(struct dpp_configuration *config)
 					"\"hidden\":%s}"
 				"}",
 				ssid, dpp_akm_to_string(config->akm_suites),
-				pass_or_psk,
+				creds,
 				config->send_hostname ? "true" : "false",
 				config->hidden ? "true" : "false");
 }
 
-struct dpp_configuration *dpp_configuration_new(
-					const struct l_settings *settings,
-					const char *ssid,
-					enum ie_rsn_akm_suite akm_suite)
+char *dpp_psk_config_to_json(struct dpp_configuration *config)
+{
+	_auto_(l_free) char *pass_or_psk;
+
+	if (config->passphrase)
+		pass_or_psk = l_strdup_printf("\"pass\":\"%s\"",
+						config->passphrase);
+	else
+		pass_or_psk = l_strdup_printf("\"psk\":\"%s\"",
+						config->psk);
+
+	return dpp_configuration_to_json(config, pass_or_psk);
+}
+
+static struct dpp_configuration *dpp_configuration_new_psk(
+					const struct l_settings *settings)
 {
 	struct dpp_configuration *config;
 	_auto_(l_free) char *passphrase = NULL;
 	_auto_(l_free) char *psk = NULL;
-	size_t ssid_len = strlen(ssid);
-	bool send_hostname;
-	bool hidden;
 
 	if (!l_settings_has_group(settings, "Security"))
 		return NULL;
@@ -340,15 +348,39 @@ struct dpp_configuration *dpp_configuration_new(
 
 	config = l_new(struct dpp_configuration, 1);
 
-	memcpy(config->ssid, ssid, ssid_len);
-	config->ssid[ssid_len] = '\0';
-	config->ssid_len = ssid_len;
-
 	if (passphrase)
 		config->passphrase = l_steal_ptr(passphrase);
 	else
 		config->psk = l_steal_ptr(psk);
 
+	return config;
+}
+
+struct dpp_configuration *dpp_configuration_new(
+					const struct l_settings *settings,
+					const char *ssid,
+					enum ie_rsn_akm_suite akm_suite)
+{
+	struct dpp_configuration *config;
+	size_t ssid_len = strlen(ssid);
+	bool send_hostname;
+	bool hidden;
+
+	if (IE_AKM_IS_PSK(akm_suite))
+		config = dpp_configuration_new_psk(settings);
+	else {
+		l_warn("DPP not supported using AKM suite %x", akm_suite);
+		return NULL;
+	}
+
+	if (!config) {
+		l_warn("Failed to parse profile settings for DPP");
+		return NULL;
+	}
+
+	memcpy(config->ssid, ssid, ssid_len);
+	config->ssid[ssid_len] = '\0';
+	config->ssid_len = ssid_len;
 
 	config->akm_suites = akm_suite;
 

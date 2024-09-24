@@ -4,7 +4,7 @@ import unittest
 import sys
 
 sys.path.append('../util')
-from iwd import IWD, SharedCodeAgent, DeviceState
+from iwd import IWD, DeviceProvisioningAgent, DeviceState
 from iwd import DeviceProvisioning
 from wpas import Wpas
 from hostapd import HostapdCLI
@@ -37,9 +37,10 @@ class Test(unittest.TestCase):
         self.wd.wait_for_object_condition(device, condition)
 
         if agent:
-            self.agent = SharedCodeAgent(codes = {"test": "secret123"})
+            agent = DeviceProvisioningAgent(codes = {"test": "secret123"})
+            self.wd.register_dpp_agent(agent)
 
-            device.dpp_pkex_start_configurator(self.agent.path)
+            device.dpp_pkex_start_configurator()
         else:
             device.dpp_pkex_configure_enrollee('secret123', identifier="test")
 

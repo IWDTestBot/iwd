@@ -132,7 +132,7 @@ struct dpp_configuration *dpp_configuration_new(
 					const struct l_settings *settings,
 					const char *ssid,
 					enum ie_rsn_akm_suite akm_suite);
-char *dpp_configuration_to_json(struct dpp_configuration *config);
+char *dpp_psk_config_to_json(struct dpp_configuration *config);
 void dpp_configuration_free(struct dpp_configuration *conf);
 
 struct dpp_attr_iter {

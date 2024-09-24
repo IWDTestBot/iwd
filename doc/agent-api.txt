@@ -67,6 +67,31 @@ Methods		void RegisterAgent(object path)
 					 [service].NotFound
 					 [service].NotAvailable
 
+		void RegisterDeviceProvisioningAgent(object path)
+
+			Register an agent for handling Device Provisioning (DPP)
+			specific requests.
+
+			This includes:
+			 - Requests for shared codes when using shared code
+			   device provisioning.
+			 - Requests for certificate signing requests
+			 - Requests to send a certificate signing request
+
+			The details of these are explained in the DBus method
+			docs below for the
+			net.connman.iwd.DeviceProvisioningAgent interface.
+
+
+			Possible Errors: [service].InvalidArguments
+					 [service].AlreadyExists
+
+		void UnregisterDeviceProvisioningAgent(object path)
+
+			Unregisters an existing Device Provisioning agent
+
+			Possible Errors: [service].InvalidArguments
+					 [service].NotFound
 
 Agent hierarchy
 ===============
@@ -263,3 +288,34 @@ Methods		void Release() [noreply]
 		void CancelIPv6(object device, string reason) [noreply]
 
 			Same as CancelIPv4 above but for IPv6.
+
+DeviceProvisioningAgent hierarchy
+=================================
+
+Service		unique name
+Interface	net.connman.iwd.DeviceProvisioningAgent [Experimental]
+Object path	freely definable
+
+Methods		void Release() [noreply]
+
+			This method gets called when the service daemon
+			unregisteres the agent
+
+		void CancelSharedCode(string reason) [noreply]
+
+			This method gets called to indicate that the agent
+			request for a shared code failed before a reply was
+			returned. The argument will indicate why the request is
+			being cancelled and may be "user-canceled", "timed-out"
+			or "shutdown".
+
+		string RequestSharedCode(string identifier)
+
+			This method gets called when a shared code is requested
+			for a particular enrollee, distingushed by the
+			identifier. The shared code agent should lookup the
+			identifier and return the shared code, or return an
+			error if not found.
+
+			Possible Errors:	[service].Error.Canceled
+						[service].Error.NotFound

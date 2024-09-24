@@ -43,7 +43,7 @@ IWD_P2P_WFD_INTERFACE =         'net.connman.iwd.p2p.Display'
 IWD_STATION_DEBUG_INTERFACE =   'net.connman.iwd.StationDebug'
 IWD_DPP_INTERFACE =             'net.connman.iwd.DeviceProvisioning'
 IWD_DPP_PKEX_INTERFACE =        'net.connman.iwd.SharedCodeDeviceProvisioning'
-IWD_SHARED_CODE_AGENT_INTERFACE = 'net.connman.iwd.SharedCodeAgent'
+IWD_DPP_AGENT_INTERFACE =       'net.connman.iwd.DeviceProvisioningAgent'
 
 IWD_AGENT_MANAGER_PATH =        '/net/connman/iwd'
 IWD_TOP_LEVEL_PATH =            '/'
@@ -214,31 +214,32 @@ class SignalAgent(dbus.service.Object):
     def handle_new_level(self, path, level):
         pass
 
-class SharedCodeAgent(dbus.service.Object):
+class DeviceProvisioningAgent(dbus.service.Object):
     def __init__(self, codes = {}):
         self._path = '/test/agent/' + str(int(round(time.time() * 1000)))
         self._codes = codes
+        self._bus = dbus.bus.BusConnection(address_or_type=ctx.dbus_address)
 
-        dbus.service.Object.__init__(self, ctx.get_bus(), self._path)
+        dbus.service.Object.__init__(self, self._bus, self._path)
 
     @property
     def path(self):
         return self._path
 
-    @dbus.service.method(IWD_SHARED_CODE_AGENT_INTERFACE,
+    @dbus.service.method(IWD_DPP_AGENT_INTERFACE,
                          in_signature='', out_signature='')
     def Release(self):
-        print("SharedCodeAgent released")
+        print("DeviceProvisioningAgent released")
 
-    @dbus.service.method(IWD_SHARED_CODE_AGENT_INTERFACE,
+    @dbus.service.method(IWD_DPP_AGENT_INTERFACE,
                          in_signature='s', out_signature='')
-    def Cancel(self, reason):
-        print("SharedCodeAgent canceled (%s)" % reason)
+    def CancelSharedCode(self, reason):
+        print("DeviceProvisioningAgent canceled (%s)" % reason)
 
-    @dbus.service.method(IWD_SHARED_CODE_AGENT_INTERFACE,
+    @dbus.service.method(IWD_DPP_AGENT_INTERFACE,
                          in_signature='s', out_signature='s')
     def RequestSharedCode(self, identifier):
-        print("SharedCodeAgent request for %s" % identifier)
+        print("DeviceProvisioningAgent request for %s" % identifier)
 
         code = self._codes.get(identifier, None)
         if not code:
@@ -352,8 +353,8 @@ class SharedCodeDeviceProvisioning(IWDDBusAbstract):
 
         self._iface.StartEnrollee(args)
 
-    def start_configurator(self, path):
-        self._iface.StartConfigurator(dbus.ObjectPath(path))
+    def start_configurator(self):
+        self._iface.StartConfigurator()
 
     def configure_enrollee(self, code, identifier=None):
         args = {
@@ -1571,6 +1572,29 @@ class IWD(AsyncOpAbstract):
                                 error_handler=self._failure)
         self._wait_for_async_op()
         self.psk_agents.remove(psk_agent)
+
+    def register_dpp_agent(self, dpp_agent):
+        iface = dbus.Interface(dpp_agent._bus.get_object(IWD_SERVICE,
+                                                IWD_AGENT_MANAGER_PATH),
+                                                IWD_AGENT_MANAGER_INTERFACE)
+        iface.RegisterDeviceProvisioningAgent(dpp_agent.path,
+                            dbus_interface=IWD_AGENT_MANAGER_INTERFACE,
+                            reply_handler=self._success,
+                            error_handler=self._failure)
+
+        self._wait_for_async_op()
+        self.dpp_agent = dpp_agent
+
+    def unregister_dpp_agent(self, dpp_agent):
+        iface = dbus.Interface(dpp_agent._bus.get_object(IWD_SERVICE,
+                                                IWD_AGENT_MANAGER_PATH),
+                                                IWD_AGENT_MANAGER_INTERFACE)
+        iface.UnregisterDeviceProvisioningAgent(dpp_agent.path,
+                                dbus_interface=IWD_AGENT_MANAGER_INTERFACE,
+                                reply_handler=self._success,
+                                error_handler=self._failure)
+        self._wait_for_async_op()
+        self.dpp_agent = None
 
     @staticmethod
     def get_instance():

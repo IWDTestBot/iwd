@@ -54,12 +54,24 @@
 #include "src/handshake.h"
 #include "src/nl80211util.h"
 #include "src/knownnetworks.h"
+#include "src/dpp.h"
 
 #define DPP_FRAME_MAX_RETRIES 5
 #define DPP_FRAME_RETRY_TIMEOUT 1
 #define DPP_AUTH_PROTO_TIMEOUT 10
 #define DPP_PKEX_PROTO_TIMEOUT 120
 #define DPP_PKEX_PROTO_PER_FREQ_TIMEOUT 10
+/*
+ * The default JSON configuration object sent initially. For PSK networks this
+ * is sufficient, but for 802.1x the enrollee will be asked to send another
+ * request containing a CSR
+ */
+#define DPP_CONFIG_REQUEST_DEFAULT_VALUES \
+	"\"name\":\"IWD\"," \
+	"\"wi-fi_tech\":\"infra\"," \
+	"\"netRole\":\"sta\""
+#define DPP_CONFIG_REQUEST_DEFAULT_OBJECT \
+	"{" DPP_CONFIG_REQUEST_DEFAULT_VALUES "}"
 
 static uint32_t netdev_watch;
 static struct l_genl_family *nl80211;
@@ -69,6 +81,10 @@ static uint32_t mlme_watch;
 static uint32_t unicast_watch;
 
 static uint8_t dpp_prefix[] = { 0x04, 0x09, 0x50, 0x6f, 0x9a, 0x1a, 0x01 };
+
+static char *dpp_agent_name;
+static char *dpp_agent_path;
+static unsigned int dpp_agent_watch;
 
 enum dpp_state {
 	DPP_STATE_NOTHING,
@@ -88,13 +104,6 @@ enum dpp_interface {
 	DPP_INTERFACE_UNBOUND,
 	DPP_INTERFACE_DPP,
 	DPP_INTERFACE_PKEX,
-};
-
-struct pkex_agent {
-	char *owner;
-	char *path;
-	unsigned int disconnect_watch;
-	uint32_t pending_id;
 };
 
 struct dpp_sm {
@@ -123,7 +132,7 @@ struct dpp_sm {
 	enum dpp_state state;
 	enum dpp_interface interface;
 
-	struct pkex_agent *agent;
+	uint32_t agent_request_id;
 
 	/*
 	 * List of frequencies to jump between. The presence of this list is
@@ -362,64 +371,6 @@ static void dpp_free_pending_pkex_data(struct dpp_sm *dpp)
 	}
 }
 
-static void pkex_agent_free(void *data)
-{
-	struct pkex_agent *agent = data;
-
-	l_free(agent->owner);
-	l_free(agent->path);
-	l_dbus_remove_watch(dbus_get_bus(), agent->disconnect_watch);
-	l_free(agent);
-}
-
-static void dpp_agent_cancel(struct dpp_sm *dpp)
-{
-	struct l_dbus_message *msg;
-
-	const char *reason = "shutdown";
-
-	msg = l_dbus_message_new_method_call(dbus_get_bus(),
-						dpp->agent->owner,
-						dpp->agent->path,
-						IWD_SHARED_CODE_AGENT_INTERFACE,
-						"Cancel");
-	l_dbus_message_set_arguments(msg, "s", reason);
-	l_dbus_message_set_no_reply(msg, true);
-	l_dbus_send(dbus_get_bus(), msg);
-}
-
-static void dpp_agent_release(struct dpp_sm *dpp)
-{
-	struct l_dbus_message *msg;
-
-	msg = l_dbus_message_new_method_call(dbus_get_bus(),
-						dpp->agent->owner,
-						dpp->agent->path,
-						IWD_SHARED_CODE_AGENT_INTERFACE,
-						"Release");
-	l_dbus_message_set_arguments(msg, "");
-	l_dbus_message_set_no_reply(msg, true);
-	l_dbus_send(dbus_get_bus(), msg);
-}
-
-static void dpp_destroy_agent(struct dpp_sm *dpp)
-{
-	if (!dpp->agent)
-		return;
-
-	if (dpp->agent->pending_id) {
-		dpp_agent_cancel(dpp);
-		l_dbus_cancel(dbus_get_bus(), dpp->agent->pending_id);
-	}
-
-	dpp_agent_release(dpp);
-
-	l_debug("Released SharedCodeAgent on path %s", dpp->agent->path);
-
-	pkex_agent_free(dpp->agent);
-	dpp->agent = NULL;
-}
-
 static void dpp_free_auth_data(struct dpp_sm *dpp)
 {
 	if (dpp->own_proto_public) {
@@ -468,6 +419,47 @@ static void dpp_free_auth_data(struct dpp_sm *dpp)
 	}
 
 }
+
+static void dpp_agent_cancel(struct dpp_sm *dpp)
+{
+	struct l_dbus_message *msg;
+	const char *reason = "shutdown";
+
+	if (L_WARN_ON(!dpp_agent_name))
+		return;
+
+	msg = l_dbus_message_new_method_call(dbus_get_bus(),
+						dpp_agent_name,
+						dpp_agent_path,
+						IWD_DPP_AGENT_INTERFACE,
+						"CancelSharedCode");
+	l_dbus_message_set_arguments(msg, "s", reason);
+	l_dbus_message_set_no_reply(msg, true);
+	l_dbus_send(dbus_get_bus(), msg);
+
+	l_dbus_cancel(dbus_get_bus(), dpp->agent_request_id);
+	dpp->agent_request_id = 0;
+}
+
+static void dpp_agent_release(void)
+{
+	struct l_dbus_message *msg;
+
+	if (L_WARN_ON(!dpp_agent_name))
+		return;
+
+	msg = l_dbus_message_new_method_call(dbus_get_bus(),
+						dpp_agent_name,
+						dpp_agent_path,
+						IWD_DPP_AGENT_INTERFACE,
+						"Release");
+	l_dbus_message_set_arguments(msg, "");
+	l_dbus_message_set_no_reply(msg, true);
+	l_dbus_send(dbus_get_bus(), msg);
+
+	l_dbus_remove_watch(dbus_get_bus(), dpp_agent_watch);
+}
+
 
 static void dpp_reset(struct dpp_sm *dpp)
 {
@@ -544,7 +536,8 @@ static void dpp_reset(struct dpp_sm *dpp)
 	explicit_bzero(dpp->z, dpp->key_len);
 	explicit_bzero(dpp->u, dpp->u_len);
 
-	dpp_destroy_agent(dpp);
+	if (dpp->agent_request_id)
+		dpp_agent_cancel(dpp);
 
 	dpp_free_pending_pkex_data(dpp);
 
@@ -586,6 +579,63 @@ static void dpp_free(struct dpp_sm *dpp)
 	known_networks_watch_remove(dpp->known_network_watch);
 
 	l_free(dpp);
+}
+
+static void dpp_agent_disconnect_cb(struct l_dbus *dbus, void *user_data)
+{
+	const struct l_queue_entry *e;
+
+	l_debug("DPP agent disconnected");
+
+	for (e = l_queue_get_entries(dpp_list); e; e = e->next) {
+		struct dpp_sm *dpp = e->data;
+
+		/*
+		 * If this DPP SM was in the process of making an agent request
+		 * this protocol run won't complete, reset
+		 */
+		if (dpp->agent_request_id)
+			dpp_reset(dpp);
+	}
+
+	l_dbus_remove_watch(dbus, dpp_agent_watch);
+}
+
+static void dpp_agent_watch_destroy(void *user_data)
+{
+	dpp_agent_watch = 0;
+
+	l_free(dpp_agent_name);
+	dpp_agent_name = NULL;
+	l_free(dpp_agent_path);
+	dpp_agent_path = NULL;
+}
+
+int dpp_register_agent(const char *name, const char *path)
+{
+	if (dpp_agent_path)
+		return -EEXIST;
+
+	dpp_agent_name = l_strdup(name);
+	dpp_agent_path = l_strdup(path);
+	dpp_agent_watch = l_dbus_add_disconnect_watch(dbus_get_bus(),
+						name,
+						dpp_agent_disconnect_cb,
+						NULL, dpp_agent_watch_destroy);
+	return 0;
+}
+
+int dpp_unregister_agent(const char *name, const char *path)
+{
+	if (!dpp_agent_path || strcmp(dpp_agent_path, path))
+		return -ENOENT;
+
+	if (strcmp(dpp_agent_name, name))
+		return -EPERM;
+
+	l_dbus_remove_watch(dbus_get_bus(), dpp_agent_watch);
+
+	return 0;
 }
 
 static void dpp_send_frame_cb(struct l_genl_msg *msg, void *user_data)
@@ -753,14 +803,13 @@ static void dpp_reset_protocol_timer(struct dpp_sm *dpp, uint32_t time)
  *    does effect the resulting encryption/decryption so this is also what IWD
  *    will do to remain compliant with it.
  */
-static void dpp_configuration_start(struct dpp_sm *dpp, const uint8_t *addr)
+static void dpp_configuration_start(struct dpp_sm *dpp, const uint8_t *addr,
+					const char *json)
 {
-	const char *json = "{\"name\":\"IWD\",\"wi-fi_tech\":\"infra\","
-				"\"netRole\":\"sta\"}";
 	struct iovec iov[3];
 	uint8_t hdr[37];
-	uint8_t attrs[512];
 	size_t json_len = strlen(json);
+	uint8_t attrs[256 + json_len];
 	uint8_t *ptr = attrs;
 
 	l_getrandom(&dpp->diag_token, 1);
@@ -822,25 +871,57 @@ static void send_config_result(struct dpp_sm *dpp, const uint8_t *to)
 	dpp_send_frame(dpp, iov, 2, dpp->current_freq);
 }
 
-static void dpp_write_config(struct dpp_configuration *config,
-				struct network *network)
+static void dpp_write_psk_config(struct dpp_configuration *config,
+					struct l_settings *settings)
 {
-	_auto_(l_settings_free) struct l_settings *settings = l_settings_new();
-	_auto_(l_free) char *path;
-
-	path = storage_get_network_file_path(SECURITY_PSK, config->ssid);
-
-	if (l_settings_load_from_file(settings, path)) {
-		/* Remove any existing Security keys */
-		l_settings_remove_group(settings, "Security");
-	}
-
 	if (config->passphrase)
 		l_settings_set_string(settings, "Security", "Passphrase",
 				config->passphrase);
 	else if (config->psk)
 		l_settings_set_string(settings, "Security", "PreSharedKey",
 				config->psk);
+}
+
+static bool dpp_write_config(struct dpp_configuration *config,
+				struct network *network)
+{
+	_auto_(l_settings_free) struct l_settings *settings = l_settings_new();
+	_auto_(l_free) char *path = NULL;
+	enum security security;
+
+	if (!network) {
+		l_warn("Network not seen in results, can't validate security");
+
+		if (IE_AKM_IS_PSK(config->akm_suites))
+			security = SECURITY_PSK;
+		else
+			return false;
+
+		goto write_config;
+	} else
+		security = network_get_security(network);
+
+	if (security == SECURITY_PSK) {
+		if (!IE_AKM_IS_PSK(config->akm_suites)) {
+			l_warn("Network is PSK but DPP config is not!");
+			return false;
+		}
+	} else {
+		l_warn("Unsupported network security %s",
+				security_to_str(security));
+		return false;
+	}
+
+write_config:
+	path = storage_get_network_file_path(security, config->ssid);
+
+	if (l_settings_load_from_file(settings, path)) {
+		/* Remove any existing Security keys */
+		l_settings_remove_group(settings, "Security");
+	}
+
+	if (security == SECURITY_PSK)
+		dpp_write_psk_config(config, settings);
 
 	if (config->send_hostname)
 		l_settings_set_bool(settings, "IPv4", "SendHostname", true);
@@ -849,8 +930,10 @@ static void dpp_write_config(struct dpp_configuration *config,
 		l_settings_set_bool(settings, "Settings", "Hidden", true);
 
 	l_debug("Storing credential for '%s(%s)'", config->ssid,
-						security_to_str(SECURITY_PSK));
-	storage_network_sync(SECURITY_PSK, config->ssid, settings);
+						security_to_str(security));
+	storage_network_sync(security, config->ssid, settings);
+
+	return true;
 }
 
 static void dpp_scan_triggered(int err, void *user_data)
@@ -1131,7 +1214,8 @@ static void dpp_handle_config_response_frame(const struct mmpdu_header *frame,
 			bss = network_bss_select(network, true);
 	}
 
-	dpp_write_config(config, network);
+	if (!dpp_write_config(config, network))
+		goto free_config;
 
 	send_config_result(dpp, dpp->peer_addr);
 
@@ -1159,17 +1243,18 @@ static void dpp_handle_config_response_frame(const struct mmpdu_header *frame,
 		}
 	}
 
+free_config:
 	dpp_configuration_free(config);
 	dpp_reset(dpp);
 }
 
-static void dpp_send_config_response(struct dpp_sm *dpp, uint8_t status)
+static void dpp_send_config_response(struct dpp_sm *dpp, uint8_t status,
+					const char *json)
 {
-	_auto_(l_free) char *json = NULL;
 	struct iovec iov[3];
 	uint8_t hdr[41];
-	uint8_t attrs[512];
-	size_t json_len;
+	size_t json_len = json ? strlen(json) : 0;
+	uint8_t attrs[256 + json_len];
 	uint8_t *ptr = hdr + 24;
 
 	memset(hdr, 0, sizeof(hdr));
@@ -1211,10 +1296,7 @@ static void dpp_send_config_response(struct dpp_sm *dpp, uint8_t status)
 	 * included. For now IWD's basic DPP implementation will assume
 	 * STATUS_CONFIGURE_FAILURE which only includes the E-Nonce.
 	 */
-	if (status == DPP_STATUS_OK) {
-		json = dpp_configuration_to_json(dpp->config);
-		json_len = strlen(json);
-
+	if (status == DPP_STATUS_OK)
 		ptr += dpp_append_wrapped_data(attrs + 2, ptr - attrs - 2,
 						NULL, 0, ptr, sizeof(attrs),
 						dpp->ke, dpp->key_len, 2,
@@ -1222,7 +1304,7 @@ static void dpp_send_config_response(struct dpp_sm *dpp, uint8_t status)
 						dpp->nonce_len, dpp->e_nonce,
 						DPP_ATTR_CONFIGURATION_OBJECT,
 						json_len, json);
-	} else
+	else
 		ptr += dpp_append_wrapped_data(attrs + 2, ptr - attrs - 2,
 						NULL, 0, ptr, sizeof(attrs),
 						dpp->ke, dpp->key_len, 2,
@@ -1272,6 +1354,7 @@ static void dpp_handle_config_request_frame(const struct mmpdu_header *frame,
 	struct json_iter jsiter;
 	_auto_(l_free) char *tech = NULL;
 	_auto_(l_free) char *role = NULL;
+	_auto_(l_free) char *config_object = NULL;
 
 	if (dpp->state != DPP_STATE_AUTHENTICATING) {
 		l_debug("Configuration request in wrong state");
@@ -1398,12 +1481,13 @@ static void dpp_handle_config_request_frame(const struct mmpdu_header *frame,
 
 	dpp->state = DPP_STATE_CONFIGURING;
 
-	dpp_send_config_response(dpp, DPP_STATUS_OK);
+	config_object = dpp_psk_config_to_json(dpp->config);
+	dpp_send_config_response(dpp, DPP_STATUS_OK, config_object);
 
 	return;
 
 configure_failure:
-	dpp_send_config_response(dpp, DPP_STATUS_CONFIGURE_FAILURE);
+	dpp_send_config_response(dpp, DPP_STATUS_CONFIGURE_FAILURE, NULL);
 	/*
 	 * The other peer is still authenticated, and can potentially send
 	 * additional requests so keep this session alive.
@@ -1690,7 +1774,8 @@ static void authenticate_confirm(struct dpp_sm *dpp, const uint8_t *from,
 	dpp_reset_protocol_timer(dpp, DPP_AUTH_PROTO_TIMEOUT);
 
 	if (dpp->role == DPP_CAPABILITY_ENROLLEE)
-		dpp_configuration_start(dpp, from);
+		dpp_configuration_start(dpp, from,
+					DPP_CONFIG_REQUEST_DEFAULT_OBJECT);
 
 	return;
 
@@ -1995,7 +2080,7 @@ static void dpp_offchannel_timeout(int error, void *user_data)
 
 	switch (dpp->state) {
 	case DPP_STATE_PKEX_EXCHANGE:
-		if (dpp->role != DPP_CAPABILITY_CONFIGURATOR || !dpp->agent)
+		if (dpp->role != DPP_CAPABILITY_CONFIGURATOR || !dpp_agent_name)
 			break;
 
 		/*
@@ -2004,7 +2089,7 @@ static void dpp_offchannel_timeout(int error, void *user_data)
 		 * for our response so cancel the request and continue waiting
 		 * for another request
 		 */
-		if (dpp->agent->pending_id) {
+		if (dpp->agent_request_id) {
 			dpp_free_pending_pkex_data(dpp);
 			dpp_agent_cancel(dpp);
 		}
@@ -2491,7 +2576,8 @@ static void authenticate_response(struct dpp_sm *dpp, const uint8_t *from,
 	dpp_send_authenticate_confirm(dpp);
 
 	if (dpp->role == DPP_CAPABILITY_ENROLLEE)
-		dpp_configuration_start(dpp, from);
+		dpp_configuration_start(dpp, from,
+					DPP_CONFIG_REQUEST_DEFAULT_OBJECT);
 
 }
 
@@ -3134,10 +3220,10 @@ static void dpp_pkex_agent_reply(struct l_dbus_message *message,
 	const char *error, *text;
 	const char *code;
 
-	dpp->agent->pending_id = 0;
+	dpp->agent_request_id = 0;
 
-	l_debug("SharedCodeAgent %s path %s replied", dpp->agent->owner,
-			dpp->agent->path);
+	l_debug("DeviceProvisioningAgent %s path %s replied", dpp_agent_name,
+			dpp_agent_path);
 
 	if (l_dbus_message_get_error(message, &error, &text)) {
 		l_error("RequestSharedCode(%s) returned %s(\"%s\")",
@@ -3146,7 +3232,7 @@ static void dpp_pkex_agent_reply(struct l_dbus_message *message,
 	}
 
 	if (!l_dbus_message_get_arguments(message, "s", &code)) {
-		l_debug("Invalid arguments, check SharedCodeAgent!");
+		l_debug("Invalid arguments, check DeviceProvisioningAgent!");
 		goto reset;
 	}
 
@@ -3163,25 +3249,25 @@ static bool dpp_pkex_agent_request(struct dpp_sm *dpp)
 {
 	struct l_dbus_message *msg;
 
-	if (!dpp->agent)
+	if (!dpp_agent_name)
 		return false;
 
-	if (L_WARN_ON(dpp->agent->pending_id))
+	if (L_WARN_ON(dpp->agent_request_id))
 		return false;
 
 	msg = l_dbus_message_new_method_call(dbus_get_bus(),
-						dpp->agent->owner,
-						dpp->agent->path,
-						IWD_SHARED_CODE_AGENT_INTERFACE,
+						dpp_agent_name,
+						dpp_agent_path,
+						IWD_DPP_AGENT_INTERFACE,
 						"RequestSharedCode");
 	l_dbus_message_set_arguments(msg, "s", dpp->pkex_id);
 
 
-	dpp->agent->pending_id = l_dbus_send_with_reply(dbus_get_bus(),
+	dpp->agent_request_id = l_dbus_send_with_reply(dbus_get_bus(),
 							msg,
 							dpp_pkex_agent_reply,
 							dpp, NULL);
-	return dpp->agent->pending_id != 0;
+	return dpp->agent_request_id != 0;
 }
 
 static void dpp_handle_pkex_exchange_request(struct dpp_sm *dpp,
@@ -4169,11 +4255,15 @@ static struct l_dbus_message *dpp_start_configurator_common(
 	dpp->state = DPP_STATE_PRESENCE;
 
 	if (!responder) {
-		if (!l_dbus_message_get_arguments(message, "s", &uri))
-			return dbus_error_invalid_args(message);
+		if (!l_dbus_message_get_arguments(message, "s", &uri)) {
+			reply = dbus_error_invalid_args(message);
+			goto error;
+		}
 
-		if (!dpp_configurator_start_presence(dpp, uri))
-			return dbus_error_invalid_args(message);
+		if (!dpp_configurator_start_presence(dpp, uri)) {
+			reply = dbus_error_invalid_args(message);
+			goto error;
+		}
 
 		/* Since we have the peer's URI generate the keys now */
 		l_getrandom(dpp->i_nonce, dpp->nonce_len);
@@ -4196,6 +4286,10 @@ static struct l_dbus_message *dpp_start_configurator_common(
 	dpp->config = dpp_configuration_new(settings,
 						network_get_ssid(network),
 						hs->akm_suite);
+	if (!dpp->config) {
+		reply = dbus_error_not_supported(message);
+		goto error;
+	}
 
 	dpp_property_changed_notify(dpp);
 
@@ -4208,6 +4302,10 @@ static struct l_dbus_message *dpp_start_configurator_common(
 
 	l_dbus_message_set_arguments(reply, "s", dpp->uri);
 
+	return reply;
+
+error:
+	dpp_reset(dpp);
 	return reply;
 }
 
@@ -4542,35 +4640,8 @@ invalid_args:
 	return dbus_error_invalid_args(message);
 }
 
-static void pkex_agent_disconnect(struct l_dbus *dbus, void *user_data)
-{
-	struct dpp_sm *dpp = user_data;
-
-	l_debug("SharedCodeAgent %s disconnected", dpp->agent->path);
-
-	dpp_reset(dpp);
-}
-
-static void dpp_create_agent(struct dpp_sm *dpp, const char *path,
-					struct l_dbus_message *message)
-{
-	const char *sender = l_dbus_message_get_sender(message);
-
-	dpp->agent = l_new(struct pkex_agent, 1);
-	dpp->agent->owner = l_strdup(sender);
-	dpp->agent->path = l_strdup(path);
-	dpp->agent->disconnect_watch = l_dbus_add_disconnect_watch(
-							dbus_get_bus(),
-							sender,
-							pkex_agent_disconnect,
-							dpp, NULL);
-
-	l_debug("Registered a SharedCodeAgent on path %s", path);
-}
-
 static struct l_dbus_message *dpp_start_pkex_configurator(struct dpp_sm *dpp,
 					const char *key, const char *identifier,
-					const char *agent_path,
 					struct l_dbus_message *message)
 {
 	struct handshake_state *hs = netdev_get_handshake(dpp->netdev);
@@ -4602,9 +4673,6 @@ static struct l_dbus_message *dpp_start_pkex_configurator(struct dpp_sm *dpp,
 	if (key)
 		dpp->pkex_key = l_strdup(key);
 
-	if (agent_path)
-		dpp_create_agent(dpp, agent_path, message);
-
 	dpp->role = DPP_CAPABILITY_CONFIGURATOR;
 	dpp->state = DPP_STATE_PKEX_EXCHANGE;
 	dpp->interface = DPP_INTERFACE_PKEX;
@@ -4613,6 +4681,10 @@ static struct l_dbus_message *dpp_start_pkex_configurator(struct dpp_sm *dpp,
 	dpp->config = dpp_configuration_new(network_get_settings(network),
 						network_get_ssid(network),
 						hs->akm_suite);
+	if (!dpp->config) {
+		dpp_reset(dpp);
+		return dbus_error_not_supported(message);
+	}
 
 	dpp_reset_protocol_timer(dpp, DPP_PKEX_PROTO_TIMEOUT);
 	dpp_property_changed_notify(dpp);
@@ -4642,7 +4714,7 @@ static struct l_dbus_message *dpp_dbus_pkex_configure_enrollee(
 	if (!dpp_parse_pkex_args(message, &key, &id, NULL, NULL))
 		return dbus_error_invalid_args(message);
 
-	return dpp_start_pkex_configurator(dpp, key, id, NULL, message);
+	return dpp_start_pkex_configurator(dpp, key, id, message);
 }
 
 static struct l_dbus_message *dpp_dbus_pkex_start_configurator(
@@ -4651,12 +4723,8 @@ static struct l_dbus_message *dpp_dbus_pkex_start_configurator(
 						void *user_data)
 {
 	struct dpp_sm *dpp = user_data;
-	const char *path;
 
-	if (!l_dbus_message_get_arguments(message, "o", &path))
-		return dbus_error_invalid_args(message);
-
-	return dpp_start_pkex_configurator(dpp, NULL, NULL, path, message);
+	return dpp_start_pkex_configurator(dpp, NULL, NULL, message);
 }
 
 static void dpp_setup_interface(struct l_dbus_interface *interface)
@@ -4701,7 +4769,7 @@ static void dpp_setup_pkex_interface(struct l_dbus_interface *interface)
 	l_dbus_interface_method(interface, "ConfigureEnrollee", 0,
 			dpp_dbus_pkex_configure_enrollee, "", "a{sv}", "args");
 	l_dbus_interface_method(interface, "StartConfigurator", 0,
-			dpp_dbus_pkex_start_configurator, "", "o", "path");
+			dpp_dbus_pkex_start_configurator, "", "");
 
 	l_dbus_interface_property(interface, "Started", 0, "b",
 			dpp_pkex_get_started, NULL);
@@ -4769,6 +4837,9 @@ static void dpp_exit(void)
 	nl80211 = NULL;
 
 	l_queue_destroy(dpp_list, (l_queue_destroy_func_t) dpp_free);
+
+	if (dpp_agent_name)
+		dpp_agent_release();
 }
 
 IWD_MODULE(dpp, dpp_init, dpp_exit);
