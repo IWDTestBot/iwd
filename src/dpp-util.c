@@ -282,21 +282,14 @@ static const char *dpp_akm_to_string(enum ie_rsn_akm_suite akm_suite)
 	}
 }
 
-char *dpp_configuration_to_json(struct dpp_configuration *config)
+static char *dpp_configuration_to_json(struct dpp_configuration *config,
+					const char *creds)
 {
-	_auto_(l_free) char *pass_or_psk;
 	_auto_(l_free) char *ssid;
 
 	ssid = l_malloc(config->ssid_len + 1);
 	memcpy(ssid, config->ssid, config->ssid_len);
 	ssid[config->ssid_len] = '\0';
-
-	if (config->passphrase)
-		pass_or_psk = l_strdup_printf("\"pass\":\"%s\"",
-						config->passphrase);
-	else
-		pass_or_psk = l_strdup_printf("\"psk\":\"%s\"",
-						config->psk);
 
 	return l_strdup_printf("{\"wi-fi_tech\":\"infra\","
 				"\"discovery\":{"
@@ -310,9 +303,23 @@ char *dpp_configuration_to_json(struct dpp_configuration *config)
 					"\"hidden\":%s}"
 				"}",
 				ssid, dpp_akm_to_string(config->akm_suites),
-				pass_or_psk,
+				creds,
 				config->send_hostname ? "true" : "false",
 				config->hidden ? "true" : "false");
+}
+
+char *dpp_psk_config_to_json(struct dpp_configuration *config)
+{
+	_auto_(l_free) char *pass_or_psk;
+
+	if (config->passphrase)
+		pass_or_psk = l_strdup_printf("\"pass\":\"%s\"",
+						config->passphrase);
+	else
+		pass_or_psk = l_strdup_printf("\"psk\":\"%s\"",
+						config->psk);
+
+	return dpp_configuration_to_json(config, pass_or_psk);
 }
 
 static struct dpp_configuration *dpp_configuration_new_psk(

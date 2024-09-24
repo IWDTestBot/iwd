@@ -1212,7 +1212,7 @@ static void dpp_send_config_response(struct dpp_sm *dpp, uint8_t status)
 	 * STATUS_CONFIGURE_FAILURE which only includes the E-Nonce.
 	 */
 	if (status == DPP_STATUS_OK) {
-		json = dpp_configuration_to_json(dpp->config);
+		json = dpp_psk_config_to_json(dpp->config);
 		json_len = strlen(json);
 
 		ptr += dpp_append_wrapped_data(attrs + 2, ptr - attrs - 2,
