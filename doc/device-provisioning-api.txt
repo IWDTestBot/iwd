@@ -132,14 +132,13 @@ Object path	/net/connman/iwd/{phy0,phy1,...}/{1,2,...}
 			Possible errors:	net.connman.iwd.Busy
 						net.connman.iwd.InvalidArguments
 
-		void StartConfigurator(object agent_path)
+		void StartConfigurator(void)
 
-			Start a shared code configurator using an agent
-			(distingushed by 'agent_path') to obtain the shared
-			code. This method is meant for an automated use case
-			where a configurator is capable of configuring multiple
-			enrollees, and distinguishing between them by their
-			identifier.
+			Start a shared code configurator which depends on an
+			agent (registered via AgentManager). This method is
+			meant for an automated use case where a configurator is
+			capable of configuring multiple enrollees, and
+			distinguishing between them by their identifier.
 
 			If the agent service disappears during the shared code
 			exchange it will be stopped, and the protocol will fail.
@@ -180,38 +179,3 @@ Properties	boolean Started [readonly]
 			Indicates the DPP role. Possible values are "enrollee"
 			or "configurator". This property is only available when
 			Started is true.
-
-SharedCodeAgent hierarchy
-=========================
-
-Service		unique name
-Interface	net.connman.iwd.SharedCodeAgent [Experimental]
-Object path	freely definable
-
-Methods		void Release() [noreply]
-
-			This method gets called when the service daemon
-			unregisters the agent.
-
-		string RequestSharedCode(string identifier)
-
-			This method gets called when a shared code is requested
-			for a particular enrollee, distingushed by the
-			identifier. The shared code agent should lookup the
-			identifier and return the shared code, or return an
-			error if not found.
-
-			Possible Errors:	[service].Error.Canceled
-						[service].Error.NotFound
-
-		void Cancel(string reason) [noreply]
-
-			This method gets called to indicate that the agent
-			request failed before a reply was returned. The
-			argument will indicate why the request is being
-			cancelled and may be "user-canceled", "timed-out" or
-			"shutdown".
-
-Examples	Requesting a shared code for an enrollee identified by "foo"
-
-			RequestSharedCode("foo") ==> "super_secret_code"
