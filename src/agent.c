@@ -32,6 +32,7 @@
 #include "src/agent.h"
 #include "src/iwd.h"
 #include "src/module.h"
+#include "src/dpp.h"
 
 static unsigned int next_request_id = 0;
 
@@ -639,6 +640,54 @@ static struct l_dbus_message *netconfig_agent_unregister(struct l_dbus *dbus,
 	return reply;
 }
 
+static struct l_dbus_message *device_provisioning_agent_register(
+						struct l_dbus *dbus,
+						struct l_dbus_message *message,
+						void *user_data)
+{
+	struct l_dbus_message *reply;
+	const char *path;
+	int r;
+
+	l_debug("");
+
+	if (!l_dbus_message_get_arguments(message, "o", &path))
+		return dbus_error_invalid_args(message);
+
+	r = dpp_register_agent(l_dbus_message_get_sender(message), path);
+	if (r)
+		return dbus_error_from_errno(r, message);
+
+	l_debug("device provisioning agent %s path %s",
+		l_dbus_message_get_sender(message), path);
+
+	reply = l_dbus_message_new_method_return(message);
+	l_dbus_message_set_arguments(reply, "");
+	return reply;
+}
+
+static struct l_dbus_message *device_provisioning_agent_unregister(struct l_dbus *dbus,
+						struct l_dbus_message *message,
+					void *user_data)
+{
+	struct l_dbus_message *reply;
+	const char *path;
+	int r;
+
+	l_debug("");
+
+	if (!l_dbus_message_get_arguments(message, "o", &path))
+		return dbus_error_invalid_args(message);
+
+	r = dpp_unregister_agent(l_dbus_message_get_sender(message), path);
+	if (r)
+		return dbus_error_from_errno(r, message);
+
+	reply = l_dbus_message_new_method_return(message);
+	l_dbus_message_set_arguments(reply, "");
+	return reply;
+}
+
 static void setup_agent_interface(struct l_dbus_interface *interface)
 {
 	l_dbus_interface_method(interface, "RegisterAgent", 0,
@@ -654,6 +703,15 @@ static void setup_agent_interface(struct l_dbus_interface *interface)
 	l_dbus_interface_method(interface,
 				"UnregisterNetworkConfigurationAgent", 0,
 				netconfig_agent_unregister, "", "o", "path");
+
+	l_dbus_interface_method(interface,
+				"RegisterDeviceProvisioningAgent", 0,
+				device_provisioning_agent_register,
+				"", "o", "path");
+	l_dbus_interface_method(interface,
+				"UnregisterDeviceProvisioningAgent", 0,
+				device_provisioning_agent_unregister,
+				"", "o", "path");
 }
 
 static bool release_agent(void *data, void *user_data)
