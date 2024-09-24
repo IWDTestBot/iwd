@@ -1163,13 +1163,13 @@ static void dpp_handle_config_response_frame(const struct mmpdu_header *frame,
 	dpp_reset(dpp);
 }
 
-static void dpp_send_config_response(struct dpp_sm *dpp, uint8_t status)
+static void dpp_send_config_response(struct dpp_sm *dpp, uint8_t status,
+					const char *json)
 {
-	_auto_(l_free) char *json = NULL;
 	struct iovec iov[3];
 	uint8_t hdr[41];
-	uint8_t attrs[512];
-	size_t json_len;
+	size_t json_len = json ? strlen(json) : 0;
+	uint8_t attrs[256 + json_len];
 	uint8_t *ptr = hdr + 24;
 
 	memset(hdr, 0, sizeof(hdr));
@@ -1211,10 +1211,7 @@ static void dpp_send_config_response(struct dpp_sm *dpp, uint8_t status)
 	 * included. For now IWD's basic DPP implementation will assume
 	 * STATUS_CONFIGURE_FAILURE which only includes the E-Nonce.
 	 */
-	if (status == DPP_STATUS_OK) {
-		json = dpp_psk_config_to_json(dpp->config);
-		json_len = strlen(json);
-
+	if (status == DPP_STATUS_OK)
 		ptr += dpp_append_wrapped_data(attrs + 2, ptr - attrs - 2,
 						NULL, 0, ptr, sizeof(attrs),
 						dpp->ke, dpp->key_len, 2,
@@ -1222,7 +1219,7 @@ static void dpp_send_config_response(struct dpp_sm *dpp, uint8_t status)
 						dpp->nonce_len, dpp->e_nonce,
 						DPP_ATTR_CONFIGURATION_OBJECT,
 						json_len, json);
-	} else
+	else
 		ptr += dpp_append_wrapped_data(attrs + 2, ptr - attrs - 2,
 						NULL, 0, ptr, sizeof(attrs),
 						dpp->ke, dpp->key_len, 2,
@@ -1272,6 +1269,7 @@ static void dpp_handle_config_request_frame(const struct mmpdu_header *frame,
 	struct json_iter jsiter;
 	_auto_(l_free) char *tech = NULL;
 	_auto_(l_free) char *role = NULL;
+	_auto_(l_free) char *config_object = NULL;
 
 	if (dpp->state != DPP_STATE_AUTHENTICATING) {
 		l_debug("Configuration request in wrong state");
@@ -1398,12 +1396,13 @@ static void dpp_handle_config_request_frame(const struct mmpdu_header *frame,
 
 	dpp->state = DPP_STATE_CONFIGURING;
 
-	dpp_send_config_response(dpp, DPP_STATUS_OK);
+	config_object = dpp_psk_config_to_json(dpp->config);
+	dpp_send_config_response(dpp, DPP_STATUS_OK, config_object);
 
 	return;
 
 configure_failure:
-	dpp_send_config_response(dpp, DPP_STATUS_CONFIGURE_FAILURE);
+	dpp_send_config_response(dpp, DPP_STATUS_CONFIGURE_FAILURE, NULL);
 	/*
 	 * The other peer is still authenticated, and can potentially send
 	 * additional requests so keep this session alive.
