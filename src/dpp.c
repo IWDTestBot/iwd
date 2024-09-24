@@ -832,25 +832,57 @@ static void send_config_result(struct dpp_sm *dpp, const uint8_t *to)
 	dpp_send_frame(dpp, iov, 2, dpp->current_freq);
 }
 
-static void dpp_write_config(struct dpp_configuration *config,
-				struct network *network)
+static void dpp_write_psk_config(struct dpp_configuration *config,
+					struct l_settings *settings)
 {
-	_auto_(l_settings_free) struct l_settings *settings = l_settings_new();
-	_auto_(l_free) char *path;
-
-	path = storage_get_network_file_path(SECURITY_PSK, config->ssid);
-
-	if (l_settings_load_from_file(settings, path)) {
-		/* Remove any existing Security keys */
-		l_settings_remove_group(settings, "Security");
-	}
-
 	if (config->passphrase)
 		l_settings_set_string(settings, "Security", "Passphrase",
 				config->passphrase);
 	else if (config->psk)
 		l_settings_set_string(settings, "Security", "PreSharedKey",
 				config->psk);
+}
+
+static bool dpp_write_config(struct dpp_configuration *config,
+				struct network *network)
+{
+	_auto_(l_settings_free) struct l_settings *settings = l_settings_new();
+	_auto_(l_free) char *path = NULL;
+	enum security security;
+
+	if (!network) {
+		l_warn("Network not seen in results, can't validate security");
+
+		if (IE_AKM_IS_PSK(config->akm_suites))
+			security = SECURITY_PSK;
+		else
+			return false;
+
+		goto write_config;
+	} else
+		security = network_get_security(network);
+
+	if (security == SECURITY_PSK) {
+		if (!IE_AKM_IS_PSK(config->akm_suites)) {
+			l_warn("Network is PSK but DPP config is not!");
+			return false;
+		}
+	} else {
+		l_warn("Unsupported network security %s",
+				security_to_str(security));
+		return false;
+	}
+
+write_config:
+	path = storage_get_network_file_path(security, config->ssid);
+
+	if (l_settings_load_from_file(settings, path)) {
+		/* Remove any existing Security keys */
+		l_settings_remove_group(settings, "Security");
+	}
+
+	if (security == SECURITY_PSK)
+		dpp_write_psk_config(config, settings);
 
 	if (config->send_hostname)
 		l_settings_set_bool(settings, "IPv4", "SendHostname", true);
@@ -859,8 +891,10 @@ static void dpp_write_config(struct dpp_configuration *config,
 		l_settings_set_bool(settings, "Settings", "Hidden", true);
 
 	l_debug("Storing credential for '%s(%s)'", config->ssid,
-						security_to_str(SECURITY_PSK));
-	storage_network_sync(SECURITY_PSK, config->ssid, settings);
+						security_to_str(security));
+	storage_network_sync(security, config->ssid, settings);
+
+	return true;
 }
 
 static void dpp_scan_triggered(int err, void *user_data)
@@ -1141,7 +1175,8 @@ static void dpp_handle_config_response_frame(const struct mmpdu_header *frame,
 			bss = network_bss_select(network, true);
 	}
 
-	dpp_write_config(config, network);
+	if (!dpp_write_config(config, network))
+		goto free_config;
 
 	send_config_result(dpp, dpp->peer_addr);
 
@@ -1169,6 +1204,7 @@ static void dpp_handle_config_response_frame(const struct mmpdu_header *frame,
 		}
 	}
 
+free_config:
 	dpp_configuration_free(config);
 	dpp_reset(dpp);
 }
