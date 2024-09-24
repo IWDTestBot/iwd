@@ -4169,11 +4169,15 @@ static struct l_dbus_message *dpp_start_configurator_common(
 	dpp->state = DPP_STATE_PRESENCE;
 
 	if (!responder) {
-		if (!l_dbus_message_get_arguments(message, "s", &uri))
-			return dbus_error_invalid_args(message);
+		if (!l_dbus_message_get_arguments(message, "s", &uri)) {
+			reply = dbus_error_invalid_args(message);
+			goto error;
+		}
 
-		if (!dpp_configurator_start_presence(dpp, uri))
-			return dbus_error_invalid_args(message);
+		if (!dpp_configurator_start_presence(dpp, uri)) {
+			reply = dbus_error_invalid_args(message);
+			goto error;
+		}
 
 		/* Since we have the peer's URI generate the keys now */
 		l_getrandom(dpp->i_nonce, dpp->nonce_len);
@@ -4196,6 +4200,10 @@ static struct l_dbus_message *dpp_start_configurator_common(
 	dpp->config = dpp_configuration_new(settings,
 						network_get_ssid(network),
 						hs->akm_suite);
+	if (!dpp->config) {
+		reply = dbus_error_not_supported(message);
+		goto error;
+	}
 
 	dpp_property_changed_notify(dpp);
 
@@ -4208,6 +4216,10 @@ static struct l_dbus_message *dpp_start_configurator_common(
 
 	l_dbus_message_set_arguments(reply, "s", dpp->uri);
 
+	return reply;
+
+error:
+	dpp_reset(dpp);
 	return reply;
 }
 
@@ -4613,6 +4625,10 @@ static struct l_dbus_message *dpp_start_pkex_configurator(struct dpp_sm *dpp,
 	dpp->config = dpp_configuration_new(network_get_settings(network),
 						network_get_ssid(network),
 						hs->akm_suite);
+	if (!dpp->config) {
+		dpp_reset(dpp);
+		return dbus_error_not_supported(message);
+	}
 
 	dpp_reset_protocol_timer(dpp, DPP_PKEX_PROTO_TIMEOUT);
 	dpp_property_changed_notify(dpp);
