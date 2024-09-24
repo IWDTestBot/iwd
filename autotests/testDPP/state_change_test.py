@@ -4,14 +4,8 @@ import unittest
 import sys
 
 sys.path.append('../util')
-from iwd import IWD, SharedCodeAgent, DeviceState
-from iwd import DeviceProvisioning
-from wpas import Wpas
+from iwd import IWD
 from hostapd import HostapdCLI
-from hwsim import Hwsim
-from config import ctx
-from time import time
-import os
 
 class Test(unittest.TestCase):
     def auto_connect(self):
