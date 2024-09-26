@@ -1162,6 +1162,7 @@ static bool remove_ifindex(void *data, void *user_data)
 {
 	struct ft_info *info = data;
 	uint32_t ifindex = L_PTR_TO_UINT(user_data);
+	bool need_free = info->parsed;
 
 	if (info->ifindex != ifindex)
 		return false;
@@ -1170,7 +1171,15 @@ static bool remove_ifindex(void *data, void *user_data)
 		offchannel_cancel(netdev_get_wdev_id(netdev_find(ifindex)),
 					info->offchannel_id);
 
-	ft_info_destroy(info);
+	/*
+	 * If we hadn't yet got an authenticate response or there was something
+	 * wrong with parsing (i.e. !info->parsed) the offchannel destroy
+	 * callback will end up destroying the info. Otherwise we need to
+	 * destroy it here.
+	 */
+	if (need_free)
+		ft_info_destroy(info);
+
 	return true;
 }
 
