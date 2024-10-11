@@ -150,6 +150,8 @@ struct wiphy {
 	bool ap_probe_resp_offload : 1;
 	bool supports_uapsd : 1;
 	bool supports_cmd_offchannel : 1;
+	/* Bit 0 for TX, Bit 1 for RX */
+	uint8_t supports_auth_frame : 2;
 };
 
 static struct l_queue *wiphy_list = NULL;
@@ -936,6 +938,11 @@ bool wiphy_supports_uapsd(const struct wiphy *wiphy)
 bool wiphy_supports_cmd_offchannel(const struct wiphy *wiphy)
 {
 	return wiphy->supports_cmd_offchannel;
+}
+
+bool wiphy_supports_auth_frame(const struct wiphy *wiphy)
+{
+	return wiphy->supports_auth_frame == 0x03;
 }
 
 const uint8_t *wiphy_get_ht_capabilities(const struct wiphy *wiphy,
@@ -1816,6 +1823,45 @@ static void parse_iftype_extended_capabilities(struct wiphy *wiphy,
 	}
 }
 
+static void wiphy_parse_frame_types(struct wiphy *wiphy,
+					struct l_genl_attr *attr, bool tx)
+{
+	uint16_t type, len;
+	const void *data;
+
+	while (l_genl_attr_next(attr, NULL, NULL, NULL)) {
+		struct l_genl_attr types;
+
+		if (!l_genl_attr_recurse(attr, &types))
+			continue;
+
+		while (l_genl_attr_next(&types, &type, &len, &data)) {
+			uint16_t frame_type;
+
+			if (L_WARN_ON(type != NL80211_ATTR_FRAME_TYPE))
+				continue;
+
+			if (L_WARN_ON(len != 2))
+				continue;
+
+			frame_type = l_get_le16(data);
+
+			switch (frame_type) {
+			/* Authentication */
+			case 0x00b0:
+				if (tx)
+					wiphy->supports_auth_frame |= 0x01;
+				else
+					wiphy->supports_auth_frame |= 0x02;
+				break;
+			default:
+				break;
+			}
+
+		}
+	}
+}
+
 static void wiphy_parse_attributes(struct wiphy *wiphy,
 					struct l_genl_msg *msg)
 {
@@ -1902,6 +1948,14 @@ static void wiphy_parse_attributes(struct wiphy *wiphy,
 			break;
 		case NL80211_ATTR_SUPPORT_AP_UAPSD:
 			wiphy->supports_uapsd = true;
+			break;
+		case NL80211_ATTR_TX_FRAME_TYPES:
+			if (l_genl_attr_recurse(&attr, &nested))
+				wiphy_parse_frame_types(wiphy, &nested, true);
+			break;
+		case NL80211_ATTR_RX_FRAME_TYPES:
+			if (l_genl_attr_recurse(&attr, &nested))
+				wiphy_parse_frame_types(wiphy, &nested, false);
 			break;
 		}
 	}
