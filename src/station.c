@@ -2162,14 +2162,29 @@ static bool station_can_fast_transition(struct station *station,
 			return false;
 	}
 
-	/*
-	 * FT-over-Air in its current form relies on CMD_REMAIN_ON_CHANNEL. Some
-	 * drivers do not support this so only allow over-DS if this is the case
-	 */
-	if (!(hs->mde[4] & 1) &&
-			!wiphy_supports_cmd_offchannel(station->wiphy)) {
-		l_debug("FT-over-Air needs offchannel, using reassociation");
-		return false;
+	if (!(hs->mde[4] & 1)) {
+		/*
+		 * FT-over-Air in its current form relies on
+		 * CMD_REMAIN_ON_CHANNEL. Some drivers do not support this so
+		 * only allow over-DS if this is the case
+		 */
+		if (!wiphy_supports_cmd_offchannel(station->wiphy)) {
+			l_debug("FT-over-Air needs offchannel, using "
+				"reassociation");
+			return false;
+		}
+
+		/*
+		 * TODO: if drivers don't support TX/RX of auth frames via
+		 *       CMD_FRAME IWD could choose to use CMD_AUTHENTICATE
+		 *       instead. For now just avoid FT roaming and let these
+		 *       drivers roam via reassociation.
+		 */
+		if (!wiphy_supports_auth_frame(station->wiphy)) {
+			l_debug("FT-over-Air needs CMD_FRAME auth, using "
+				"reassociation");
+			return false;
+		}
 	}
 
 	return true;
