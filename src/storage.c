@@ -596,7 +596,7 @@ struct l_settings *storage_network_open(enum security type, const char *ssid)
 	struct l_settings *settings;
 	_auto_(l_free) char *path = NULL;
 
-	if (ssid == NULL)
+	if (!ssid)
 		return NULL;
 
 	path = storage_get_network_file_path(type, ssid);
@@ -623,7 +623,7 @@ int storage_network_touch(enum security type, const char *ssid)
 	char *path;
 	int ret;
 
-	if (ssid == NULL)
+	if (!ssid)
 		return -EINVAL;
 
 	path = storage_get_network_file_path(type, ssid);
