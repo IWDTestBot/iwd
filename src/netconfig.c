@@ -710,7 +710,7 @@ struct netconfig *netconfig_new(uint32_t ifindex)
 	netconfig_commit_init(netconfig);
 
 	debug_level = getenv("IWD_DHCP_DEBUG");
-	if (debug_level != NULL) {
+	if (debug_level) {
 		if (!strcmp("debug", debug_level))
 			dhcp_priority = L_LOG_DEBUG;
 		else if (!strcmp("info", debug_level))

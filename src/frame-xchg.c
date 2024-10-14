@@ -342,8 +342,7 @@ static bool frame_watch_group_io_read(struct l_io *io, void *user_data)
 
 	nlmsg_len = bytes_read;
 
-	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
-					cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
 		struct nl_pktinfo pktinfo;
 
 		if (cmsg->cmsg_level != SOL_NETLINK)
