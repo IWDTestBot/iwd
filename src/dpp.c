@@ -3861,11 +3861,11 @@ static void dpp_create(struct netdev *netdev)
 
 	frame_watch_add(netdev_get_wdev_id(netdev), 0, 0x00d0,
 				dpp_conf_response_prefix,
-				sizeof(dpp_conf_response_prefix),
+				sizeof(dpp_conf_response_prefix), false,
 				dpp_handle_config_response_frame, dpp, NULL);
 	frame_watch_add(netdev_get_wdev_id(netdev), 0, 0x00d0,
 				dpp_conf_request_prefix,
-				sizeof(dpp_conf_request_prefix),
+				sizeof(dpp_conf_request_prefix), false,
 				dpp_handle_config_request_frame, dpp, NULL);
 
 	dpp->known_network_watch = known_networks_watch_add(

@@ -5683,7 +5683,7 @@ static void add_frame_watches(struct netdev *netdev)
 	 */
 	frame_watch_add(netdev_get_wdev_id(netdev), 0, 0x00d0,
 			action_ap_roam_prefix, sizeof(action_ap_roam_prefix),
-			ap_roam_frame_event,
+			false, ap_roam_frame_event,
 			L_UINT_TO_PTR(netdev_get_ifindex(netdev)), NULL);
 }
 

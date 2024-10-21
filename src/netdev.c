@@ -5720,35 +5720,35 @@ static void netdev_add_station_frame_watches(struct netdev *netdev)
 
 	/* Subscribe to Management -> Action -> RM -> Neighbor Report frames */
 	frame_watch_add(wdev, 0, 0x00d0, action_neighbor_report_prefix,
-			sizeof(action_neighbor_report_prefix),
+			sizeof(action_neighbor_report_prefix), false,
 			netdev_neighbor_report_frame_event, netdev, NULL);
 
 	frame_watch_add(wdev, 0, 0x00d0, action_sa_query_resp_prefix,
-			sizeof(action_sa_query_resp_prefix),
+			sizeof(action_sa_query_resp_prefix), false,
 			netdev_sa_query_resp_frame_event, netdev, NULL);
 
 	frame_watch_add(wdev, 0, 0x00d0, action_sa_query_req_prefix,
-			sizeof(action_sa_query_req_prefix),
+			sizeof(action_sa_query_req_prefix), false,
 			netdev_sa_query_req_frame_event, netdev, NULL);
 
 	frame_watch_add(wdev, 0, 0x00d0, action_ft_response_prefix,
-			sizeof(action_ft_response_prefix),
+			sizeof(action_ft_response_prefix), false,
 			netdev_ft_response_frame_event, netdev, NULL);
 
 	frame_watch_add(wdev, 0, 0x00b0, auth_ft_response_prefix,
-			sizeof(auth_ft_response_prefix),
+			sizeof(auth_ft_response_prefix), false,
 			netdev_ft_auth_response_frame_event, netdev, NULL);
 
 	if (wiphy_supports_qos_set_map(netdev->wiphy))
 		frame_watch_add(wdev, 0, 0x00d0, action_qos_map_prefix,
-				sizeof(action_qos_map_prefix),
+				sizeof(action_qos_map_prefix), false,
 				netdev_qos_map_frame_event, netdev, NULL);
 
 	if (!wiphy_supports_cmds_auth_assoc(netdev->wiphy) &&
 			wiphy_has_feature(netdev->wiphy, NL80211_FEATURE_SAE))
 		frame_watch_add(wdev, 0, 0x00b0,
 				auth_sae_prefix, sizeof(auth_sae_prefix),
-				netdev_sae_external_auth_frame_event,
+				false, netdev_sae_external_auth_frame_event,
 				netdev, NULL);
 }
 
