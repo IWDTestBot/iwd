@@ -4163,10 +4163,11 @@ static void p2p_device_discovery_start(struct p2p_device *dev)
 						L_ARRAY_SIZE(channels_social)];
 
 	frame_watch_add(dev->wdev_id, FRAME_GROUP_P2P_LISTEN, 0x0040,
-			(uint8_t *) "", 0, p2p_device_probe_cb, dev, NULL);
+			(uint8_t *) "", 0, false,
+			p2p_device_probe_cb, dev, NULL);
 	frame_watch_add(dev->wdev_id, FRAME_GROUP_P2P_LISTEN, 0x00d0,
 			p2p_frame_go_neg_req.data, p2p_frame_go_neg_req.len,
-			p2p_device_go_negotiation_req_cb, dev, NULL);
+			false, p2p_device_go_negotiation_req_cb, dev, NULL);
 
 	p2p_device_scan_start(dev);
 }

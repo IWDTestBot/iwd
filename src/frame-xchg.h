@@ -45,6 +45,7 @@ enum frame_xchg_group {
 
 bool frame_watch_add(uint64_t wdev_id, uint32_t group, uint16_t frame_type,
 			const uint8_t *prefix, size_t prefix_len,
+			bool multicast_rx,
 			frame_watch_cb_t handler, void *user_data,
 			frame_xchg_destroy_func_t destroy);
 bool frame_watch_group_remove(uint64_t wdev_id, uint32_t group);
