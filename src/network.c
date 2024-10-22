@@ -911,6 +911,9 @@ int network_can_connect_bss(struct network *network, const struct scan_bss *bss)
 		return ret;
 	}
 
+	if (IE_AKM_IS_OWE(rsn.akm_suites) && wiphy_owe_disabled(wiphy))
+		return -EPERM;
+
 	if (!config || !config->have_transition_disable) {
 		if (band == BAND_FREQ_6_GHZ)
 			goto mfp_no_tkip;
