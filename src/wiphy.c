@@ -72,6 +72,7 @@ enum driver_flag {
 	DEFAULT_IF = 0x1,
 	FORCE_PAE = 0x2,
 	POWER_SAVE_DISABLE = 0x4,
+	OWE_DISABLE = 0x8,
 };
 
 struct driver_flag_name {
@@ -103,6 +104,7 @@ static const struct driver_flag_name driver_flag_names[] = {
 	{ "DefaultInterface", DEFAULT_IF },
 	{ "ForcePae",         FORCE_PAE },
 	{ "PowerSaveDisable", POWER_SAVE_DISABLE },
+	{ "OweDisable",       OWE_DISABLE },
 };
 
 struct wiphy {
@@ -342,7 +344,8 @@ wpa2_personal:
 		if (info->akm_suites & IE_RSN_AKM_SUITE_PSK)
 			return IE_RSN_AKM_SUITE_PSK;
 	} else if (security == SECURITY_NONE) {
-		if (info->akm_suites & IE_RSN_AKM_SUITE_OWE)
+		if (info->akm_suites & IE_RSN_AKM_SUITE_OWE &&
+					!wiphy_owe_disabled(wiphy))
 			return IE_RSN_AKM_SUITE_OWE;
 	}
 
@@ -714,6 +717,14 @@ bool wiphy_control_port_enabled(struct wiphy *wiphy)
 bool wiphy_power_save_disabled(struct wiphy *wiphy)
 {
 	if (wiphy->driver_flags & POWER_SAVE_DISABLE)
+		return true;
+
+	return false;
+}
+
+bool wiphy_owe_disabled(struct wiphy *wiphy)
+{
+	if (wiphy->driver_flags & OWE_DISABLE)
 		return true;
 
 	return false;
@@ -1347,6 +1358,9 @@ static void wiphy_print_basic_info(struct wiphy *wiphy)
 
 		if (wiphy->driver_flags & POWER_SAVE_DISABLE)
 			flags = l_strv_append(flags, "PowerSaveDisable");
+
+		if (wiphy->driver_flags & OWE_DISABLE)
+			flags = l_strv_append(flags, "OweDisable");
 
 		joined = l_strjoinv(flags, ' ');
 
