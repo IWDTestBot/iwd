@@ -1278,6 +1278,7 @@ struct scan_bss *network_bss_select(struct network *network,
 	struct l_queue *bss_list = network->bss_list;
 	const struct l_queue_entry *bss_entry;
 	struct scan_bss *candidate = NULL;
+	bool skipped_open = false;
 
 	for (bss_entry = l_queue_get_entries(bss_list); bss_entry;
 			bss_entry = bss_entry->next) {
@@ -1297,30 +1298,34 @@ struct scan_bss *network_bss_select(struct network *network,
 		if (!candidate)
 			candidate = bss;
 
+		/* check if temporarily blacklisted */
+		if (l_queue_find(network->blacklist, match_bss, bss))
+			continue;
+
+		if (blacklist_contains_bss(bss->addr))
+			continue;
+
 		/* OWE Transition BSS */
 		if (bss->owe_trans) {
 			/* Don't want to connect to the Open BSS if possible */
-			if (!bss->rsne)
+			if (!bss->rsne) {
+				skipped_open = true;
 				continue;
+			}
 
 			/* Candidate is not OWE, set this as new candidate */
 			if (!(candidate->owe_trans && candidate->rsne))
 				candidate = bss;
 		}
 
-		/* check if temporarily blacklisted */
-		if (l_queue_find(network->blacklist, match_bss, bss))
-			continue;
-
-		if (!blacklist_contains_bss(bss->addr))
-			return bss;
+		return candidate;
 	}
 
 	/*
 	 * No BSS was found, but if we are falling back to blacklisted BSS's we
 	 * can just use the first connectable candidate found above.
 	 */
-	if (fallback_to_blacklist)
+	if (fallback_to_blacklist || skipped_open)
 		return candidate;
 
 	return NULL;
