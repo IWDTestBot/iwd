@@ -292,6 +292,9 @@ static void scan_freq_append(uint32_t freq, void *user_data)
 {
 	struct scan_freq_append_data *data = user_data;
 
+	if (L_WARN_ON(!freq))
+		return;
+
 	l_genl_msg_append_attr(data->msg, data->count++, 4, &freq);
 }
 
