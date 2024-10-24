@@ -464,6 +464,11 @@ static void scan_channels_foreach(uint32_t channel, void *user_data)
 	uint32_t freq;
 
 	freq = band_channel_to_freq(channel, channels_data->band);
+	if (!freq) {
+		l_warn("invalid channel %u for band %u", channel,
+			channels_data->band);
+		return;
+	}
 
 	channels_data->func(freq, channels_data->user_data);
 }

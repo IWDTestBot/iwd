@@ -896,7 +896,7 @@ static const struct operating_class_info e4_operating_classes[] = {
 	},
 	{
 		.operating_class = 136,
-		.starting_frequency = 5950,
+		.starting_frequency = 5925,
 		.channel_spacing = 20,
 		.center_frequencies = { 2 },
 	}
@@ -1351,6 +1351,10 @@ check_e4:
 	for (i = 0; i < L_ARRAY_SIZE(e4_operating_classes); i++) {
 		const struct operating_class_info *info =
 						&e4_operating_classes[i];
+
+		if (band != band_oper_class_to_band(NULL,
+							info->operating_class))
+			continue;
 
 		if (e4_has_frequency(info, freq) == 0 ||
 					e4_has_ccfi(info, freq) == 0) {

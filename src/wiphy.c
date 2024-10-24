@@ -1699,8 +1699,7 @@ static void parse_supported_bands(struct wiphy *wiphy,
 			case NL80211_BAND_ATTR_FREQS:
 				nl80211_parse_supported_frequencies(&attr,
 							wiphy->supported_freqs,
-							band->freq_attrs,
-							band->freqs_len);
+							band);
 				break;
 
 			case NL80211_BAND_ATTR_RATES:
@@ -2234,9 +2233,7 @@ static void wiphy_dump_callback(struct l_genl_msg *msg,
 			 * theory no new frequencies should be added so there
 			 * should never be any stale values.
 			 */
-			nl80211_parse_supported_frequencies(&attr, NULL,
-							band->freq_attrs,
-							band->freqs_len);
+			nl80211_parse_supported_frequencies(&attr, NULL, band);
 		}
 	}
 }
