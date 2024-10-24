@@ -74,6 +74,10 @@ static uint32_t roam_retry_interval;
 static bool anqp_disabled;
 static bool supports_arp_evict_nocarrier;
 static bool supports_ndisc_evict_nocarrier;
+static bool supports_drop_gratuitous_arp;
+static bool supports_drop_unsolicited_na;
+static bool supports_ipv4_drop_unicast_in_l2_multicast;
+static bool supports_ipv6_drop_unicast_in_l2_multicast;
 static struct watchlist event_watches;
 static uint32_t known_networks_watch;
 static uint32_t allowed_bands;
@@ -1641,10 +1645,13 @@ static void station_set_drop_neighbor_discovery(struct station *station,
 {
 	char *v = value ? "1" : "0";
 
-	sysfs_write_ipv4_setting(netdev_get_name(station->netdev),
-				"drop_gratuitous_arp", v);
-	sysfs_write_ipv6_setting(netdev_get_name(station->netdev),
-				"drop_unsolicited_na", v);
+	if (supports_drop_gratuitous_arp)
+		sysfs_write_ipv4_setting(netdev_get_name(station->netdev),
+					"drop_gratuitous_arp", v);
+
+	if (supports_drop_unsolicited_na)
+		sysfs_write_ipv6_setting(netdev_get_name(station->netdev),
+					"drop_unsolicited_na", v);
 }
 
 static void station_set_drop_unicast_l2_multicast(struct station *station,
@@ -1652,10 +1659,13 @@ static void station_set_drop_unicast_l2_multicast(struct station *station,
 {
 	char *v = value ? "1" : "0";
 
-	sysfs_write_ipv4_setting(netdev_get_name(station->netdev),
-				"drop_unicast_in_l2_multicast", v);
-	sysfs_write_ipv6_setting(netdev_get_name(station->netdev),
-				"drop_unicast_in_l2_multicast", v);
+	if (supports_ipv4_drop_unicast_in_l2_multicast)
+		sysfs_write_ipv4_setting(netdev_get_name(station->netdev),
+					"drop_unicast_in_l2_multicast", v);
+
+	if (supports_ipv6_drop_unicast_in_l2_multicast)
+		sysfs_write_ipv6_setting(netdev_get_name(station->netdev),
+					"drop_unicast_in_l2_multicast", v);
 }
 
 static void station_signal_agent_notify(struct station *station);
@@ -5798,6 +5808,16 @@ static int station_init(void)
 						"arp_evict_nocarrier");
 	supports_ndisc_evict_nocarrier = sysfs_supports_ipv6_setting("all",
 						"ndisc_evict_nocarrier");
+	supports_drop_gratuitous_arp = sysfs_supports_ipv4_setting("all",
+						"drop_gratuitous_arp");
+	supports_drop_unsolicited_na = sysfs_supports_ipv6_setting("all",
+						"drop_unsolicited_na");
+	supports_ipv4_drop_unicast_in_l2_multicast =
+					sysfs_supports_ipv4_setting("all",
+					"drop_unicast_in_l2_multicast");
+	supports_ipv6_drop_unicast_in_l2_multicast =
+					sysfs_supports_ipv6_setting("all",
+					"drop_unicast_in_l2_multicast");
 
 	watchlist_init(&event_watches, NULL);
 
