@@ -896,7 +896,7 @@ static const struct operating_class_info e4_operating_classes[] = {
 	},
 	{
 		.operating_class = 136,
-		.starting_frequency = 5950,
+		.starting_frequency = 5925,
 		.channel_spacing = 20,
 		.center_frequencies = { 2 },
 	}
