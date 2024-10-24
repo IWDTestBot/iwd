@@ -1352,6 +1352,10 @@ check_e4:
 		const struct operating_class_info *info =
 						&e4_operating_classes[i];
 
+		if (band != band_oper_class_to_band(NULL,
+							info->operating_class))
+			continue;
+
 		if (e4_has_frequency(info, freq) == 0 ||
 					e4_has_ccfi(info, freq) == 0) {
 			if (out_band)
