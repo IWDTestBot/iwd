@@ -582,7 +582,7 @@ static bool netdev_parse_sta_info(struct l_genl_attr *attr,
 		switch (type) {
 		case NL80211_STA_INFO_SIGNAL:
 			if (len != 1)
-				return false;
+				continue;
 
 			info->cur_rssi = *(const int8_t *) data;
 			info->have_cur_rssi = true;
@@ -590,7 +590,7 @@ static bool netdev_parse_sta_info(struct l_genl_attr *attr,
 			break;
 		case NL80211_STA_INFO_SIGNAL_AVG:
 			if (len != 1)
-				return false;
+				continue;
 
 			info->avg_rssi = *(const int8_t *) data;
 			info->have_avg_rssi = true;
@@ -598,7 +598,7 @@ static bool netdev_parse_sta_info(struct l_genl_attr *attr,
 			break;
 		case NL80211_STA_INFO_RX_BITRATE:
 			if (!l_genl_attr_recurse(attr, &nested))
-				return false;
+				continue;
 
 			if (!netdev_parse_bitrate(&nested, &info->rx_mcs_type,
 							&info->rx_bitrate,
@@ -614,7 +614,7 @@ static bool netdev_parse_sta_info(struct l_genl_attr *attr,
 
 		case NL80211_STA_INFO_TX_BITRATE:
 			if (!l_genl_attr_recurse(attr, &nested))
-				return false;
+				continue;
 
 			if (!netdev_parse_bitrate(&nested, &info->tx_mcs_type,
 							&info->tx_bitrate,
@@ -630,7 +630,7 @@ static bool netdev_parse_sta_info(struct l_genl_attr *attr,
 
 		case NL80211_STA_INFO_EXPECTED_THROUGHPUT:
 			if (len != 4)
-				return false;
+				continue;
 
 			info->expected_throughput = l_get_u32(data);
 			info->have_expected_throughput = true;
