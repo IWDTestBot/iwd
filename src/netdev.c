@@ -70,6 +70,8 @@
 #define ENOTSUPP 524
 #endif
 
+#define NETDEV_CONNECT_TIMEOUT 5
+
 enum connection_type {
 	CONNECTION_TYPE_SOFTMAC,
 	CONNECTION_TYPE_FULLMAC,
@@ -140,6 +142,7 @@ struct netdev {
 	struct l_timeout *sa_query_timeout;
 	struct l_timeout *sa_query_delay;
 	struct l_timeout *group_handshake_timeout;
+	struct l_timeout *connect_timeout;
 	uint16_t sa_query_id;
 	int8_t rssi_levels[16];
 	uint8_t rssi_levels_num;
@@ -857,6 +860,11 @@ static void netdev_connect_free(struct netdev *netdev)
 	if (netdev->group_handshake_timeout) {
 		l_timeout_remove(netdev->group_handshake_timeout);
 		netdev->group_handshake_timeout = NULL;
+	}
+
+	if (netdev->connect_timeout) {
+		l_timeout_remove(netdev->connect_timeout);
+		netdev->connect_timeout = NULL;
 	}
 
 	netdev->associated = false;
@@ -2561,6 +2569,33 @@ static void netdev_cmd_connect_cb(struct l_genl_msg *msg, void *user_data)
 				MMPDU_STATUS_CODE_UNSPECIFIED);
 }
 
+static void netdev_connect_timeout(struct l_timeout *timeout, void *user_data)
+{
+	struct netdev *netdev = user_data;
+
+	l_timeout_remove(netdev->connect_timeout);
+	netdev->connect_timeout = NULL;
+
+	l_error("Kernel never sent CMD_CONNECT event! This is a bug, please "
+		"report upstream");
+
+	/*
+	 * Set this now in case the connect event does arrive in between the
+	 * deauth and actually cleaning up the connection members.
+	 */
+	netdev->connected = false;
+
+	/*
+	 * Since the lack of the connect event indicates a kernel/driver bug its
+	 * hard to say what state the kernel in. Its probably safest to deauth
+	 * here just in case the kernel is in some state between authentication
+	 * and association.
+	 */
+	netdev_deauth_and_fail_connection(netdev,
+					NETDEV_RESULT_ASSOCIATION_FAILED,
+					MMPDU_STATUS_CODE_UNSPECIFIED);
+}
+
 static bool netdev_retry_owe(struct netdev *netdev)
 {
 	struct l_genl_msg *connect_cmd;
@@ -2578,11 +2613,19 @@ static bool netdev_retry_owe(struct netdev *netdev)
 						netdev_cmd_connect_cb, netdev,
 						NULL);
 
-	if (netdev->connect_cmd_id > 0)
-		return true;
+	if (!netdev->connect_cmd_id) {
+		l_genl_msg_unref(connect_cmd);
+		return false;
+	}
 
-	l_genl_msg_unref(connect_cmd);
-	return false;
+	if (netdev->connect_timeout)
+		l_timeout_remove(netdev->connect_timeout);
+
+	netdev->connect_timeout = l_timeout_create(NETDEV_CONNECT_TIMEOUT,
+							netdev_connect_timeout,
+							netdev, NULL);
+
+	return true;
 }
 
 static void netdev_connect_event(struct l_genl_msg *msg, struct netdev *netdev)
@@ -2601,6 +2644,12 @@ static void netdev_connect_event(struct l_genl_msg *msg, struct netdev *netdev)
 	uint32_t timeout_reason = 0;
 
 	l_debug("");
+
+	/* Clear the timer as soon as we receive this event */
+	if (netdev->connect_timeout) {
+		l_timeout_remove(netdev->connect_timeout);
+		netdev->connect_timeout = NULL;
+	}
 
 	if (netdev->aborting)
 		return;
@@ -3491,6 +3540,11 @@ static int netdev_begin_connection(struct netdev *netdev)
 			goto failed;
 
 		netdev->connect_cmd = NULL;
+
+		netdev->connect_timeout = l_timeout_create(
+						NETDEV_CONNECT_TIMEOUT,
+						netdev_connect_timeout,
+						netdev, NULL);
 	}
 
 	/*
