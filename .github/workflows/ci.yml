@@ -30,10 +30,10 @@ on:
         default: all
       kernel:
         description: Kernel version
-        default: '5.19'
+        default: '6.2'
       hostapd_version:
         description: Hostapd and wpa_supplicant version
-        default: '09a281e52a25b5461c4b08d261f093181266a554'
+        default: 'hostapd_2_11'
       ell_ref:
         description: ELL reference
         default: refs/heads/workflow
