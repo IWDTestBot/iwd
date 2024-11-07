@@ -2217,7 +2217,7 @@ static bool p2p_go_negotiation_confirm_cb(const struct mmpdu_header *mpdu,
 
 		/*
 		 * Start setting the group up right away and we'll add the
-		 * client's Configuation Timeout to the WSC start timeout's
+		 * client's Configuration Timeout to the WSC start timeout's
 		 * value.
 		 */
 		p2p_device_interface_create(dev);
@@ -2549,7 +2549,7 @@ static void p2p_go_negotiation_confirm_done(int error, void *user_data)
 
 	/*
 	 * Frame was ACKed.  On the GO start setting the group up right
-	 * away and we'll add the client's Configuation Timeout to the
+	 * away and we'll add the client's Configuration Timeout to the
 	 * WSC start timeout's value.  On the client wait idly the
 	 * maximum amount of time indicated by the peer in the GO
 	 * Negotiation Response's Configuration Timeout attribute and
@@ -2951,7 +2951,7 @@ static bool p2p_provision_disc_resp_cb(const struct mmpdu_header *mpdu,
 	}
 
 	/*
-	 * Indended P2P Interface address is optional, we don't have the
+	 * Intended P2P Interface address is optional, we don't have the
 	 * BSSID of the group here.
 	 *
 	 * We might want to make sure that Group Formation is false but the

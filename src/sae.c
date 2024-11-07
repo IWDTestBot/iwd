@@ -258,7 +258,7 @@ static struct l_ecc_scalar *sae_pwd_value(const struct l_ecc_curve *curve,
 	is_in_range = util_secure_fill_with_msb(is_in_range);
 
 	/*
-	 * libell has public Legendre symbol only for l_ecc_scalar, but they
+	 * ELL has public Legendre symbol only for l_ecc_scalar, but they
 	 * cannot be created if the coordinate is greater than the p. Hence,
 	 * to avoid control flow dependencies, we replace pwd_value by a dummy
 	 * quadratic non residue if we generate a value >= prime.

@@ -2001,7 +2001,7 @@ static void dpp_offchannel_timeout(int error, void *user_data)
 
 		/*
 		 * We have a pending agent request but it did not arrive in
-		 * time, we cant assume the enrollee will be waiting around
+		 * time, we can't assume the enrollee will be waiting around
 		 * for our response so cancel the request and continue waiting
 		 * for another request
 		 */
@@ -2722,7 +2722,7 @@ static void dpp_handle_pkex_exchange_response(struct dpp_sm *dpp,
 	}
 
 	if (version && version != dpp->pkex_version) {
-		l_debug("PKEX version does not match, igoring");
+		l_debug("PKEX version does not match, ignoring");
 		return;
 	}
 
@@ -3438,7 +3438,7 @@ static void dpp_handle_pkex_commit_reveal_request(struct dpp_sm *dpp,
 	dpp->peer_boot_public = l_ecc_point_from_data(dpp->curve,
 					L_ECC_POINT_TYPE_FULL, key, key_len);
 	if (!dpp->peer_boot_public) {
-		l_debug("peers boostrapping key did not validate");
+		l_debug("peers bootstrapping key did not validate");
 		goto failed;
 	}
 
@@ -3598,7 +3598,7 @@ static void dpp_mlme_notify(struct l_genl_msg *msg, void *user_data)
 
 	/*
 	 * Only want to handle the no-ACK case. Re-transmitting an ACKed
-	 * frame likely wont do any good, at least in the case of DPP.
+	 * frame likely won't do any good, at least in the case of DPP.
 	 */
 	if (!ack)
 		goto retransmit;

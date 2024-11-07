@@ -1381,7 +1381,7 @@ static struct handshake_state *station_handshake_setup(struct station *station,
 	handshake_state_set_vendor_ies(hs, vendor_ies, iov_elems);
 
 	/*
-	 * It can't hurt to try the FILS IP Address Assigment independent of
+	 * It can't hurt to try the FILS IP Address Assignment independent of
 	 * which auth-proto is actually used.
 	 */
 	if (station->netconfig && netconfig_get_fils_ip_req(station->netconfig,
@@ -1915,7 +1915,7 @@ static void station_reset_connection_state(struct station *station)
 	/*
 	 * Perform this step last since calling network_disconnected() might
 	 * result in the removal of the network (for example if provisioning
-	 * a new hidden network fails with an incorrect pasword).
+	 * a new hidden network fails with an incorrect password).
 	 */
 	if (station->state == STATION_STATE_CONNECTED ||
 			station->state == STATION_STATE_CONNECTING ||
@@ -3095,7 +3095,7 @@ static void station_roam_timeout_rearm(struct station *station, int seconds)
 	if (!station->roam_trigger_timeout)
 		goto new_timeout;
 
-	/* If we cant get the remaining time just create a new timer */
+	/* If we can't get the remaining time just create a new timer */
 	if (L_WARN_ON(!l_timeout_remaining(station->roam_trigger_timeout,
 						&remaining))) {
 		l_timeout_remove(station->roam_trigger_timeout);

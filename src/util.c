@@ -276,7 +276,7 @@ bool util_ip_prefix_tohl(const char *ip, uint8_t *prefix_out,
 	/* 'i' will be at most INET_ADDRSTRLEN - 1 */
 	l_strlcpy(no_prefix, ip, i + 1);
 
-	/* Check if IP preceeding prefix is valid */
+	/* Check if IP preceding prefix is valid */
 	if (inet_pton(AF_INET, no_prefix, &ia) != 1 || ia.s_addr == 0)
 		return false;
 
