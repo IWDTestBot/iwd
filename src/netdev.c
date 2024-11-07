@@ -2169,7 +2169,7 @@ static void netdev_set_pmk(struct handshake_state *hs, const uint8_t *pmk,
 				struct netdev_handshake_state, super);
 	struct netdev *netdev = nhs->netdev;
 
-	/* Only relevent for 8021x offload */
+	/* Only relevant for 8021x offload */
 	if (nhs->type != CONNECTION_TYPE_8021X_OFFLOAD)
 		return;
 
@@ -2281,7 +2281,7 @@ static void netdev_qos_map_cb(struct l_genl_msg *msg, void *user_data)
 		return;
 
 	ext_error = l_genl_msg_get_extended_error(msg);
-	l_error("Couuld not set QoS Map in kernel: %s",
+	l_error("Could not set QoS Map in kernel: %s",
 			ext_error ? ext_error : strerror(-err));
 }
 
@@ -2354,7 +2354,7 @@ static void netdev_get_oci_cb(struct l_genl_msg *msg, void *user_data)
 done:
 	if (netdev->ap) {
 		/*
-		 * Cant do much here. IWD assumes every kernel/driver supports
+		 * Can't do much here. IWD assumes every kernel/driver supports
 		 * this. There is no way of detecting support either.
 		 */
 		if (L_WARN_ON(err < 0))

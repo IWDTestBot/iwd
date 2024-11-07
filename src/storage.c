@@ -535,7 +535,7 @@ int __storage_decrypt(struct l_settings *settings, const char *ssid,
 
 	/*
 	 * Load decrypted data into existing settings. This is not how the API
-	 * is indended to be used (since this could result in duplicate groups)
+	 * is intended to be used (since this could result in duplicate groups)
 	 * but since the Security group was just removed and EncryptedSecurity
 	 * should only contain a Security group its safe to use it this way.
 	 */

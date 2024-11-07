@@ -1481,10 +1481,10 @@ class IWD(AsyncOpAbstract):
 
     @staticmethod
     def create_in_storage(file_name, file_content, storage_dir=IWD_STORAGE_DIR):
-        fo = open(storage_dir + '/' + file_name, 'w')
+        f = open(storage_dir + '/' + file_name, 'w')
 
-        fo.write(file_content)
-        fo.close()
+        f.write(file_content)
+        f.close()
 
     @staticmethod
     def _ensure_storage_dir_exists(storage_dir):

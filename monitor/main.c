@@ -578,7 +578,7 @@ static int analyze_pcap(const char *pathname)
 	printf("\n");
 	printf(" Number of packets: %lu\n", pkt_count);
 	printf("     Short packets: %lu\n", pkt_short);
-	printf("  Tuncated packets: %lu\n", pkt_trunc);
+	printf("  Truncated packets: %lu\n", pkt_trunc);
 	printf("\n");
 	printf("  Ethernet packets: %lu\n", pkt_ether);
 	printf("       PAE packets: %lu\n", pkt_pae);

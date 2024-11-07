@@ -2286,7 +2286,7 @@ static void wiphy_dump_after_regdom(struct wiphy *wiphy)
 	}
 
 	/*
-	 * Another update while dumping wiphy. This next dump should supercede
+	 * Another update while dumping wiphy. This next dump should supersede
 	 * the first and not result in a DONE event until this new dump is
 	 * finished. This is because the disabled frequencies are in an unknown
 	 * state and could cause incorrect behavior by any watchers.
