@@ -491,7 +491,30 @@ static void print_ie_country(unsigned int level, const char *label,
 		return;
 	}
 
-	print_attr(level, "%s: %c%c%c", label, code[0], code[1], code[2]);
+	print_attr(level, "%s: %c%c", label, code[0], code[1]);
+
+	switch (code[2]) {
+	case ' ':
+		print_attr(level + 1,
+			"3rd octet: 0x%02x: All environments", code[2]);
+		break;
+	case 'O':
+		print_attr(level + 1,
+			"3rd octet: 0x%02x: Outdoor environments", code[2]);
+		break;
+	case 'I':
+		print_attr(level + 1,
+			"3rd octet: 0x%02x: Indoor environments", code[2]);
+		break;
+	case 'X':
+		print_attr(level + 1,
+			"3rd octet: 0x%02x: Non-country entity", code[2]);
+		break;
+	default:
+		print_attr(level + 1,
+			"3rd octet: 0x%02x: Annex E table", code[2]);
+		break;
+	}
 
 	while (i < size) {
 		if (code[i] > 200) {
