@@ -1343,8 +1343,8 @@ static bool scan_parse_bss_information_elements(struct scan_bss *bss,
 								iter.len + 2);
 			break;
 		case IE_TYPE_BSS_LOAD:
-			if (ie_parse_bss_load(&iter, NULL, &bss->utilization,
-						NULL) < 0)
+			if (ie_parse_bss_load(&iter, &bss->sta_count,
+						&bss->utilization, NULL) < 0)
 				l_warn("Unable to parse BSS Load IE for "
 					MAC, MAC_STR(bss->addr));
 			else
