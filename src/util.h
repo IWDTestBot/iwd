@@ -141,4 +141,6 @@ struct scan_freq_set *scan_freq_set_clone(const struct scan_freq_set *set,
 
 DEFINE_CLEANUP_FUNC(scan_freq_set_free);
 
+double util_exponential_decay(unsigned int n);
+
 #endif /* __UTIL_H */
