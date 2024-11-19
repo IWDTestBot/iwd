@@ -341,6 +341,28 @@ autoconnect purposes.
        A value of 0.0 will disable the 6GHz band and prevent scanning or
        connecting on those frequencies.
 
+   * - HighUtilizationThreshold
+     - Values: unsigned integer value 0 - 255 (default: **0**, disabled)
+
+       **Warning: This is an experimental feature**
+
+       The BSS utilization threshold at which a negative rank factor begins to
+       be applied to the BSS. As the load increases for a BSS the ranking factor
+       decays exponentially, meaning the ranking factor will decrease
+       exponentially. Setting this can have very drastic effects on the BSS rank
+       if its utilization is high, use with care.
+
+   * - HighStationCountThreshold
+     - Values: unsigned integer value 0 - 255 (default: **0**, disabled)
+
+       **Warning: This is an experimental feature**
+
+       The BSS station count threshold at which a negative rank factor begins to
+       be applied to the BSS. As the station count increases for a BSS the
+       ranking factor decays exponentially, meaning the ranking factor will
+       decrease exponentially. Setting this can have very drastic effects on the
+       BSS rank if its station count is high, use with care.
+
 Scan
 ----
 
