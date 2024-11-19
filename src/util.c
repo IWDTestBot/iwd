@@ -312,6 +312,36 @@ bool util_ip_prefix_tohl(const char *ip, uint8_t *prefix_out,
 	return true;
 }
 
+/*
+ * Linearly maps @value (expected to be within range @a_start and @a_end) to
+ * a new value between @b_start and @b_end.
+ *
+ * Returns: false if
+ *   @value is not between @a_start and @a_end
+ *   @a_start/@a_end or @b_start/@b_end are equal.
+ */
+bool util_linear_map(double value, double a_start, double a_end,
+			double b_start, double b_end, double *mapped_value)
+{
+	/* Check value is within a's range */
+	if (a_start < a_end) {
+		if (value < a_start || value > a_end)
+			return false;
+	} else if (a_start > a_end) {
+		if (value > a_start || value < a_end)
+			return false;
+	} else
+		return false;
+
+	if (b_start == b_end)
+		return false;
+
+	*mapped_value = b_start + (((b_end - b_start) / (a_end - a_start)) *
+					(value - a_start));
+
+	return true;
+}
+
 struct scan_freq_set {
 	uint16_t channels_2ghz;
 	struct l_uintset *channels_5ghz;
