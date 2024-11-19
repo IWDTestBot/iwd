@@ -425,7 +425,8 @@ static void station_print_scan_bss(const struct scan_bss *bss)
 		ptr += sprintf(ptr, ", snr: %d", bss->snr);
 
 	if (bss->have_utilization)
-		ptr += sprintf(ptr, ", load: %u/255", bss->utilization);
+		ptr += sprintf(ptr, ", load: %u/255, clients: %u",
+				bss->utilization, bss->sta_count);
 
 	l_debug("Processing BSS '%s' with SSID: %s, freq: %u, rank: %u, "
 			"strength: %i, data_rate: %u.%u%s",
