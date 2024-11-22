@@ -458,6 +458,7 @@ unit_test_eap_sim_SOURCES = unit/test-eap-sim.c \
 		src/eapol.h src/eapol.c \
 		src/eapolutil.h src/eapolutil.c \
 		src/handshake.h src/handshake.c \
+		src/pmksa.h src/pmksa.c \
 		src/eap.h src/eap.c src/eap-private.h \
 		src/util.h src/util.c \
 		src/simauth.h src/simauth.c \
@@ -517,6 +518,7 @@ unit_test_eapol_SOURCES = unit/test-eapol.c \
 				src/eapol.h src/eapol.c \
 				src/eapolutil.h src/eapolutil.c \
 				src/handshake.h src/handshake.c \
+				src/pmksa.h src/pmksa.c \
 				src/eap.h src/eap.c src/eap-private.h \
 				src/eap-tls.c src/eap-ttls.c \
 				src/eap-md5.c src/util.c \
@@ -547,6 +549,7 @@ unit_test_wsc_SOURCES = unit/test-wsc.c src/wscutil.h src/wscutil.c \
 				src/eapol.h src/eapol.c \
 				src/eapolutil.h src/eapolutil.c \
 				src/handshake.h src/handshake.c \
+				src/pmksa.h src/pmksa.c \
 				src/eap.h src/eap.c src/eap-private.h \
 				src/util.h src/util.c \
 				src/erp.h src/erp.c \
@@ -565,6 +568,7 @@ unit_test_sae_SOURCES = unit/test-sae.c \
 				src/crypto.h src/crypto.c \
 				src/ie.h src/ie.c \
 				src/handshake.h src/handshake.c \
+				src/pmksa.h src/pmksa.c \
 				src/erp.h src/erp.c \
 				src/band.h src/band.c \
 				src/util.h src/util.c \
