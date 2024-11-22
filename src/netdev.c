@@ -376,6 +376,7 @@ struct handshake_state *netdev_handshake_state_new(struct netdev *netdev)
 
 	nhs->super.ifindex = netdev->index;
 	nhs->super.free = netdev_handshake_state_free;
+	nhs->super.refcount = 1;
 
 	nhs->netdev = netdev;
 	/*
@@ -828,7 +829,7 @@ static void netdev_connect_free(struct netdev *netdev)
 	eapol_preauth_cancel(netdev->index);
 
 	if (netdev->handshake) {
-		handshake_state_free(netdev->handshake);
+		handshake_state_unref(netdev->handshake);
 		netdev->handshake = NULL;
 	}
 
@@ -4239,7 +4240,7 @@ int netdev_reassociate(struct netdev *netdev, const struct scan_bss *target_bss,
 		eapol_sm_free(old_sm);
 
 	if (old_hs)
-		handshake_state_free(old_hs);
+		handshake_state_unref(old_hs);
 
 	return 0;
 }

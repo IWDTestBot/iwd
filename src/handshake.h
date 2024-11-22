@@ -170,6 +170,8 @@ struct handshake_state {
 	bool in_event;
 
 	handshake_event_func_t event_func;
+
+	int refcount;
 };
 
 #define HSID(x) UNIQUE_ID(handshake_, x)
@@ -186,7 +188,7 @@ struct handshake_state {
 					##__VA_ARGS__);			\
 									\
 			if (!HSID(hs)->in_event) {			\
-				handshake_state_free(HSID(hs));		\
+				handshake_state_unref(HSID(hs));	\
 				HSID(freed) = true;			\
 			} else						\
 				HSID(hs)->in_event = false;		\
@@ -194,7 +196,8 @@ struct handshake_state {
 		HSID(freed);						\
 	})
 
-void handshake_state_free(struct handshake_state *s);
+struct handshake_state *handshake_state_ref(struct handshake_state *s);
+void handshake_state_unref(struct handshake_state *s);
 
 void handshake_state_set_supplicant_address(struct handshake_state *s,
 						const uint8_t *spa);
@@ -316,4 +319,4 @@ void handshake_util_build_gtk_kde(enum crypto_cipher cipher, const uint8_t *key,
 void handshake_util_build_igtk_kde(enum crypto_cipher cipher, const uint8_t *key,
 					unsigned int key_index, uint8_t *to);
 
-DEFINE_CLEANUP_FUNC(handshake_state_free);
+DEFINE_CLEANUP_FUNC(handshake_state_unref);

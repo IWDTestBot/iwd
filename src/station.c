@@ -1394,7 +1394,7 @@ static struct handshake_state *station_handshake_setup(struct station *station,
 	return hs;
 
 not_supported:
-	handshake_state_free(hs);
+	handshake_state_unref(hs);
 	return NULL;
 }
 
@@ -2484,7 +2484,7 @@ static void station_preauthenticate_cb(struct netdev *netdev,
 	}
 
 	if (station_transition_reassociate(station, bss, new_hs) < 0) {
-		handshake_state_free(new_hs);
+		handshake_state_unref(new_hs);
 		station_roam_failed(station);
 	}
 }
@@ -2687,7 +2687,7 @@ static bool station_try_next_transition(struct station *station,
 	}
 
 	if (station_transition_reassociate(station, bss, new_hs) < 0) {
-		handshake_state_free(new_hs);
+		handshake_state_unref(new_hs);
 		return false;
 	}
 
@@ -3734,7 +3734,7 @@ int __station_connect_network(struct station *station, struct network *network,
 				station_netdev_event,
 				station_connect_cb, station);
 	if (r < 0) {
-		handshake_state_free(hs);
+		handshake_state_unref(hs);
 		return r;
 	}
 
