@@ -225,6 +225,11 @@ The group ``[General]`` contains general settings.
        request is just a 'hint' and ultimately left up to the kernel to set the
        country.
 
+   * - DisablePMKSA
+     - Value: **false**, true
+
+       Disable PMKSA support in IWD
+
 Network
 -------
 

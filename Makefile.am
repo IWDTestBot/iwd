@@ -65,7 +65,8 @@ ell_headers = ell/util.h \
 			ell/cleanup.h \
 			ell/netconfig.h \
 			ell/sysctl.h \
-			ell/notifylist.h
+			ell/notifylist.h \
+			ell/minheap.h
 
 ell_sources = ell/private.h \
 			ell/missing.h \
@@ -147,7 +148,8 @@ ell_sources = ell/private.h \
 			ell/acd.c \
 			ell/netconfig.c \
 			ell/sysctl.c \
-			ell/notifylist.c
+			ell/notifylist.c \
+			ell/minheap.c
 
 ell_shared = ell/useful.h ell/asn1-private.h
 
@@ -269,6 +271,7 @@ src_iwd_SOURCES = src/main.c linux/nl80211.h src/iwd.h \
 					src/json.h src/json.c \
 					src/dpp.c \
 					src/udev.c \
+					src/pmksa.h src/pmksa.c \
 					$(eap_sources) \
 					$(builtin_sources)
 
@@ -435,7 +438,8 @@ unit_tests += unit/test-cmac-aes \
 		unit/test-ie unit/test-util unit/test-ssid-security \
 		unit/test-arc4 unit/test-wsc unit/test-eap-mschapv2 \
 		unit/test-eap-sim unit/test-sae unit/test-p2p unit/test-band \
-		unit/test-dpp unit/test-json unit/test-nl80211util
+		unit/test-dpp unit/test-json unit/test-nl80211util \
+		unit/test-pmksa
 endif
 
 if CLIENT
@@ -454,6 +458,7 @@ unit_test_eap_sim_SOURCES = unit/test-eap-sim.c \
 		src/eapol.h src/eapol.c \
 		src/eapolutil.h src/eapolutil.c \
 		src/handshake.h src/handshake.c \
+		src/pmksa.h src/pmksa.c \
 		src/eap.h src/eap.c src/eap-private.h \
 		src/util.h src/util.c \
 		src/simauth.h src/simauth.c \
@@ -513,6 +518,7 @@ unit_test_eapol_SOURCES = unit/test-eapol.c \
 				src/eapol.h src/eapol.c \
 				src/eapolutil.h src/eapolutil.c \
 				src/handshake.h src/handshake.c \
+				src/pmksa.h src/pmksa.c \
 				src/eap.h src/eap.c src/eap-private.h \
 				src/eap-tls.c src/eap-ttls.c \
 				src/eap-md5.c src/util.c \
@@ -543,6 +549,7 @@ unit_test_wsc_SOURCES = unit/test-wsc.c src/wscutil.h src/wscutil.c \
 				src/eapol.h src/eapol.c \
 				src/eapolutil.h src/eapolutil.c \
 				src/handshake.h src/handshake.c \
+				src/pmksa.h src/pmksa.c \
 				src/eap.h src/eap.c src/eap-private.h \
 				src/util.h src/util.c \
 				src/erp.h src/erp.c \
@@ -561,6 +568,7 @@ unit_test_sae_SOURCES = unit/test-sae.c \
 				src/crypto.h src/crypto.c \
 				src/ie.h src/ie.c \
 				src/handshake.h src/handshake.c \
+				src/pmksa.h src/pmksa.c \
 				src/erp.h src/erp.c \
 				src/band.h src/band.c \
 				src/util.h src/util.c \
@@ -591,6 +599,10 @@ unit_test_nl80211util_SOURCES = unit/test-nl80211util.c \
 				src/ie.h src/ie.c \
 				src/util.h src/util.c
 unit_test_nl80211util_LDADD = $(ell_ldadd)
+
+unit_test_pmksa_SOURCES = unit/test-pmksa.c src/pmksa.c src/pmksa.h \
+				src/module.h src/util.h
+unit_test_pmksa_LDADD = $(ell_ldadd)
 endif
 
 if CLIENT

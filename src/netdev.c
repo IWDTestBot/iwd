@@ -65,6 +65,7 @@
 #include "src/frame-xchg.h"
 #include "src/diagnostic.h"
 #include "src/band.h"
+#include "src/pmksa.h"
 
 #ifndef ENOTSUPP
 #define ENOTSUPP 524
@@ -376,6 +377,7 @@ struct handshake_state *netdev_handshake_state_new(struct netdev *netdev)
 
 	nhs->super.ifindex = netdev->index;
 	nhs->super.free = netdev_handshake_state_free;
+	nhs->super.refcount = 1;
 
 	nhs->netdev = netdev;
 	/*
@@ -828,7 +830,7 @@ static void netdev_connect_free(struct netdev *netdev)
 	eapol_preauth_cancel(netdev->index);
 
 	if (netdev->handshake) {
-		handshake_state_free(netdev->handshake);
+		handshake_state_unref(netdev->handshake);
 		netdev->handshake = NULL;
 	}
 
@@ -1515,6 +1517,8 @@ static void try_handshake_complete(struct netdev_handshake_state *nhs)
 		nhs->complete = true;
 
 		l_debug("Invoking handshake_event()");
+
+		handshake_state_cache_pmksa(&nhs->super);
 
 		if (handshake_event(&nhs->super, HANDSHAKE_EVENT_COMPLETE))
 			return;
@@ -2457,7 +2461,19 @@ static struct l_genl_msg *netdev_build_cmd_connect(struct netdev *netdev,
 {
 	struct netdev_handshake_state *nhs =
 		l_container_of(hs, struct netdev_handshake_state, super);
-	uint32_t auth_type = IE_AKM_IS_SAE(hs->akm_suite) ?
+	/*
+	 * Choose Open system auth type if PMKSA caching is used for an SAE AKM:
+	 *
+	 * IEEE 802.11-2020 Table 9-151
+	 *   - SAE authentication:
+	 *       3 (SAE) for SAE Authentication
+	 *       0 (open) for PMKSA caching
+	 *   - FT authentication over SAE:
+	 *       3 (SAE) for FT Initial Mobility Domain Association
+	 *       0 (open) for FT Initial Mobility Domain Association over
+	 *         PMKSA caching
+	 */
+	uint32_t auth_type = IE_AKM_IS_SAE(hs->akm_suite) && !hs->have_pmksa ?
 					NL80211_AUTHTYPE_SAE :
 					NL80211_AUTHTYPE_OPEN_SYSTEM;
 	enum mpdu_management_subtype subtype = prev_bssid ?
@@ -4026,6 +4042,15 @@ static void netdev_connect_common(struct netdev *netdev,
 		goto done;
 	}
 
+	/*
+	 * If SAE, and we have a valid PMKSA cache we can skip the entire SAE
+	 * protocol and authenticate using the cached keys.
+	 */
+	if (IE_AKM_IS_SAE(hs->akm_suite) && hs->have_pmksa) {
+		l_debug("Skipping SAE by using PMKSA cache");
+		goto build_cmd_connect;
+	}
+
 	if (!IE_AKM_IS_SAE(hs->akm_suite) ||
 				nhs->type == CONNECTION_TYPE_SAE_OFFLOAD)
 		goto build_cmd_connect;
@@ -4239,7 +4264,7 @@ int netdev_reassociate(struct netdev *netdev, const struct scan_bss *target_bss,
 		eapol_sm_free(old_sm);
 
 	if (old_hs)
-		handshake_state_free(old_hs);
+		handshake_state_unref(old_hs);
 
 	return 0;
 }

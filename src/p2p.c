@@ -1497,7 +1497,7 @@ static void p2p_handshake_event(struct handshake_state *hs,
 static void p2p_try_connect_group(struct p2p_device *dev)
 {
 	struct scan_bss *bss = dev->conn_wsc_bss;
-	_auto_(handshake_state_free) struct handshake_state *hs = NULL;
+	_auto_(handshake_state_unref) struct handshake_state *hs = NULL;
 	struct iovec ie_iov[16];
 	int ie_num = 0;
 	int r;

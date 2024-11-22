@@ -63,6 +63,7 @@
 #include "src/eap.h"
 #include "src/eap-tls-common.h"
 #include "src/storage.h"
+#include "src/pmksa.h"
 
 #define STATION_RECENT_NETWORK_LIMIT	5
 #define STATION_RECENT_FREQS_LIMIT	5
@@ -78,6 +79,7 @@ static bool supports_drop_gratuitous_arp;
 static bool supports_drop_unsolicited_na;
 static bool supports_ipv4_drop_unicast_in_l2_multicast;
 static bool supports_ipv6_drop_unicast_in_l2_multicast;
+static bool pmksa_disabled;
 static struct watchlist event_watches;
 static uint32_t known_networks_watch;
 static uint32_t allowed_bands;
@@ -134,6 +136,8 @@ struct station {
 	struct l_queue *affinities;
 	unsigned int affinity_watch;
 	char *affinity_client;
+
+	struct handshake_state *hs;
 
 	bool preparing_roam : 1;
 	bool roam_scan_full : 1;
@@ -1155,6 +1159,7 @@ static int station_build_handshake_rsn(struct handshake_state *hs,
 					struct network *network,
 					struct scan_bss *bss)
 {
+	struct netdev *netdev = netdev_find(hs->ifindex);
 	const struct l_settings *settings = iwd_get_config();
 	enum security security = network_get_security(network);
 	bool add_mde = false;
@@ -1165,6 +1170,7 @@ static int station_build_handshake_rsn(struct handshake_state *hs,
 	uint8_t *ap_ie;
 	bool disable_ocv;
 	enum band_freq band;
+	struct pmksa *pmksa;
 
 	memset(&info, 0, sizeof(info));
 
@@ -1298,6 +1304,17 @@ build_ie:
 			IE_CIPHER_IS_GCMP_CCMP(info.pairwise_ciphers))
 		info.extended_key_id = true;
 
+	if (IE_AKM_IS_SAE(info.akm_suites) && !pmksa_disabled) {
+		pmksa = pmksa_cache_get(netdev_get_address(netdev), bss->addr,
+					bss->ssid, bss->ssid_len,
+					info.akm_suites);
+		if (pmksa) {
+			handshake_state_set_pmksa(hs, pmksa);
+			info.num_pmkids = 1;
+			info.pmkids = hs->pmksa->pmkid;
+		}
+	}
+
 	/* RSN takes priority */
 	if (bss->rsne) {
 		ap_ie = bss->rsne;
@@ -1394,7 +1411,7 @@ static struct handshake_state *station_handshake_setup(struct station *station,
 	return hs;
 
 not_supported:
-	handshake_state_free(hs);
+	handshake_state_unref(hs);
 	return NULL;
 }
 
@@ -1769,6 +1786,11 @@ static void station_enter_state(struct station *station,
 			l_dbus_remove_watch(dbus_get_bus(),
 						station->affinity_watch);
 			station->affinity_watch = 0;
+		}
+
+		if (station->hs) {
+			handshake_state_unref(station->hs);
+			station->hs = NULL;
 		}
 
 		break;
@@ -2484,9 +2506,12 @@ static void station_preauthenticate_cb(struct netdev *netdev,
 	}
 
 	if (station_transition_reassociate(station, bss, new_hs) < 0) {
-		handshake_state_free(new_hs);
+		handshake_state_unref(new_hs);
 		station_roam_failed(station);
 	}
+
+	handshake_state_unref(station->hs);
+	station->hs = handshake_state_ref(new_hs);
 }
 
 static void station_transition_start(struct station *station);
@@ -2687,9 +2712,12 @@ static bool station_try_next_transition(struct station *station,
 	}
 
 	if (station_transition_reassociate(station, bss, new_hs) < 0) {
-		handshake_state_free(new_hs);
+		handshake_state_unref(new_hs);
 		return false;
 	}
+
+	handshake_state_unref(station->hs);
+	station->hs = handshake_state_ref(new_hs);
 
 	return true;
 }
@@ -3378,6 +3406,39 @@ try_next:
 	return station_try_next_bss(station);
 }
 
+static bool station_pmksa_fallback(struct station *station, uint16_t status)
+{
+	/*
+	 * IEEE 802.11-2020 12.6.10.3 Cached PMKSAs and RSNA key management
+	 *
+	 * "If the Authenticator does not have a PMKSA for the PMKIDs in the
+	 * (re)association request or the AKM does not match, its behavior
+	 * depends on how the PMKSA was established. If SAE authentication was
+	 * used to establish the PMKSA, then the AP shall reject (re)association
+	 * by sending a (Re)Association Response frame with status code
+	 * STATUS_INVALID_PMKID. Note that this allows the non-AP STA to fall
+	 * back to full SAE authentication to establish another PMKSA"
+	 */
+	if (status != MMPDU_STATUS_CODE_INVALID_PMKID)
+		return false;
+
+	if (L_WARN_ON(!station->hs))
+		return false;
+
+	if (!IE_AKM_IS_SAE(station->hs->akm_suite) || !station->hs->have_pmksa)
+		return false;
+
+	/*
+	 * Remove the PMKSA from the handshake and return true to re-try the
+	 * same BSS without PMKSA.
+	 */
+	handshake_state_remove_pmksa(station->hs);
+
+	station_debug_event(station, "pmksa-invalid-pmkid");
+
+	return true;
+}
+
 /* A bit more concise for trying to fit these into 80 characters */
 #define IS_TEMPORARY_STATUS(code) \
 	((code) == MMPDU_STATUS_CODE_DENIED_UNSUFFICIENT_BANDWIDTH || \
@@ -3401,7 +3462,7 @@ static bool station_retry_with_status(struct station *station,
 	if (IS_TEMPORARY_STATUS(status_code))
 		network_blacklist_add(station->connected_network,
 						station->connected_bss);
-	else
+	else if (!station_pmksa_fallback(station, status_code))
 		blacklist_add_bss(station->connected_bss->addr);
 
 	iwd_notice(IWD_NOTICE_CONNECT_FAILED, "status: %u", status_code);
@@ -3721,6 +3782,15 @@ int __station_connect_network(struct station *station, struct network *network,
 	struct handshake_state *hs;
 	int r;
 
+	/*
+	 * If we already have a handshake_state ref this is due to a retry,
+	 * unref that now
+	 */
+	if (station->hs) {
+		handshake_state_unref(station->hs);
+		station->hs = NULL;
+	}
+
 	if (station->netconfig && !netconfig_load_settings(
 					station->netconfig,
 					network_get_settings(network)))
@@ -3734,7 +3804,7 @@ int __station_connect_network(struct station *station, struct network *network,
 				station_netdev_event,
 				station_connect_cb, station);
 	if (r < 0) {
-		handshake_state_free(hs);
+		handshake_state_unref(hs);
 		return r;
 	}
 
@@ -3747,6 +3817,7 @@ int __station_connect_network(struct station *station, struct network *network,
 
 	station->connected_bss = bss;
 	station->connected_network = network;
+	station->hs = handshake_state_ref(hs);
 
 	if (station->state != state)
 		station_enter_state(station, state);
@@ -5039,6 +5110,11 @@ static void station_free(struct station *station)
 		l_queue_destroy(station->owe_hidden_scan_ids, NULL);
 	}
 
+	if (station->hs) {
+		handshake_state_unref(station->hs);
+		station->hs = NULL;
+	}
+
 	station_roam_state_clear(station);
 
 	l_queue_destroy(station->networks_sorted, NULL);
@@ -5801,6 +5877,10 @@ static int station_init(void)
 	if (!l_settings_get_bool(iwd_get_config(), "General", "DisableANQP",
 				&anqp_disabled))
 		anqp_disabled = true;
+
+	if (!l_settings_get_bool(iwd_get_config(), "General", "DisablePMKSA",
+				&pmksa_disabled))
+		pmksa_disabled = false;
 
 	if (!netconfig_enabled())
 		l_info("station: Network configuration is disabled.");
