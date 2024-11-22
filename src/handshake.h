@@ -310,6 +310,7 @@ int handshake_state_verify_oci(struct handshake_state *s, const uint8_t *oci,
 
 bool handshake_state_set_pmksa(struct handshake_state *s, struct pmksa *pmksa);
 void handshake_state_cache_pmksa(struct handshake_state *s);
+bool handshake_state_remove_pmksa(struct handshake_state *s);
 
 bool handshake_util_ap_ie_matches(const struct ie_rsn_info *msg_info,
 					const uint8_t *scan_ie, bool is_wpa);
