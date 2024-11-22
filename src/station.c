@@ -135,6 +135,8 @@ struct station {
 	unsigned int affinity_watch;
 	char *affinity_client;
 
+	struct handshake_state *hs;
+
 	bool preparing_roam : 1;
 	bool roam_scan_full : 1;
 	bool signal_low : 1;
@@ -1771,6 +1773,11 @@ static void station_enter_state(struct station *station,
 			station->affinity_watch = 0;
 		}
 
+		if (station->hs) {
+			handshake_state_unref(station->hs);
+			station->hs = NULL;
+		}
+
 		break;
 	case STATION_STATE_DISCONNECTING:
 	case STATION_STATE_NETCONFIG:
@@ -2487,6 +2494,9 @@ static void station_preauthenticate_cb(struct netdev *netdev,
 		handshake_state_unref(new_hs);
 		station_roam_failed(station);
 	}
+
+	handshake_state_unref(station->hs);
+	station->hs = handshake_state_ref(new_hs);
 }
 
 static void station_transition_start(struct station *station);
@@ -2690,6 +2700,9 @@ static bool station_try_next_transition(struct station *station,
 		handshake_state_unref(new_hs);
 		return false;
 	}
+
+	handshake_state_unref(station->hs);
+	station->hs = handshake_state_ref(new_hs);
 
 	return true;
 }
@@ -3721,6 +3734,15 @@ int __station_connect_network(struct station *station, struct network *network,
 	struct handshake_state *hs;
 	int r;
 
+	/*
+	 * If we already have a handshake_state ref this is due to a retry,
+	 * unref that now
+	 */
+	if (station->hs) {
+		handshake_state_unref(station->hs);
+		station->hs = NULL;
+	}
+
 	if (station->netconfig && !netconfig_load_settings(
 					station->netconfig,
 					network_get_settings(network)))
@@ -3747,6 +3769,7 @@ int __station_connect_network(struct station *station, struct network *network,
 
 	station->connected_bss = bss;
 	station->connected_network = network;
+	station->hs = handshake_state_ref(hs);
 
 	if (station->state != state)
 		station_enter_state(station, state);
@@ -5037,6 +5060,11 @@ static void station_free(struct station *station)
 					L_PTR_TO_UINT(ptr));
 
 		l_queue_destroy(station->owe_hidden_scan_ids, NULL);
+	}
+
+	if (station->hs) {
+		handshake_state_unref(station->hs);
+		station->hs = NULL;
 	}
 
 	station_roam_state_clear(station);
