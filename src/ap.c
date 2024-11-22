@@ -230,7 +230,7 @@ static void ap_stop_handshake(struct sta_state *sta)
 	}
 
 	if (sta->hs) {
-		handshake_state_free(sta->hs);
+		handshake_state_unref(sta->hs);
 		sta->hs = NULL;
 	}
 

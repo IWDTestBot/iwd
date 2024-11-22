@@ -103,7 +103,14 @@ void __handshake_set_install_ext_tk_func(handshake_install_ext_tk_func_t func)
 	install_ext_tk = func;
 }
 
-void handshake_state_free(struct handshake_state *s)
+struct handshake_state *handshake_state_ref(struct handshake_state *s)
+{
+	__sync_fetch_and_add(&s->refcount, 1);
+
+	return s;
+}
+
+void handshake_state_unref(struct handshake_state *s)
 {
 	__typeof__(s->free) destroy;
 
@@ -116,6 +123,9 @@ void handshake_state_free(struct handshake_state *s)
 		s->in_event = false;
 		return;
 	}
+
+	if (__sync_sub_and_fetch(&s->refcount, 1))
+		return;
 
 	l_free(s->authenticator_ie);
 	l_free(s->supplicant_ie);
