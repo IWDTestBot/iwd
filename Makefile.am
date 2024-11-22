@@ -65,7 +65,8 @@ ell_headers = ell/util.h \
 			ell/cleanup.h \
 			ell/netconfig.h \
 			ell/sysctl.h \
-			ell/notifylist.h
+			ell/notifylist.h \
+			ell/minheap.h
 
 ell_sources = ell/private.h \
 			ell/missing.h \
@@ -147,7 +148,8 @@ ell_sources = ell/private.h \
 			ell/acd.c \
 			ell/netconfig.c \
 			ell/sysctl.c \
-			ell/notifylist.c
+			ell/notifylist.c \
+			ell/minheap.c
 
 ell_shared = ell/useful.h ell/asn1-private.h
 
@@ -269,6 +271,7 @@ src_iwd_SOURCES = src/main.c linux/nl80211.h src/iwd.h \
 					src/json.h src/json.c \
 					src/dpp.c \
 					src/udev.c \
+					src/pmksa.h src/pmksa.c \
 					$(eap_sources) \
 					$(builtin_sources)
 
