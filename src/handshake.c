@@ -1280,3 +1280,19 @@ void handshake_state_cache_pmksa(struct handshake_state *s)
 	if (L_WARN_ON(pmksa_cache_put(pmksa) < 0))
 		l_free(pmksa);
 }
+
+bool handshake_state_remove_pmksa(struct handshake_state *s)
+{
+	struct pmksa *pmksa;
+
+	if (!s->have_pmksa)
+		return false;
+
+	pmksa = handshake_state_steal_pmksa(s);
+	if (!pmksa)
+		return false;
+
+	l_free(pmksa);
+
+	return true;
+}
