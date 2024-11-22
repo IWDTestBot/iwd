@@ -450,12 +450,14 @@ class Device(IWDDBusAbstract):
         self._wps_manager_if = None
         self._station_if = None
         self._station_props = None
-        self._station_debug_obj = None
         self._dpp_obj = None
         self._sc_dpp_obj = None
         self._ap_obj = None
 
         IWDDBusAbstract.__init__(self, *args, **kwargs)
+
+        self._station_debug_obj = StationDebug(object_path=self._object_path,
+                                                    namespace=self._namespace)
 
     @property
     def _wps_manager(self):
