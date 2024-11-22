@@ -34,6 +34,10 @@
 #include "src/module.h"
 #include "src/pmksa.h"
 
+#define PMKID "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
+#define PMKID_STR(x) x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7], \
+			x[8], x[9], x[10], x[11], x[12], x[13], x[14], x[15]
+
 static uint64_t dot11RSNAConfigPMKLifetime = 43200ULL * L_USEC_PER_SEC;
 static uint32_t pmksa_cache_capacity = 255;
 
@@ -108,6 +112,7 @@ struct pmksa *pmksa_cache_get(const uint8_t spa[static 6],
 				const uint8_t *ssid, size_t ssid_len,
 				uint32_t akm)
 {
+	struct pmksa *pmksa;
 	int r = pmksa_cache_find(spa, aa, ssid, ssid_len, akm);
 
 	if (r < 0)
@@ -121,7 +126,11 @@ struct pmksa *pmksa_cache_get(const uint8_t spa[static 6],
 	__minheap_sift_down(cache.data, cache.used, r, &ops);
 
 done:
-	return cache.data[cache.used];
+	pmksa = cache.data[cache.used];
+
+	l_debug("Returning entry with PMKID: "PMKID, PMKID_STR(pmksa->pmkid));
+
+	return pmksa;
 }
 
 /*
@@ -130,6 +139,8 @@ done:
  */
 int pmksa_cache_put(struct pmksa *pmksa)
 {
+	l_debug("Adding entry with PMKID: "PMKID, PMKID_STR(pmksa->pmkid));
+
 	if (cache.used == cache.capacity) {
 		l_free(cache.data[0]);
 		cache.data[0] = pmksa;
