@@ -43,6 +43,7 @@
 #include "src/handshake.h"
 #include "src/erp.h"
 #include "src/band.h"
+#include "src/pmksa.h"
 
 static inline unsigned int n_ecc_groups(void)
 {
@@ -137,6 +138,9 @@ void handshake_state_unref(struct handshake_state *s)
 	l_free(s->fils_ip_req_ie);
 	l_free(s->fils_ip_resp_ie);
 	l_free(s->vendor_ies);
+
+	if (s->have_pmksa)
+		l_free(s->pmksa);
 
 	if (s->erp_cache)
 		erp_cache_put(s->erp_cache);
@@ -701,6 +705,11 @@ void handshake_state_install_ptk(struct handshake_state *s)
 {
 	s->ptk_complete = true;
 
+	if (!s->have_pmksa && IE_AKM_IS_SAE(s->akm_suite)) {
+		l_debug("Adding PMKSA expiration");
+		s->expiration = l_time_now() + pmksa_lifetime();
+	}
+
 	if (install_tk) {
 		uint32_t cipher = ie_rsn_cipher_suite_to_cipher(
 							s->pairwise_cipher);
@@ -1202,4 +1211,72 @@ done:
 		r = 0;
 
 	return r;
+}
+
+bool handshake_state_set_pmksa(struct handshake_state *s,
+					struct pmksa *pmksa)
+{
+	/* checks for both expiration || pmksa being set */
+	if (s->expiration)
+		return false;
+
+	s->pmksa = pmksa;
+	s->have_pmksa = true;
+
+	handshake_state_set_pmkid(s, pmksa->pmkid);
+	handshake_state_set_pmk(s, pmksa->pmk, pmksa->pmk_len);
+
+	return true;
+}
+
+static struct pmksa *handshake_state_steal_pmksa(struct handshake_state *s)
+{
+	struct pmksa *pmksa;
+	uint64_t now = l_time_now();
+
+	if (s->have_pmksa) {
+		pmksa = l_steal_ptr(s->pmksa);
+		s->have_pmksa = false;
+
+		if (l_time_after(now, pmksa->expiration)) {
+			l_free(pmksa);
+			pmksa = NULL;
+		}
+
+		return pmksa;
+	}
+
+	if (s->expiration && l_time_after(now, s->expiration)) {
+		s->expiration = 0;
+		return NULL;
+	}
+
+	if (!s->have_pmkid)
+		return NULL;
+
+	pmksa = l_new(struct pmksa, 1);
+	pmksa->expiration = s->expiration;
+	memcpy(pmksa->spa, s->spa, sizeof(s->spa));
+	memcpy(pmksa->aa, s->aa, sizeof(s->aa));
+	memcpy(pmksa->ssid, s->ssid, s->ssid_len);
+	pmksa->ssid_len = s->ssid_len;
+	pmksa->akm = s->akm_suite;
+	memcpy(pmksa->pmkid, s->pmkid, sizeof(s->pmkid));
+	pmksa->pmk_len = s->pmk_len;
+	memcpy(pmksa->pmk, s->pmk, s->pmk_len);
+
+	return pmksa;
+}
+
+void handshake_state_cache_pmksa(struct handshake_state *s)
+{
+	struct pmksa *pmksa = handshake_state_steal_pmksa(s);
+
+	l_debug("%p", pmksa);
+
+	if (!pmksa)
+		return;
+
+	if (L_WARN_ON(pmksa_cache_put(pmksa) < 0))
+		l_free(pmksa);
 }
