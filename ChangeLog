@@ -1,3 +1,9 @@
+ver 3.2:
+	Fix issue with GCC 15 and -std=c23 build errors.
+	Add support for using PMKSA over SAE if available.
+	Add support for HighUtilization/StationCount thresholds.
+	Add support for disabling Multicast RX option.
+
 ver 3.1:
 	Fix issue with handling OWE transition BSS selection.
 	Fix issue with handling oper class 136 starting frequency.
