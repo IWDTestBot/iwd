@@ -643,7 +643,7 @@ bool wiphy_rrm_capable(struct wiphy *wiphy)
 	return false;
 }
 
-bool wiphy_has_ext_feature(struct wiphy *wiphy, uint32_t feature)
+bool wiphy_has_ext_feature(const struct wiphy *wiphy, uint32_t feature)
 {
 	return feature < sizeof(wiphy->ext_features) * 8 &&
 		test_bit(wiphy->ext_features, feature);
