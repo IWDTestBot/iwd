@@ -3739,9 +3739,8 @@ static void dpp_create(struct netdev *netdev)
 	dpp->key_len = l_ecc_curve_get_scalar_bytes(dpp->curve);
 	dpp->nonce_len = dpp_nonce_len_from_key_len(dpp->key_len);
 	dpp->max_roc = wiphy_get_max_roc_duration(wiphy_find_by_wdev(wdev_id));
-	dpp->mcast_support = wiphy_has_ext_feature(
-				wiphy_find_by_wdev(dpp->wdev_id),
-				NL80211_EXT_FEATURE_MULTICAST_REGISTRATIONS);
+	dpp->mcast_support = wiphy_supports_multicast_rx(
+				wiphy_find_by_wdev(dpp->wdev_id));
 
 	l_ecdh_generate_key_pair(dpp->curve, &dpp->boot_private,
 					&dpp->boot_public);
@@ -4106,7 +4105,7 @@ static struct l_dbus_message *dpp_start_configurator_common(
 	} else
 		dpp->current_freq = bss->frequency;
 
-	dpp_add_frame_watches(dpp, responder);
+	dpp_add_frame_watches(dpp, responder && dpp->mcast_support);
 
 	dpp->uri = dpp_generate_uri(dpp->own_asn1, dpp->own_asn1_len, 2,
 					netdev_get_address(dpp->netdev),
@@ -4535,7 +4534,7 @@ static struct l_dbus_message *dpp_start_pkex_configurator(struct dpp_sm *dpp,
 	dpp->config = dpp_configuration_new(network_get_settings(network),
 						network_get_ssid(network),
 						hs->akm_suite);
-	dpp_add_frame_watches(dpp, true);
+	dpp_add_frame_watches(dpp, dpp->mcast_support);
 
 	dpp_reset_protocol_timer(dpp, DPP_PKEX_PROTO_TIMEOUT);
 	dpp_property_changed_notify(dpp);
