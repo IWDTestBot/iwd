@@ -1371,6 +1371,9 @@ static void wiphy_print_basic_info(struct wiphy *wiphy)
 		if (wiphy->driver_flags & OWE_DISABLE)
 			flags = l_strv_append(flags, "OweDisable");
 
+		if (wiphy->driver_flags & MULTICAST_RX_DISABLE)
+			flags = l_strv_append(flags, "MulticastRxDisable");
+
 		joined = l_strjoinv(flags, ' ');
 
 		l_info("\tDriver Flags: %s", joined);
