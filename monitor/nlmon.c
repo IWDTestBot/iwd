@@ -43,6 +43,7 @@
 #include <linux/genetlink.h>
 #include <linux/rtnetlink.h>
 #include <linux/filter.h>
+#include <linux/limits.h>
 #include <ell/ell.h>
 
 #ifndef ARPHRD_NETLINK
@@ -94,6 +95,8 @@
 #define BSS_CAPABILITY_APSD		(1<<11)
 #define BSS_CAPABILITY_DSSS_OFDM	(1<<13)
 
+#define BYTES_PER_MB			1000000
+
 struct nlmon *cur_nlmon;
 
 enum msg_type {
@@ -115,6 +118,11 @@ struct nlmon {
 	bool noies;
 	bool read;
 	enum time_format time_format;
+
+	char *file_prefix;
+	unsigned int file_idx;
+	unsigned int max_files;
+	unsigned int max_size;
 };
 
 struct nlmon_req {
@@ -7388,6 +7396,64 @@ static bool nlmon_req_match(const void *a, const void *b)
 	return (req->seq == match->seq && req->pid == match->pid);
 }
 
+/*
+ * Ensures that PCAP names are zero padded when needed. This makes the files
+ * sort correctly.
+ */
+static void next_pcap_name(char *buf, size_t size, const char *prefix,
+				unsigned int idx, unsigned int max)
+{
+	unsigned int ndigits = 1;
+
+	while (max > 9) {
+		max /= 10;
+		ndigits++;
+	}
+
+	snprintf(buf, size, "%s%.*u", prefix, ndigits, idx);
+}
+
+static bool check_pcap(struct nlmon *nlmon, size_t next_size)
+{
+	char path[PATH_MAX];
+
+	if (!nlmon->pcap)
+		return false;
+
+	if (!nlmon->max_size)
+		return true;
+
+	if (pcap_get_size(nlmon->pcap) + next_size <= nlmon->max_size)
+		return true;
+
+	pcap_close(nlmon->pcap);
+
+	/* Exausted the single PCAP file */
+	if (nlmon->max_files < 2) {
+		printf("Reached maximum size of PCAP, exiting\n");
+		nlmon->pcap = NULL;
+		l_main_quit();
+		return false;
+	}
+
+	next_pcap_name(path, sizeof(path), nlmon->file_prefix,
+			++nlmon->file_idx, nlmon->max_files);
+
+	nlmon->pcap = pcap_create(path);
+
+	if (nlmon->max_files > nlmon->file_idx)
+		return true;
+
+	/* Remove oldest PCAP file */
+	next_pcap_name(path, sizeof(path), nlmon->file_prefix,
+		nlmon->file_idx - nlmon->max_files, nlmon->max_files);
+
+	if (remove(path) < 0)
+		printf("Failed to remove old PCAP file %s\n", path);
+
+	return true;
+}
+
 static void store_packet(struct nlmon *nlmon, const struct timeval *tv,
 					uint16_t pkt_type,
 					uint16_t arphrd_type,
@@ -7396,7 +7462,7 @@ static void store_packet(struct nlmon *nlmon, const struct timeval *tv,
 {
 	uint8_t sll_hdr[16], *buf = sll_hdr;
 
-	if (!nlmon->pcap)
+	if (!check_pcap(nlmon, sizeof(sll_hdr) + size))
 		return;
 
 	memset(sll_hdr, 0, sizeof(sll_hdr));
@@ -7522,6 +7588,9 @@ struct nlmon *nlmon_create(uint16_t id, const struct nlmon_config *config)
 	nlmon->noies = config->noies;
 	nlmon->read = config->read_only;
 	nlmon->time_format = config->time_format;
+	nlmon->max_files = config->pcap_file_count;
+	/* Command line expects MB, but use bytes internally */
+	nlmon->max_size = config->pcap_file_size * BYTES_PER_MB;
 
 	return nlmon;
 }
@@ -8549,13 +8618,20 @@ struct nlmon *nlmon_open(uint16_t id, const char *pathname,
 	struct nlmon *nlmon;
 	struct l_io *pae_io;
 	struct pcap *pcap;
+	char path[PATH_MAX];
 
 	pae_io = open_pae();
 	if (!pae_io)
 		return NULL;
 
 	if (pathname) {
-		pcap = pcap_create(pathname);
+		if (config->pcap_file_count > 1)
+			next_pcap_name(path, sizeof(path), pathname,
+					0, config->pcap_file_count);
+		else
+			snprintf(path, sizeof(path), "%s", pathname);
+
+		pcap = pcap_create(path);
 		if (!pcap) {
 			l_io_destroy(pae_io);
 			return NULL;
@@ -8568,6 +8644,7 @@ struct nlmon *nlmon_open(uint16_t id, const char *pathname,
 
 	nlmon->pae_io = pae_io;
 	nlmon->pcap = pcap;
+	nlmon->file_prefix = l_strdup(pathname);
 
 	l_io_set_read_handler(nlmon->pae_io, pae_receive, nlmon, NULL);
 
@@ -8589,6 +8666,8 @@ void nlmon_close(struct nlmon *nlmon)
 
 	if (nlmon->pcap)
 		pcap_close(nlmon->pcap);
+
+	l_free(nlmon->file_prefix);
 
 	l_free(nlmon);
 }
