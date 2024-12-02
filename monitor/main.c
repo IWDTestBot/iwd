@@ -728,6 +728,8 @@ static void usage(void)
 		"\t-e, --noies                Don't show IEs except SSID\n"
 		"\t-t, --time-format <format> Time format to display. Either\n"
 						"\t\t\t\t   'delta' or 'utc'.\n"
+		"\t-W,--pcap-count            Maximum number of PCAP files\n"
+		"\t-C,--pcap-size             Maximum size (MB) of PCAP files\n"
 		"\t-h, --help                 Show help options\n");
 }
 
@@ -742,6 +744,8 @@ static const struct option main_options[] = {
 	{ "noscan",      no_argument,       NULL, 's' },
 	{ "noies",       no_argument,       NULL, 'e' },
 	{ "time-format", required_argument, NULL, 't' },
+	{ "pcap-count",  required_argument, NULL, 'W' },
+	{ "pcap-size",   required_argument, NULL, 'C' },
 	{ "version",     no_argument,       NULL, 'v' },
 	{ "help",        no_argument,       NULL, 'h' },
 	{ }
@@ -757,7 +761,7 @@ int main(int argc, char *argv[])
 	for (;;) {
 		int opt;
 
-		opt = getopt_long(argc, argv, "r:w:a:i:t:nvhyse",
+		opt = getopt_long(argc, argv, "r:w:a:i:t:W:C:nvhyse",
 						main_options, NULL);
 		if (opt < 0)
 			break;
@@ -795,6 +799,24 @@ int main(int argc, char *argv[])
 				config.time_format = TIME_FORMAT_UTC;
 			else {
 				printf("Invalid time format '%s'", optarg);
+				return EXIT_FAILURE;
+			}
+
+			break;
+		case 'W':
+			if (l_safe_atou32(optarg,
+					&config.pcap_file_count) < 0 ||
+					config.pcap_file_count == 0) {
+				printf("Invalid file count '%s'\n", optarg);
+				return EXIT_FAILURE;
+			}
+
+			break;
+		case 'C':
+			if (l_safe_atou32(optarg,
+					&config.pcap_file_size) < 0 ||
+					config.pcap_file_size == 0) {
+				printf("Invalid file size '%s'\n", optarg);
 				return EXIT_FAILURE;
 			}
 
