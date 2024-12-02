@@ -29,6 +29,7 @@
 #include <errno.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <time.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -113,6 +114,7 @@ struct nlmon {
 	bool noscan;
 	bool noies;
 	bool read;
+	enum time_format time_format;
 };
 
 struct nlmon_req {
@@ -185,11 +187,15 @@ static void nlmon_req_free(void *data)
 }
 
 static time_t time_offset = ((time_t) -1);
+static enum time_format time_format;
 
-static inline void update_time_offset(const struct timeval *tv)
+static inline void update_time_offset(const struct timeval *tv,
+					enum time_format tf)
 {
-	if (tv && time_offset == ((time_t) -1))
+	if (tv && time_offset == ((time_t) -1)) {
 		time_offset = tv->tv_sec;
+		time_format = tf;
+	}
 }
 
 #define print_indent(indent, color1, prefix, title, color2, fmt, args...) \
@@ -225,15 +231,38 @@ static void print_packet(const struct timeval *tv, char ident,
 	int n, ts_len = 0, ts_pos = 0, len = 0, pos = 0;
 
 	if (tv) {
+		struct tm *tm;
+
 		if (use_color()) {
 			n = sprintf(ts_str + ts_pos, "%s", COLOR_TIMESTAMP);
 			if (n > 0)
 				ts_pos += n;
 		}
 
-		n = sprintf(ts_str + ts_pos, " %" PRId64 ".%06" PRId64,
+		switch (time_format) {
+		case TIME_FORMAT_DELTA:
+			n = sprintf(ts_str + ts_pos, " %" PRId64 ".%06" PRId64,
 					(int64_t)tv->tv_sec - time_offset,
 					(int64_t)tv->tv_usec);
+			break;
+		case TIME_FORMAT_UTC:
+			tm = gmtime(&tv->tv_sec);
+			if (!tm) {
+				n = sprintf(ts_str + ts_pos, "%s",
+						"Time error");
+				break;
+			}
+
+			n = strftime(ts_str + ts_pos, sizeof(ts_str) - ts_pos,
+					"%b %d %H:%M:%S", tm);
+			break;
+		default:
+			/* Should never happen */
+			printf("Unknown time format");
+			l_main_quit();
+			return;
+		}
+
 		if (n > 0) {
 			ts_pos += n;
 			ts_len += n;
@@ -7497,6 +7526,7 @@ struct nlmon *nlmon_create(uint16_t id, const struct nlmon_config *config)
 	nlmon->noscan = config->noscan;
 	nlmon->noies = config->noies;
 	nlmon->read = config->read_only;
+	nlmon->time_format = config->time_format;
 
 	return nlmon;
 }
@@ -8333,7 +8363,10 @@ void nlmon_print_rtnl(struct nlmon *nlmon, const struct timeval *tv,
 	int64_t aligned_size = NLMSG_ALIGN(size);
 	const struct nlmsghdr *nlmsg;
 
-	update_time_offset(tv);
+	if (nlmon->nortnl)
+		return;
+
+	update_time_offset(tv, nlmon->time_format);
 
 	for (nlmsg = data; NLMSG_OK(nlmsg, aligned_size);
 				nlmsg = NLMSG_NEXT(nlmsg, aligned_size)) {
@@ -8371,7 +8404,7 @@ void nlmon_print_genl(struct nlmon *nlmon, const struct timeval *tv,
 {
 	const struct nlmsghdr *nlmsg;
 
-	update_time_offset(tv);
+	update_time_offset(tv, nlmon->time_format);
 
 	for (nlmsg = data; NLMSG_OK(nlmsg, size);
 				nlmsg = NLMSG_NEXT(nlmsg, size)) {
@@ -8394,7 +8427,7 @@ void nlmon_print_pae(struct nlmon *nlmon, const struct timeval *tv,
 {
 	char extra_str[16];
 
-	update_time_offset(tv);
+	update_time_offset(tv, nlmon->time_format);
 
 	sprintf(extra_str, "len %u", size);
 
