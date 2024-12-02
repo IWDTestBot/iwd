@@ -25,12 +25,18 @@
 
 struct nlmon;
 
+enum time_format {
+	TIME_FORMAT_DELTA,
+	TIME_FORMAT_UTC,
+};
+
 struct nlmon_config {
 	bool nortnl;
 	bool nowiphy;
 	bool noscan;
 	bool noies;
 	bool read_only;
+	enum time_format time_format;
 };
 
 struct nlmon *nlmon_open(uint16_t id, const char *pathname,
