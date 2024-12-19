@@ -3483,6 +3483,13 @@ static void netdev_external_auth_sae_tx_associate(void *user_data)
 
 	netdev_send_external_auth(netdev, MMPDU_STATUS_CODE_SUCCESS);
 	netdev_ensure_eapol_registered(netdev);
+
+	/*
+	 * Free the auth proto now. With external auth there is no associate
+	 * event which is where this normally gets cleaned up.
+	 */
+	auth_proto_free(netdev->ap);
+	netdev->ap = NULL;
 }
 
 struct rtnl_data {
