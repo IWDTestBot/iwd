@@ -1,3 +1,6 @@
+ver 3.3:
+	Fix issue with handling External Authentication.
+
 ver 3.2:
 	Fix issue with GCC 15 and -std=c23 build errors.
 	Add support for using PMKSA over SAE if available.
