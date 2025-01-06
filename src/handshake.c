@@ -1272,10 +1272,10 @@ void handshake_state_cache_pmksa(struct handshake_state *s)
 {
 	struct pmksa *pmksa = handshake_state_steal_pmksa(s);
 
-	l_debug("%p", pmksa);
-
 	if (!pmksa)
 		return;
+
+	l_debug("%p", pmksa);
 
 	if (L_WARN_ON(pmksa_cache_put(pmksa) < 0))
 		l_free(pmksa);
