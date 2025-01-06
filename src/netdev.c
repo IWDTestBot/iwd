@@ -2615,6 +2615,8 @@ static void netdev_connect_event(struct l_genl_msg *msg, struct netdev *netdev)
 	struct handshake_state *hs = netdev->handshake;
 	bool timeout = false;
 	uint32_t timeout_reason = 0;
+	struct netdev_handshake_state *nhs = l_container_of(netdev->handshake,
+				struct netdev_handshake_state, super);
 
 	l_debug("");
 
@@ -2820,6 +2822,16 @@ process_resp_ies:
 	}
 
 	l_debug("Request / Response IEs parsed");
+
+	/*
+	 * This should only be the case for Fullmac/External auth. Here we don't
+	 * get an associate event, so we need to destroy the auth-proto now
+	 * so eapol gets started within the OCI callback
+	 */
+	if (netdev->ap && nhs->type == CONNECTION_TYPE_FULLMAC) {
+		auth_proto_free(netdev->ap);
+		netdev->ap = NULL;
+	}
 
 	if (netdev->sm) {
 		if (!hs->chandef) {
