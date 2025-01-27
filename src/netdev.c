@@ -2499,7 +2499,9 @@ static struct l_genl_msg *netdev_build_cmd_connect(struct netdev *netdev,
 	case CONNECTION_TYPE_SOFTMAC:
 		break;
 	case CONNECTION_TYPE_FULLMAC:
-		l_genl_msg_append_attr(msg,
+		/* If we have a PMKSA for SAE we won't be doing external auth */
+		if (IE_AKM_IS_SAE(hs->akm_suite) && !hs->have_pmksa)
+			l_genl_msg_append_attr(msg,
 				NL80211_ATTR_EXTERNAL_AUTH_SUPPORT, 0, NULL);
 		break;
 	case CONNECTION_TYPE_SAE_OFFLOAD:
