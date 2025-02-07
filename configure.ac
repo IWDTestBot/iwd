@@ -5,6 +5,8 @@ AC_CONFIG_HEADERS(config.h)
 AC_CONFIG_AUX_DIR(build-aux)
 AC_CONFIG_MACRO_DIR(build-aux)
 
+AC_REQUIRE_AUX_FILE([tap-driver.sh])
+
 AM_INIT_AUTOMAKE([foreign subdir-objects color-tests silent-rules
 					tar-pax no-dist-gzip dist-xz])
 
@@ -29,6 +31,7 @@ AC_PROG_CC_GCOV
 AC_PROG_INSTALL
 AC_PROG_MKDIR_P
 AC_PROG_LN_S
+AC_PROG_AWK
 
 AC_SYS_LARGEFILE
 

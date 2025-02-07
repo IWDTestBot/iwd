@@ -618,6 +618,9 @@ unit_test_client_SOURCES = unit/test-client.c \
 unit_test_client_LDADD = $(ell_ldadd) $(client_ldadd)
 endif
 
+LOG_DRIVER = env AM_TAP_AWK='$(AWK)' $(SHELL) \
+			$(top_srcdir)/build-aux/tap-driver.sh
+
 TESTS = $(unit_tests)
 
 EXTRA_DIST = src/genbuiltin src/iwd.service.in src/net.connman.iwd.service \
