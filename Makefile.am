@@ -71,7 +71,9 @@ ell_headers = ell/util.h \
 ell_sources = ell/private.h \
 			ell/missing.h \
 			ell/util.c \
+			ell/test-private.h \
 			ell/test.c \
+			ell/test-dbus.c \
 			ell/strv.c \
 			ell/utf8.c \
 			ell/queue.c \
