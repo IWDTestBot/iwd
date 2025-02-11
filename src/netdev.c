@@ -3453,11 +3453,22 @@ static void netdev_external_auth_sae_tx_authenticate(const uint8_t *body,
 
 static void netdev_external_auth_cb(struct l_genl_msg *msg, void *user_data)
 {
+	struct netdev *netdev = user_data;
 	int error = l_genl_msg_get_error(msg);
 
-	if (error < 0)
+	if (error < 0) {
 		l_debug("Failed to send External Auth: %s(%d)",
 				strerror(-error), -error);
+
+		/*
+		 * Without an explicit disconnect here brcmfmac gets into a
+		 * broken state and returns "Resource temporarily unavailable
+		 * for any subsequent scans/commands
+		 */
+		netdev_disconnect_and_fail_connection(netdev,
+					NETDEV_RESULT_AUTHENTICATION_FAILED,
+					MMPDU_REASON_CODE_UNSPECIFIED);
+	}
 }
 
 static void netdev_send_external_auth(struct netdev *netdev,
