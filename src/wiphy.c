@@ -245,10 +245,6 @@ static bool wiphy_can_connect_sae(struct wiphy *wiphy)
 			return true;
 
 		/* Case 3 */
-		iwd_notice(IWD_NOTICE_CONNECT_INFO,
-			"FullMAC driver: %s using SAE.  Expect EXTERNAL_AUTH",
-			wiphy->driver_str);
-
 		return true;
 	}
 
@@ -312,8 +308,6 @@ enum ie_rsn_akm_suite wiphy_select_akm(struct wiphy *wiphy,
 		 * met, we can fallback to WPA2 (if the AKM is present).
 		 */
 		if (ie_rsne_is_wpa3_personal(info)) {
-			l_debug("Network is WPA3-Personal...");
-
 			if (!wiphy_can_connect_sae(wiphy)) {
 				l_debug("Can't use SAE, trying WPA2");
 				goto wpa2_personal;
