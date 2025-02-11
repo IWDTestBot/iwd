@@ -3809,11 +3809,15 @@ int __station_connect_network(struct station *station, struct network *network,
 	}
 
 	iwd_notice(IWD_NOTICE_CONNECT_INFO, "ssid: %s, bss: "MAC", "
-					"signal: %d, load: %d/255",
+					"signal: %d, load: %d/255, "
+					"security: %s",
 					network_get_ssid(network),
 					MAC_STR(bss->addr),
 					bss->signal_strength / 100,
-					bss->utilization);
+					bss->utilization,
+					diagnostic_akm_suite_to_security(
+								hs->akm_suite,
+								hs->wpa_ie));
 
 	station->connected_bss = bss;
 	station->connected_network = network;
