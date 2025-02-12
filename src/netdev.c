@@ -3816,6 +3816,15 @@ static void netdev_cmd_set_cqm_cb(struct l_genl_msg *msg, void *user_data)
 static int netdev_cqm_rssi_update(struct netdev *netdev)
 {
 	struct l_genl_msg *msg;
+	struct netdev_handshake_state *nhs = l_container_of(netdev->handshake,
+				struct netdev_handshake_state, super);
+
+	/*
+	 * Fullmac cards handle roaming in firmware, there is no need to set
+	 * CQM thresholds
+	 */
+	if (nhs->type == CONNECTION_TYPE_FULLMAC)
+		return 0;
 
 	l_debug("");
 
