@@ -1498,6 +1498,52 @@ static void netdev_setting_keys_failed(struct netdev_handshake_state *nhs,
 	handshake_event(&nhs->super, HANDSHAKE_EVENT_SETTING_KEYS_FAILED, &err);
 }
 
+static void netdev_set_pmksa(struct handshake_state *hs)
+{
+	struct l_genl_msg *msg;
+	uint32_t expiration = (uint32_t)hs->expiration;
+
+	if (!hs->have_pmkid)
+		return;
+
+	msg = l_genl_msg_new(NL80211_CMD_SET_PMKSA);
+
+	l_genl_msg_append_attr(msg, NL80211_ATTR_IFINDEX, 4, &hs->ifindex);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_PMKID, 16, hs->pmkid);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_MAC, ETH_ALEN, hs->aa);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_SSID, hs->ssid_len, hs->ssid);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_PMK_LIFETIME, 4, &expiration);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_PMK, hs->pmk_len, hs->pmk);
+
+	if (!l_genl_family_send(nl80211, msg, NULL, NULL, NULL))
+		l_error("error sending SET_PMKSA");
+}
+
+void netdev_remove_pmksa(struct netdev *netdev)
+{
+	struct l_genl_msg *msg;
+	struct handshake_state *hs = netdev->handshake;
+	struct netdev_handshake_state *nhs = l_container_of(hs,
+					struct netdev_handshake_state, super);
+
+	handshake_state_remove_pmksa(netdev->handshake);
+
+	if (nhs->type != CONNECTION_TYPE_FULLMAC)
+		return;
+
+	/* Fullmac cards need to set/remove the PMKSA within the kernel */
+
+	msg = l_genl_msg_new(NL80211_CMD_DEL_PMKSA);
+
+	l_genl_msg_append_attr(msg, NL80211_ATTR_IFINDEX, 4, &netdev->index);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_PMKID, 16, hs->pmkid);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_MAC, ETH_ALEN, hs->aa);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_SSID, hs->ssid_len, hs->ssid);
+
+	if (!l_genl_family_send(nl80211, msg, NULL, NULL, NULL))
+		l_error("error sending DEL_PMKSA");
+}
+
 static void try_handshake_complete(struct netdev_handshake_state *nhs)
 {
 	l_debug("ptk_installed: %u, gtk_installed: %u, igtk_installed: %u",
@@ -1517,6 +1563,9 @@ static void try_handshake_complete(struct netdev_handshake_state *nhs)
 		nhs->complete = true;
 
 		l_debug("Invoking handshake_event()");
+
+		if (nhs->type == CONNECTION_TYPE_FULLMAC)
+			netdev_set_pmksa(&nhs->super);
 
 		handshake_state_cache_pmksa(&nhs->super);
 
@@ -6458,6 +6507,23 @@ static void netdev_get_link(struct netdev *netdev)
 	L_WARN_ON(netdev->get_link_cmd_id == 0);
 }
 
+static void netdev_flush_pmksa(struct netdev *netdev)
+{
+	struct l_genl_msg *msg = l_genl_msg_new(NL80211_CMD_FLUSH_PMKSA);
+
+	/*
+	 * We only utilize the kernel's PMKSA cache for fullmac cards, so no
+	 * need to flush if this is a softmac
+	 */
+	if (wiphy_supports_cmds_auth_assoc(netdev->wiphy))
+		return;
+
+	l_genl_msg_append_attr(msg, NL80211_ATTR_IFINDEX, 4, &netdev->index);
+
+	if (!l_genl_family_send(nl80211, msg, NULL, NULL, NULL))
+		l_error("Failed to flush PMKSA");
+}
+
 struct netdev *netdev_create_from_genl(struct l_genl_msg *msg,
 					const uint8_t *set_mac)
 {
@@ -6532,6 +6598,8 @@ struct netdev *netdev_create_from_genl(struct l_genl_msg *msg,
 	netdev_setup_interface(netdev);
 
 	netdev_get_link(netdev);
+
+	netdev_flush_pmksa(netdev);
 
 	return netdev;
 }
