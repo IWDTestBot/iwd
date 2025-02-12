@@ -3432,7 +3432,7 @@ static bool station_pmksa_fallback(struct station *station, uint16_t status)
 	 * Remove the PMKSA from the handshake and return true to re-try the
 	 * same BSS without PMKSA.
 	 */
-	handshake_state_remove_pmksa(station->hs);
+	netdev_remove_pmksa(station->netdev);
 
 	station_debug_event(station, "pmksa-invalid-pmkid");
 
