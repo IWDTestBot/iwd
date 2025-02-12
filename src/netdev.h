@@ -218,6 +218,8 @@ int netdev_get_all_stations(struct netdev *netdev, netdev_get_station_cb_t cb,
 
 void netdev_handshake_failed(struct handshake_state *hs, uint16_t reason_code);
 
+void netdev_remove_pmksa(struct netdev *netdev);
+
 struct netdev *netdev_find(int ifindex);
 
 uint32_t netdev_watch_add(netdev_watch_func_t func,
