@@ -173,7 +173,7 @@ jobs:
         tar -cvf archive.tar $FILES
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: iwd-artifacts
         path: |
@@ -184,7 +184,7 @@ jobs:
     needs: setup
     steps:
     - name: Download artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: iwd-artifacts
 
@@ -210,7 +210,7 @@ jobs:
     needs: setup
     steps:
     - name: Download artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: iwd-artifacts
 
@@ -263,7 +263,7 @@ jobs:
 
     - name: Upload Logs
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: test-runner-logs
         path: ${{ github.workspace }}/log
