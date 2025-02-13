@@ -5522,23 +5522,18 @@ static void netdev_external_auth_event(struct l_genl_msg *msg,
 	}
 
 	if (action == NL80211_EXTERNAL_AUTH_ABORT) {
-		iwd_notice(IWD_NOTICE_CONNECT_INFO, "External Auth Aborted");
+		l_warn("External Auth Aborted");
 		goto error;
 	}
 
-	iwd_notice(IWD_NOTICE_CONNECT_INFO,
-			"External Auth to SSID: %s, bssid: "MAC,
-			util_ssid_to_utf8(ssid.iov_len, ssid.iov_base),
-			MAC_STR(bssid));
-
 	if (hs->ssid_len != ssid.iov_len ||
 			memcmp(hs->ssid, ssid.iov_base, hs->ssid_len)) {
-		iwd_notice(IWD_NOTICE_CONNECT_INFO, "Target SSID mismatch");
+		l_warn("Target SSID mismatch");
 		goto error;
 	}
 
 	if (memcmp(hs->aa, bssid, ETH_ALEN)) {
-		iwd_notice(IWD_NOTICE_CONNECT_INFO, "Target BSSID mismatch");
+		l_warn("Target BSSID mismatch");
 		goto error;
 	}
 
