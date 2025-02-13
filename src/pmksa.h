@@ -32,6 +32,10 @@ struct pmksa {
 	size_t pmk_len;
 };
 
+typedef void (*pmksa_cache_add_func_t)(const struct pmksa *pmksa);
+typedef void (*pmksa_cache_remove_func_t)(const struct pmksa *pmksa);
+typedef void (*pmksa_cache_flush_func_t)(void);
+
 struct pmksa **__pmksa_cache_get_all(uint32_t *out_n_entries);
 
 struct pmksa *pmksa_cache_get(const uint8_t spa[static 6],
@@ -41,6 +45,11 @@ struct pmksa *pmksa_cache_get(const uint8_t spa[static 6],
 int pmksa_cache_put(struct pmksa *pmksa);
 int pmksa_cache_expire(uint64_t cutoff);
 int pmksa_cache_flush(void);
+int pmksa_cache_free(struct pmksa *pmksa);
 
 uint64_t pmksa_lifetime(void);
 void __pmksa_set_config(const struct l_settings *config);
+
+void __pmksa_set_driver_callbacks(pmksa_cache_add_func_t add,
+					pmksa_cache_remove_func_t remove,
+					pmksa_cache_flush_func_t flush);
