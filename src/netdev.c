@@ -1507,6 +1507,105 @@ static void netdev_setting_keys_failed(struct netdev_handshake_state *nhs,
 	handshake_event(&nhs->super, HANDSHAKE_EVENT_SETTING_KEYS_FAILED, &err);
 }
 
+static bool netdev_match_addr(const void *a, const void *b)
+{
+	const struct netdev *netdev = a;
+	const uint8_t *addr = b;
+
+	return memcmp(netdev->addr, addr, ETH_ALEN) == 0;
+}
+
+static struct netdev *netdev_find_by_address(const uint8_t *addr)
+{
+	return l_queue_find(netdev_list, netdev_match_addr, addr);
+}
+
+static void netdev_pmksa_driver_add(const struct pmksa *pmksa)
+{
+	struct l_genl_msg *msg;
+	struct netdev *netdev = netdev_find_by_address(pmksa->spa);
+	uint32_t expiration = (uint32_t)pmksa->expiration;
+
+	if (!netdev)
+		return;
+
+	/* Only need to set the PMKSA into the kernel for fullmac drivers */
+	if (wiphy_supports_cmds_auth_assoc(netdev->wiphy))
+		return;
+
+	l_debug("Adding PMKSA to kernel");
+
+	msg = l_genl_msg_new(NL80211_CMD_SET_PMKSA);
+
+	l_genl_msg_append_attr(msg, NL80211_ATTR_IFINDEX, 4, &netdev->index);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_PMKID, 16, pmksa->pmkid);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_MAC, ETH_ALEN, pmksa->aa);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_SSID,
+				pmksa->ssid_len, pmksa->ssid);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_PMK_LIFETIME, 4, &expiration);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_PMK,
+				pmksa->pmk_len, pmksa->pmk);
+
+	if (!l_genl_family_send(nl80211, msg, NULL, NULL, NULL))
+		l_error("error sending SET_PMKSA");
+}
+
+static void netdev_pmksa_driver_remove(const struct pmksa *pmksa)
+{
+	struct l_genl_msg *msg;
+	struct netdev *netdev = netdev_find_by_address(pmksa->spa);
+
+	if (!netdev)
+		return;
+
+	/* Only need to set the PMKSA into the kernel for fullmac drivers */
+	if (wiphy_supports_cmds_auth_assoc(netdev->wiphy))
+		return;
+
+	l_debug("Removing PMKSA from kernel");
+
+	msg = l_genl_msg_new(NL80211_CMD_DEL_PMKSA);
+
+	l_genl_msg_append_attr(msg, NL80211_ATTR_IFINDEX, 4, &netdev->index);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_PMKID, 16, pmksa->pmkid);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_MAC, ETH_ALEN, pmksa->aa);
+	l_genl_msg_append_attr(msg, NL80211_ATTR_SSID,
+				pmksa->ssid_len, pmksa->ssid);
+
+	if (!l_genl_family_send(nl80211, msg, NULL, NULL, NULL))
+		l_error("error sending DEL_PMKSA");
+}
+
+static void netdev_flush_pmksa(struct netdev *netdev)
+{
+	struct l_genl_msg *msg;
+
+	/*
+	* We only utilize the kernel's PMKSA cache for fullmac cards,
+	* so no need to flush if this is a softmac.
+	*/
+	if (wiphy_supports_cmds_auth_assoc(netdev->wiphy))
+		return;
+
+	msg = l_genl_msg_new(NL80211_CMD_FLUSH_PMKSA);
+
+	l_genl_msg_append_attr(msg, NL80211_ATTR_IFINDEX, 4, &netdev->index);
+
+	if (!l_genl_family_send(nl80211, msg, NULL, NULL, NULL))
+		l_error("Failed to flush PMKSA for %u", netdev->index);
+}
+
+static void netdev_pmksa_driver_flush(void)
+{
+	const struct l_queue_entry *e;
+
+	for (e = l_queue_get_entries(netdev_list); e; e = e->next) {
+		struct netdev *netdev = e->data;
+
+		netdev_flush_pmksa(netdev);
+	}
+}
+
 static void try_handshake_complete(struct netdev_handshake_state *nhs)
 {
 	l_debug("ptk_installed: %u, gtk_installed: %u, igtk_installed: %u",
@@ -6542,6 +6641,16 @@ struct netdev *netdev_create_from_genl(struct l_genl_msg *msg,
 
 	netdev_get_link(netdev);
 
+	/*
+	 * Call the netdev-specific variant to flush only this devices PMKSA
+	 * cache in the kernel. This will make IWD's cache and the kernel's
+	 * cache consistent, i.e. no entries
+	 *
+	 * TODO: If we ever are storing PMKSA's on disk we would first need to
+	 *       flush, then add all the PMKSA entries at this time.
+	 */
+	netdev_flush_pmksa(netdev);
+
 	return netdev;
 }
 
@@ -6656,6 +6765,10 @@ static int netdev_init(void)
 	__eapol_set_install_pmk_func(netdev_set_pmk);
 
 	__ft_set_tx_frame_func(netdev_tx_ft_frame);
+
+	__pmksa_set_driver_callbacks(netdev_pmksa_driver_add,
+					netdev_pmksa_driver_remove,
+					netdev_pmksa_driver_flush);
 
 	unicast_watch = l_genl_add_unicast_watch(genl, NL80211_GENL_NAME,
 						netdev_unicast_notify,
