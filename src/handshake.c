@@ -1239,7 +1239,7 @@ static struct pmksa *handshake_state_steal_pmksa(struct handshake_state *s)
 		s->have_pmksa = false;
 
 		if (l_time_after(now, pmksa->expiration)) {
-			l_free(pmksa);
+			pmksa_cache_free(pmksa);
 			pmksa = NULL;
 		}
 
@@ -1280,7 +1280,7 @@ void handshake_state_cache_pmksa(struct handshake_state *s)
 	l_debug("Caching PMKSA for "MAC, MAC_STR(s->aa));
 
 	if (L_WARN_ON(pmksa_cache_put(pmksa) < 0))
-		l_free(pmksa);
+		pmksa_cache_free(pmksa);
 }
 
 bool handshake_state_remove_pmksa(struct handshake_state *s)
@@ -1294,7 +1294,7 @@ bool handshake_state_remove_pmksa(struct handshake_state *s)
 	if (!pmksa)
 		return false;
 
-	l_free(pmksa);
+	pmksa_cache_free(pmksa);
 
 	return true;
 }

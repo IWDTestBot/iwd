@@ -40,6 +40,9 @@
 
 static uint64_t dot11RSNAConfigPMKLifetime = 43200ULL * L_USEC_PER_SEC;
 static uint32_t pmksa_cache_capacity = 255;
+static pmksa_cache_add_func_t driver_add;
+static pmksa_cache_remove_func_t driver_remove;
+static pmksa_cache_flush_func_t driver_flush;
 
 struct min_heap {
 	struct pmksa **data;
@@ -142,7 +145,7 @@ int pmksa_cache_put(struct pmksa *pmksa)
 	l_debug("Adding entry with PMKID: "PMKID, PMKID_STR(pmksa->pmkid));
 
 	if (cache.used == cache.capacity) {
-		l_free(cache.data[0]);
+		pmksa_cache_free(cache.data[0]);
 		cache.data[0] = pmksa;
 		__minheap_sift_down(cache.data, cache.used, 0, &ops);
 		return 0;
@@ -151,6 +154,9 @@ int pmksa_cache_put(struct pmksa *pmksa)
 	cache.data[cache.used] = pmksa;
 	__minheap_sift_up(cache.data, cache.used, &ops);
 	cache.used += 1;
+
+	if (driver_add)
+		driver_add(pmksa);
 
 	return 0;
 }
@@ -167,7 +173,7 @@ int pmksa_cache_expire(uint64_t cutoff)
 
 	for (i = 0; i < used; i++) {
 		if (cache.data[i]->expiration <= cutoff) {
-			l_free(cache.data[i]);
+			pmksa_cache_free(cache.data[i]);
 			continue;
 		}
 
@@ -190,11 +196,30 @@ int pmksa_cache_flush(void)
 {
 	uint32_t i;
 
+	/*
+	 * The driver flush operation is done via a single kernel API call which
+	 * is why below we use l_free instead of pmksa_cache_free as to not
+	 * induce a DEL_PMKSA kernel call for each entry.
+	 */
+	if (driver_flush)
+		driver_flush();
+
 	for (i = 0; i < cache.used; i++)
 		l_free(cache.data[i]);
 
 	memset(cache.data, 0, cache.capacity * sizeof(struct pmksa *));
 	cache.used = 0;
+
+	return 0;
+}
+
+int pmksa_cache_free(struct pmksa *pmksa)
+{
+	if (driver_remove)
+		driver_remove(pmksa);
+
+	l_free(pmksa);
+
 	return 0;
 }
 
@@ -215,6 +240,15 @@ void __pmksa_set_config(const struct l_settings *config)
 {
 	l_settings_get_uint(config, "PMKSA", "Capacity",
 					&pmksa_cache_capacity);
+}
+
+void __pmksa_set_driver_callbacks(pmksa_cache_add_func_t add,
+					pmksa_cache_remove_func_t remove,
+					pmksa_cache_flush_func_t flush)
+{
+	driver_add = add;
+	driver_remove = remove;
+	driver_flush = flush;
 }
 
 static int pmksa_init(void)
