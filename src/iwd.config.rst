@@ -465,6 +465,14 @@ are buggy or just don't behave similar enough to the majority of other drivers.
        If a driver in use matches one in this list, multicast RX will be
        disabled.
 
+   * - SaeDisable
+     - Values: comma-separated list of drivers or glob matches
+
+       If a driver in use matches one in this list, SAE/WPA3 will be disabled
+       for connections. This will prevent connections to WPA3-only networks, but
+       will allow for connections to WPA3/WPA2 hybrid networks by utilizing
+       WPA2.
+
 SEE ALSO
 ========
 

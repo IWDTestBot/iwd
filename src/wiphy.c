@@ -74,6 +74,7 @@ enum driver_flag {
 	POWER_SAVE_DISABLE = 0x4,
 	OWE_DISABLE = 0x8,
 	MULTICAST_RX_DISABLE = 0x10,
+	SAE_DISABLE = 0x20,
 };
 
 struct driver_flag_name {
@@ -106,7 +107,8 @@ static const struct driver_flag_name driver_flag_names[] = {
 	{ "ForcePae",           FORCE_PAE },
 	{ "PowerSaveDisable",   POWER_SAVE_DISABLE },
 	{ "OweDisable",         OWE_DISABLE },
-	{ "MulticastRxDisable", MULTICAST_RX_DISABLE }
+	{ "MulticastRxDisable", MULTICAST_RX_DISABLE },
+	{ "SaeDisable",         SAE_DISABLE },
 };
 
 struct wiphy {
@@ -202,6 +204,9 @@ uint16_t wiphy_get_supported_ciphers(struct wiphy *wiphy, uint16_t mask)
 
 static bool wiphy_can_connect_sae(struct wiphy *wiphy)
 {
+	if (wiphy->driver_flags & SAE_DISABLE)
+		return false;
+
 	/*
 	 * WPA3 Specification version 3, Section 2.2:
 	 * A STA shall not enable WEP and TKIP
@@ -1373,6 +1378,9 @@ static void wiphy_print_basic_info(struct wiphy *wiphy)
 
 		if (wiphy->driver_flags & MULTICAST_RX_DISABLE)
 			flags = l_strv_append(flags, "MulticastRxDisable");
+
+		if (wiphy->driver_flags & SAE_DISABLE)
+			flags = l_strv_append(flags, "SaeDisable");
 
 		joined = l_strjoinv(flags, ' ');
 
