@@ -91,6 +91,9 @@ void blacklist_add_bss(const uint8_t *addr)
 {
 	struct blacklist_entry *entry;
 
+	if (!blacklist_initial_timeout)
+		return;
+
 	blacklist_prune();
 
 	entry = l_queue_find(blacklist, match_addr, addr);
@@ -162,19 +165,31 @@ static int blacklist_init(void)
 		blacklist_initial_timeout = BLACKLIST_DEFAULT_TIMEOUT;
 
 	/* For easier user configuration the timeout values are in seconds */
-	blacklist_initial_timeout *= 1000000;
+	blacklist_initial_timeout *= L_USEC_PER_SEC;
 
 	if (!l_settings_get_uint64(config, "Blacklist",
 					"Multiplier",
 					&blacklist_multiplier))
 		blacklist_multiplier = BLACKLIST_DEFAULT_MULTIPLIER;
 
+	if (blacklist_multiplier == 0) {
+		l_warn("[Blacklist].Multiplier cannot be zero, setting to 1");
+		blacklist_multiplier = 1;
+	}
+
 	if (!l_settings_get_uint64(config, "Blacklist",
 					"MaximumTimeout",
 					&blacklist_max_timeout))
 		blacklist_max_timeout = BLACKLIST_DEFAULT_MAX_TIMEOUT;
 
-	blacklist_max_timeout *= 1000000;
+	blacklist_max_timeout *= L_USEC_PER_SEC;
+
+	if (blacklist_initial_timeout > blacklist_max_timeout)
+		l_warn("[Blacklist].InitialTimeout exceeded "
+			"[Blacklist].MaximumTimeout!");
+
+	if (!blacklist_initial_timeout)
+		l_debug("initial timeout was zero, blacklist will be disabled");
 
 	blacklist = l_queue_new();
 
