@@ -290,9 +290,10 @@ control how long a misbehaved BSS spends on the blacklist.
    * - InitialTimeout
      - Values: uint64 value in seconds (default: **60**)
 
-       The initial time that a BSS spends on the blacklist.
+       The initial time that a BSS spends on the blacklist. Setting this to zero
+       will disable blacklisting functionality in IWD.
    * - Multiplier
-     - Values: unsigned int value in seconds (default: **30**)
+     - Values: unsigned int value greater than zero, in seconds (default: **30**)
 
        If the BSS was blacklisted previously and another connection attempt
        has failed after the initial timeout has expired, then the BSS blacklist
