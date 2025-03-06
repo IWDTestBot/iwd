@@ -3,7 +3,8 @@ import sys
 import sys
 import os
 from scapy.layers.dot11 import *
-from scapy.arch import str2mac, get_if_raw_hwaddr
+from scapy.arch import str2mac
+from scapy.arch.unix import get_if_raw_hwaddr
 from time import time, sleep
 from threading import Thread
 
