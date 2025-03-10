@@ -64,6 +64,7 @@ static struct l_hwdb *hwdb;
 static char **whitelist_filter;
 static char **blacklist_filter;
 static int mac_randomize_bytes = 6;
+static bool mac_set_laa = true;
 static char regdom_country[2];
 static uint32_t work_ids;
 static unsigned int wiphy_dump_id;
@@ -778,8 +779,11 @@ static void wiphy_address_constrain(struct wiphy *wiphy, uint8_t addr[static 6])
 {
 	switch (mac_randomize_bytes) {
 	case 6:
-		/* Set the locally administered bit */
-		addr[0] |= 0x2;
+		/* Set or clear the locally administered bit */
+		if (mac_set_laa)
+			addr[0] |= 0x2;
+		else
+			addr[0] &= 0xfd;
 
 		/* Reset multicast bit */
 		addr[0] &= 0xfe;
@@ -2854,9 +2858,13 @@ static int wiphy_init(void)
 	if (s) {
 		if (!strcmp(s, "nic"))
 			mac_randomize_bytes = 3;
-		else if (!strcmp(s, "full"))
+		else if (!strcmp(s, "full")) {
 			mac_randomize_bytes = 6;
-		else
+			mac_set_laa = true;
+		} else if (!strcmp(s, "full-uaa")) {
+			mac_randomize_bytes = 6;
+			mac_set_laa = false;
+		} else
 			l_warn("Invalid [General].AddressRandomizationRange"
 				" value: %s", s);
 	}
@@ -2884,6 +2892,7 @@ static void wiphy_exit(void)
 	l_genl_family_free(nl80211);
 	nl80211 = NULL;
 	mac_randomize_bytes = 6;
+	mac_set_laa = true;
 
 	l_dbus_unregister_interface(dbus_get_bus(), IWD_WIPHY_INTERFACE);
 

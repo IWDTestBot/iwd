@@ -107,7 +107,7 @@ The group ``[General]`` contains general settings.
        the permanent address.
 
    * - AddressRandomizationRange
-     - Values: **full**, nic
+     - Values: **full**, full-uaa, nic
 
        One can control which part of the address is randomized using this
        setting.
@@ -119,7 +119,11 @@ The group ``[General]`` contains general settings.
 
        When using ``AddressRandomizationRange`` set to ``full``, all 6 octets
        of the address are randomized.  The locally-administered bit will be
-       set.
+       set, and multicast bit will be cleared.
+
+       When using ``AddressRandomizationRange`` set to ``full-uaa``, all 6
+       octets of the address are randomized. The locally-administered and
+       multicast bits will be cleared.
 
    * - RoamThreshold
      - Value: rssi dBm value, from -100 to 1, default: **-70**
