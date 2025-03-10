@@ -13,7 +13,7 @@ from hostapd import HostapdCLI
 class Test(unittest.TestCase):
 
     def validate(self, expect_roam=True):
-        wd = IWD()
+        wd = IWD(True)
 
         devices = wd.list_devices(1)
         device = devices[0]
