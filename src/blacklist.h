@@ -26,6 +26,13 @@ enum blacklist_reason {
 	 * connect to it via autoconnect
 	 */
 	BLACKLIST_REASON_PERMANENT,
+	/*
+	 * When a BSS is blacklisted due to a specific subset of error codes.
+	 * This reason is somewhat of a special case and has no expiration. It
+	 * is assumed that the calling module will remove these entries when
+	 * appropriate (after a connection/disconnection)
+	 */
+	BLACKLIST_REASON_TEMPORARY,
 };
 
 void blacklist_add_bss(const uint8_t *addr, enum blacklist_reason reason);
