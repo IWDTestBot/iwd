@@ -3462,8 +3462,8 @@ static bool station_retry_with_status(struct station *station,
 	 *       obtain that IE, but this should be done in the future.
 	 */
 	if (IS_TEMPORARY_STATUS(status_code))
-		network_blacklist_add(station->connected_network,
-						station->connected_bss);
+		blacklist_add_bss(station->connected_bss->addr,
+					BLACKLIST_REASON_TEMPORARY);
 	else if (!station_pmksa_fallback(station, status_code))
 		blacklist_add_bss(station->connected_bss->addr,
 					BLACKLIST_REASON_PERMANENT);
@@ -3562,8 +3562,8 @@ static void station_connect_cb(struct netdev *netdev, enum netdev_result result,
 		iwd_notice(IWD_NOTICE_DISCONNECT_INFO, "reason: %u", reason);
 
 		/* Disconnected while connecting */
-		network_blacklist_add(station->connected_network,
-						station->connected_bss);
+		blacklist_add_bss(station->connected_bss->addr,
+					BLACKLIST_REASON_TEMPORARY);
 		if (station_try_next_bss(station))
 			return;
 
