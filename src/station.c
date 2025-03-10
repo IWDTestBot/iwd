@@ -2880,7 +2880,8 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 		if (network_can_connect_bss(network, bss) < 0)
 			goto next;
 
-		if (blacklist_contains_bss(bss->addr))
+		if (blacklist_contains_bss(bss->addr,
+						BLACKLIST_REASON_PERMANENT))
 			goto next;
 
 		rank = bss->rank;
@@ -3400,7 +3401,8 @@ static bool station_retry_with_reason(struct station *station,
 		break;
 	}
 
-	blacklist_add_bss(station->connected_bss->addr);
+	blacklist_add_bss(station->connected_bss->addr,
+				BLACKLIST_REASON_PERMANENT);
 
 try_next:
 	return station_try_next_bss(station);
@@ -3463,7 +3465,8 @@ static bool station_retry_with_status(struct station *station,
 		network_blacklist_add(station->connected_network,
 						station->connected_bss);
 	else if (!station_pmksa_fallback(station, status_code))
-		blacklist_add_bss(station->connected_bss->addr);
+		blacklist_add_bss(station->connected_bss->addr,
+					BLACKLIST_REASON_PERMANENT);
 
 	iwd_notice(IWD_NOTICE_CONNECT_FAILED, "status: %u", status_code);
 
@@ -3549,7 +3552,8 @@ static void station_connect_cb(struct netdev *netdev, enum netdev_result result,
 
 	switch (result) {
 	case NETDEV_RESULT_OK:
-		blacklist_remove_bss(station->connected_bss->addr);
+		blacklist_remove_bss(station->connected_bss->addr,
+					BLACKLIST_REASON_PERMANENT);
 		station_connect_ok(station);
 		return;
 	case NETDEV_RESULT_DISCONNECTED:
