@@ -51,6 +51,7 @@
 #include "src/mpdu.h"
 #include "src/band.h"
 #include "src/scan.h"
+#include "src/blacklist.h"
 
 /* User configurable options */
 static double RANK_2G_FACTOR;
@@ -58,6 +59,7 @@ static double RANK_5G_FACTOR;
 static double RANK_6G_FACTOR;
 static uint32_t RANK_HIGH_UTILIZATION;
 static uint32_t RANK_HIGH_STATION_COUNT;
+static int RANK_OPTIMAL_SIGNAL_THRESHOLD;
 static uint32_t SCAN_MAX_INTERVAL;
 static uint32_t SCAN_INIT_INTERVAL;
 
@@ -1910,15 +1912,41 @@ int scan_bss_get_security(const struct scan_bss *bss, enum security *security)
 	return 0;
 }
 
+/*
+ * Evaluate the BSS's grouping based on its signal strength and blacklist
+ * status. From best to worst the groupings are:
+ *
+ * Optimal: Not blacklisted in any form, and above the RSSI threshold
+ * Above Threshold: Above the RSSI threshold (may be roam blacklisted)
+ * Below Threshold: Below the RSSI threshold (may be roam blacklisted)
+ * Blacklisted: Permanently blacklisted
+ */
+enum scan_bss_group scan_bss_evaluate_group(const uint8_t *addr,
+						int16_t signal_strength)
+{
+	int rssi = signal_strength / 100;
+
+	if (RANK_OPTIMAL_SIGNAL_THRESHOLD == 0)
+		return SCAN_BSS_GROUP_OPTIMAL;
+
+	if (blacklist_contains_bss(addr, BLACKLIST_REASON_CONNECT_FAILED))
+		return SCAN_BSS_GROUP_BLACKLISTED;
+
+	if (!blacklist_contains_bss(addr, BLACKLIST_REASON_ROAM_REQUESTED) &&
+			rssi >= RANK_OPTIMAL_SIGNAL_THRESHOLD)
+		return SCAN_BSS_GROUP_OPTIMAL;
+
+	if (rssi >= RANK_OPTIMAL_SIGNAL_THRESHOLD)
+		return SCAN_BSS_GROUP_ABOVE_THRESHOLD;
+
+	return SCAN_BSS_GROUP_UNDER_THRESHOLD;
+}
+
 int scan_bss_rank_compare(const void *a, const void *b, void *user_data)
 {
 	const struct scan_bss *new_bss = a, *bss = b;
 
-	if (bss->rank == new_bss->rank)
-		return (bss->signal_strength >
-					new_bss->signal_strength) ? 1 : -1;
-
-	return (bss->rank > new_bss->rank) ? 1 : -1;
+	return __scan_bss_rank_compare(new_bss, bss);
 }
 
 static bool scan_survey_get_snr(struct scan_results *results,
@@ -2677,6 +2705,10 @@ static int scan_init(void)
 
 	if (L_WARN_ON(RANK_HIGH_STATION_COUNT > 255))
 		RANK_HIGH_STATION_COUNT = 255;
+
+	if (!l_settings_get_int(config, "General", "OptimalSignalThreshold",
+					&RANK_OPTIMAL_SIGNAL_THRESHOLD))
+		RANK_OPTIMAL_SIGNAL_THRESHOLD = 0;
 
 	return 0;
 }

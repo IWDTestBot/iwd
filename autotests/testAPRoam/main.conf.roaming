@@ -1,0 +1,6 @@
+[General]
+RoamThreshold=-66
+OptimalSignalThreshold=-72
+
+[Blacklist]
+InitialRoamRequestedTimeout=20

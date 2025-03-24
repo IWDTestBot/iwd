@@ -149,6 +149,21 @@ The group ``[General]`` contains general settings.
        This has the same effect as ``CriticalRoamThreshold``, but for the 5GHz
        band.
 
+   * - OptimalSignalThreshold
+     - Value: rssi dBm value, from -100 to -1, default: **0** (disabled)
+
+       When set to a non-zero value, this enables BSS grouping which is a
+       sorts BSS's first based on this optimal signal threshold, then by rank.
+       In addition the BSS's blacklisting status is also taken into account.
+       IWD will order its connection preference first based on the following
+       groupings, then followed by rank:
+
+       1. "Optimal" is the most preferred group. The BSS is both above the
+          **OptimalSignalThreshold** and not roam blacklisted
+       2. "Above Threshold" means the BSS is roam blacklisted, but still above
+          the **OptimalSignalThreshold**
+       3. "Below Threshold" means the BSS is below **OptimalSignalThreshold**
+
    * - RoamRetryInterval
      - Value: unsigned int value in seconds (default: **60**)
 
@@ -292,6 +307,12 @@ control how long a misbehaved BSS spends on the blacklist.
 
        The initial time that a BSS spends on the blacklist. Setting this to zero
        will disable blacklisting functionality in IWD.
+   * - InitialRoamRequestedTimeout
+     - Values: uint64 value in seconds (default: **30**)
+
+       The initial time that a BSS will be marked after a BSS requests a roam.
+       This is to aid in avoiding roaming back to BSS's which are likely
+       overloaded. Setting this to zero will disabled this form of blacklisting.
    * - Multiplier
      - Values: unsigned int value greater than zero, in seconds
        (default: **30**)
