@@ -2801,6 +2801,7 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 	struct handshake_state *hs = netdev_get_handshake(station->netdev);
 	struct scan_bss *current_bss = station->connected_bss;
 	struct scan_bss *bss;
+	enum scan_bss_group cur_bss_group = SCAN_BSS_GROUP_BLACKLISTED;
 	double cur_bss_rank = 0.0;
 	static const double RANK_FT_FACTOR = 1.3;
 	uint16_t mdid;
@@ -2831,6 +2832,9 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 	bss = l_queue_find(bss_list, bss_match_bssid, current_bss->addr);
 	if (bss && !station->ap_directed_roaming) {
 		cur_bss_rank = bss->rank;
+		cur_bss_group = scan_bss_evaluate_group(
+						current_bss->addr,
+						current_bss->signal_strength);
 
 		if (hs->mde && bss->mde_present && l_get_le16(bss->mde) == mdid)
 			cur_bss_rank *= RANK_FT_FACTOR;
@@ -2855,6 +2859,9 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 	while ((bss = l_queue_pop_head(bss_list))) {
 		double rank;
 		struct roam_bss *rbss;
+		enum scan_bss_group group = scan_bss_evaluate_group(
+							bss->addr,
+							bss->signal_strength);
 
 		station_print_scan_bss(bss);
 
@@ -2876,8 +2883,7 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 		if (network_can_connect_bss(network, bss) < 0)
 			goto next;
 
-		if (blacklist_contains_bss(bss->addr,
-					BLACKLIST_REASON_CONNECT_FAILED))
+		if (group == SCAN_BSS_GROUP_BLACKLISTED)
 			goto next;
 
 		rank = bss->rank;
@@ -2885,7 +2891,15 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 		if (hs->mde && bss->mde_present && l_get_le16(bss->mde) == mdid)
 			rank *= RANK_FT_FACTOR;
 
-		if (rank <= cur_bss_rank)
+		/*
+		 * First check the group:
+		 *   - If worse, disregard BSS candidate
+		 *   - If better, keep BSS candidate
+		 *   - If equal, compare based on rank
+		 */
+		if (group < cur_bss_group)
+			goto next;
+		else if (group == cur_bss_group && rank <= cur_bss_rank)
 			goto next;
 
 		/*
