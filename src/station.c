@@ -3408,8 +3408,8 @@ static bool station_retry_with_reason(struct station *station,
 	 * Network blacklist the BSS as well, since the timeout blacklist could
 	 * be disabled
 	 */
-	network_blacklist_add(station->connected_network,
-				station->connected_bss);
+	blacklist_add_bss(station->connected_bss->addr,
+				BLACKLIST_REASON_TRANSIENT_ERROR);
 
 try_next:
 	return station_try_next_bss(station);
@@ -3481,8 +3481,8 @@ static bool station_retry_with_status(struct station *station,
 	 * will allow network_bss_select to traverse the BSS list and ignore
 	 * BSS's which have previously failed
 	 */
-	network_blacklist_add(station->connected_network,
-				station->connected_bss);
+	blacklist_add_bss(station->connected_bss->addr,
+				BLACKLIST_REASON_TRANSIENT_ERROR);
 
 try_next:
 	iwd_notice(IWD_NOTICE_CONNECT_FAILED, "status: %u", status_code);
@@ -3579,8 +3579,8 @@ static void station_connect_cb(struct netdev *netdev, enum netdev_result result,
 		iwd_notice(IWD_NOTICE_DISCONNECT_INFO, "reason: %u", reason);
 
 		/* Disconnected while connecting */
-		network_blacklist_add(station->connected_network,
-						station->connected_bss);
+		blacklist_add_bss(station->connected_bss->addr,
+					BLACKLIST_REASON_TRANSIENT_ERROR);
 		if (station_try_next_bss(station))
 			return;
 
