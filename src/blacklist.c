@@ -45,6 +45,7 @@
 
 static uint64_t blacklist_multiplier;
 static uint64_t blacklist_initial_timeout;
+static uint64_t blacklist_roam_initial_timeout;
 static uint64_t blacklist_max_timeout;
 
 struct blacklist_entry {
@@ -85,6 +86,13 @@ static struct blacklist_entry *blacklist_entry_new(const uint8_t *addr,
 		 */
 		added = 0;
 		expires = 0;
+		break;
+	case BLACKLIST_REASON_ROAM_REQUESTED:
+		if (!blacklist_roam_initial_timeout)
+			return NULL;
+
+		added = l_time_now();
+		expires = l_time_offset(added, blacklist_roam_initial_timeout);
 		break;
 	default:
 		l_warn("Unhandled blacklist reason: %u", reason);
@@ -210,6 +218,14 @@ static int blacklist_init(void)
 
 	/* For easier user configuration the timeout values are in seconds */
 	blacklist_initial_timeout *= L_USEC_PER_SEC;
+
+	if (!l_settings_get_uint64(config, "Blacklist",
+					"InitialRoamRequestedTimeout",
+					&blacklist_roam_initial_timeout))
+		blacklist_roam_initial_timeout = BLACKLIST_DEFAULT_TIMEOUT;
+
+	/* For easier user configuration the timeout values are in seconds */
+	blacklist_roam_initial_timeout *= L_USEC_PER_SEC;
 
 	if (!l_settings_get_uint64(config, "Blacklist",
 					"Multiplier",
