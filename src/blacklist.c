@@ -76,6 +76,16 @@ static struct blacklist_entry *blacklist_entry_new(const uint8_t *addr,
 		added = l_time_now();
 		expires = l_time_offset(added, blacklist_initial_timeout);
 		break;
+	case BLACKLIST_REASON_TRANSIENT_ERROR:
+		/*
+		 * The temporary blacklist is a special case where entries are
+		 * required to be removed manually. This type of blacklist is
+		 * only used for an ongoing connection attempt to iterate BSS's
+		 * and not retry until all have been exhausted.
+		 */
+		added = 0;
+		expires = 0;
+		break;
 	default:
 		l_warn("Unhandled blacklist reason: %u", reason);
 		return NULL;
@@ -95,6 +105,9 @@ static bool check_if_expired(void *data, void *user_data)
 {
 	struct blacklist_entry *entry = data;
 	uint64_t now = l_get_u64(user_data);
+
+	if (entry->reason == BLACKLIST_REASON_TRANSIENT_ERROR)
+		return false;
 
 	if (l_time_after(now, entry->expire_time)) {
 		l_debug("Removing entry "MAC" on prune", MAC_STR(entry->addr));
