@@ -1,0 +1,5 @@
+[General]
+RoamThreshold=-72
+
+[Blacklist]
+InitialRoamRequestedTimeout=20

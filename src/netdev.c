@@ -463,6 +463,15 @@ uint8_t netdev_get_rssi_level_idx(struct netdev *netdev)
 	return netdev->cur_rssi_level_idx;
 }
 
+void netdev_get_low_signal_thresholds(int *threshold, int *threshold_5g)
+{
+	if (threshold)
+		*threshold = LOW_SIGNAL_THRESHOLD;
+
+	if (threshold_5g)
+		*threshold_5g = LOW_SIGNAL_THRESHOLD_5GHZ;
+}
+
 static void netdev_set_powered_result(int error, uint16_t type,
 					const void *data,
 					uint32_t len, void *user_data)
