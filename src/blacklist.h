@@ -20,6 +20,14 @@
  *
  */
 
-void blacklist_add_bss(const uint8_t *addr);
-bool blacklist_contains_bss(const uint8_t *addr);
-void blacklist_remove_bss(const uint8_t *addr);
+enum blacklist_reason {
+	/*
+	 * When a BSS is blacklisted using this reason IWD will refuse to
+	 * connect to it via autoconnect
+	 */
+	BLACKLIST_REASON_CONNECT_FAILED,
+};
+
+void blacklist_add_bss(const uint8_t *addr, enum blacklist_reason reason);
+bool blacklist_contains_bss(const uint8_t *addr, enum blacklist_reason reason);
+void blacklist_remove_bss(const uint8_t *addr, enum blacklist_reason reason);
