@@ -77,7 +77,7 @@ static bool check_if_expired(void *data, void *user_data)
 	struct blacklist_entry *entry = data;
 	uint64_t now = l_get_u64(user_data);
 
-	if (l_time_diff(now, entry->added_time) > blacklist_max_timeout) {
+	if (l_time_after(now, entry->expire_time)) {
 		l_debug("Removing entry "MAC" on prune", MAC_STR(entry->addr));
 		l_free(entry);
 		return true;
@@ -157,9 +157,6 @@ void blacklist_add_bss(const uint8_t *addr, enum blacklist_reason reason)
 
 bool blacklist_contains_bss(const uint8_t *addr, enum blacklist_reason reason)
 {
-	bool ret;
-	uint64_t time_now;
-	struct blacklist_entry *entry;
 	struct blacklist_search search = {
 		.addr = addr,
 		.reason = reason
@@ -167,16 +164,7 @@ bool blacklist_contains_bss(const uint8_t *addr, enum blacklist_reason reason)
 
 	blacklist_prune();
 
-	entry = l_queue_find(blacklist, match_addr_and_reason, &search);
-
-	if (!entry)
-		return false;
-
-	time_now = l_time_now();
-
-	ret = l_time_after(time_now, entry->expire_time) ? false : true;
-
-	return ret;
+	return l_queue_find(blacklist, match_addr_and_reason, &search) != NULL;
 }
 
 void blacklist_remove_bss(const uint8_t *addr, enum blacklist_reason reason)
