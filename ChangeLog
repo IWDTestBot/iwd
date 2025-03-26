@@ -1,3 +1,7 @@
+ver 3.5:
+	Add support for option to disable blacklist handling.
+	Add support for option to disable SAE for broken drivers.
+
 ver 3.4:
 	Add support for the Test Anything Protocol.
 
