@@ -463,6 +463,14 @@ uint8_t netdev_get_rssi_level_idx(struct netdev *netdev)
 	return netdev->cur_rssi_level_idx;
 }
 
+int netdev_get_low_signal_threshold(uint32_t frequency)
+{
+	if (frequency > 4000)
+		return LOW_SIGNAL_THRESHOLD_5GHZ;
+
+	return LOW_SIGNAL_THRESHOLD;
+}
+
 static void netdev_set_powered_result(int error, uint16_t type,
 					const void *data,
 					uint32_t len, void *user_data)
