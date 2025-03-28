@@ -51,9 +51,26 @@ struct blacklist_entry {
 	uint8_t addr[6];
 	uint64_t added_time;
 	uint64_t expire_time;
+	enum blacklist_reason reason;
+};
+
+struct blacklist_search {
+	const uint8_t *addr;
+	enum blacklist_reason reason;
 };
 
 static struct l_queue *blacklist;
+
+static uint64_t get_reason_timeout(enum blacklist_reason reason)
+{
+	switch (reason) {
+	case BLACKLIST_REASON_CONNECT_FAILED:
+		return blacklist_initial_timeout;
+	default:
+		l_warn("Unhandled blacklist reason: %u", reason);
+		return 0;
+	}
+}
 
 static bool check_if_expired(void *data, void *user_data)
 {
@@ -87,14 +104,30 @@ static bool match_addr(const void *a, const void *b)
 	return false;
 }
 
-void blacklist_add_bss(const uint8_t *addr)
+static bool match_addr_and_reason(const void *a, const void *b)
+{
+	const struct blacklist_entry *entry = a;
+	const struct blacklist_search *search = b;
+
+	if (entry->reason != search->reason)
+		return false;
+
+	if (!memcmp(entry->addr, search->addr, 6))
+		return true;
+
+	return false;
+}
+
+void blacklist_add_bss(const uint8_t *addr, enum blacklist_reason reason)
 {
 	struct blacklist_entry *entry;
-
-	if (!blacklist_initial_timeout)
-		return;
+	uint64_t timeout;
 
 	blacklist_prune();
+
+	timeout = get_reason_timeout(reason);
+	if (!timeout)
+		return;
 
 	entry = l_queue_find(blacklist, match_addr, addr);
 
@@ -115,22 +148,26 @@ void blacklist_add_bss(const uint8_t *addr)
 	entry = l_new(struct blacklist_entry, 1);
 
 	entry->added_time = l_time_now();
-	entry->expire_time = l_time_offset(entry->added_time,
-						blacklist_initial_timeout);
+	entry->expire_time = l_time_offset(entry->added_time, timeout);
+	entry->reason = reason;
 	memcpy(entry->addr, addr, 6);
 
 	l_queue_push_tail(blacklist, entry);
 }
 
-bool blacklist_contains_bss(const uint8_t *addr)
+bool blacklist_contains_bss(const uint8_t *addr, enum blacklist_reason reason)
 {
 	bool ret;
 	uint64_t time_now;
 	struct blacklist_entry *entry;
+	struct blacklist_search search = {
+		.addr = addr,
+		.reason = reason
+	};
 
 	blacklist_prune();
 
-	entry = l_queue_find(blacklist, match_addr, addr);
+	entry = l_queue_find(blacklist, match_addr_and_reason, &search);
 
 	if (!entry)
 		return false;
@@ -142,13 +179,17 @@ bool blacklist_contains_bss(const uint8_t *addr)
 	return ret;
 }
 
-void blacklist_remove_bss(const uint8_t *addr)
+void blacklist_remove_bss(const uint8_t *addr, enum blacklist_reason reason)
 {
 	struct blacklist_entry *entry;
+	struct blacklist_search search = {
+		.addr = addr,
+		.reason = reason
+	};
 
 	blacklist_prune();
 
-	entry = l_queue_remove_if(blacklist, match_addr, addr);
+	entry = l_queue_remove_if(blacklist, match_addr_and_reason, &search);
 
 	if (!entry)
 		return;

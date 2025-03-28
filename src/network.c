@@ -1280,7 +1280,8 @@ struct scan_bss *network_bss_select(struct network *network,
 		if (l_queue_find(network->blacklist, match_bss, bss))
 			continue;
 
-		if (blacklist_contains_bss(bss->addr))
+		if (blacklist_contains_bss(bss->addr,
+					BLACKLIST_REASON_CONNECT_FAILED))
 			continue;
 
 		/* OWE Transition BSS */
