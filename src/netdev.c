@@ -1109,6 +1109,7 @@ static void netdev_free(void *data)
 		l_timeout_remove(netdev->rssi_poll_timeout);
 
 	scan_wdev_remove(netdev->wdev_id);
+	frame_watch_wdev_remove(netdev->wdev_id);
 
 	watchlist_destroy(&netdev->station_watches);
 
