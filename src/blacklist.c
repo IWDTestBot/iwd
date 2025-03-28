@@ -45,6 +45,7 @@
 
 static uint64_t blacklist_multiplier;
 static uint64_t blacklist_initial_timeout;
+static uint64_t blacklist_roam_initial_timeout;
 static uint64_t blacklist_max_timeout;
 
 struct blacklist_entry {
@@ -66,6 +67,8 @@ static uint64_t get_reason_timeout(enum blacklist_reason reason)
 	switch (reason) {
 	case BLACKLIST_REASON_CONNECT_FAILED:
 		return blacklist_initial_timeout;
+	case BLACKLIST_REASON_ROAM_REQUESTED:
+		return blacklist_roam_initial_timeout;
 	default:
 		l_warn("Unhandled blacklist reason: %u", reason);
 		return 0;
@@ -132,8 +135,25 @@ void blacklist_add_bss(const uint8_t *addr, enum blacklist_reason reason)
 	entry = l_queue_find(blacklist, match_addr, addr);
 
 	if (entry) {
-		uint64_t offset = l_time_diff(entry->added_time,
-							entry->expire_time);
+		uint64_t offset;
+
+		if (reason < entry->reason) {
+			l_debug("Promoting "MAC" blacklist to reason %u",
+					MAC_STR(addr), reason);
+			/* Reset this to the new timeout and reason */
+			entry->reason = reason;
+			entry->added_time = l_time_now();
+			entry->expire_time = l_time_offset(entry->added_time,
+								timeout);
+			return;
+		} else if (reason > entry->reason) {
+			l_debug("Ignoring blacklist extension of "MAC", "
+				"current blacklist status is more severe!",
+				MAC_STR(addr));
+			return;
+		}
+
+		offset = l_time_diff(entry->added_time, entry->expire_time);
 
 		offset *= blacklist_multiplier;
 
@@ -195,6 +215,14 @@ static int blacklist_init(void)
 
 	/* For easier user configuration the timeout values are in seconds */
 	blacklist_initial_timeout *= L_USEC_PER_SEC;
+
+	if (!l_settings_get_uint64(config, "Blacklist",
+					"InitialRoamRequestedTimeout",
+					&blacklist_roam_initial_timeout))
+		blacklist_roam_initial_timeout = BLACKLIST_DEFAULT_TIMEOUT;
+
+	/* For easier user configuration the timeout values are in seconds */
+	blacklist_roam_initial_timeout *= L_USEC_PER_SEC;
 
 	if (!l_settings_get_uint64(config, "Blacklist",
 					"Multiplier",
