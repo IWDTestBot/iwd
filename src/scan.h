@@ -45,6 +45,17 @@ enum scan_bss_frame_type {
 	SCAN_BSS_BEACON,
 };
 
+/*
+ * Groupings for BSS's. These are assumed to be in order of preference where
+ * the last enum is the most preferred group to connect to.
+ */
+enum scan_bss_group {
+	SCAN_BSS_GROUP_BLACKLISTED,
+	SCAN_BSS_GROUP_UNDER_THRESHOLD,
+	SCAN_BSS_GROUP_ABOVE_THRESHOLD,
+	SCAN_BSS_GROUP_OPTIMAL,
+};
+
 struct scan_bss {
 	uint8_t addr[6];
 	uint32_t frequency;
@@ -168,6 +179,36 @@ bool scan_get_firmware_scan(uint64_t wdev_id, scan_notify_func_t notify,
 				void *userdata, scan_destroy_func_t destroy);
 
 void scan_bss_free(struct scan_bss *bss);
+
+enum scan_bss_group scan_bss_evaluate_group(const uint8_t *addr,
+						int16_t signal_strength);
+
+/*
+ * Macro to compare two scan_bss-like objects. This is to share code between
+ * station.c and scan.c since station uses "roam_bss" objects which is a subset
+ * of a scan_bss.
+ *  - If the groups differ this is used as the comparison.
+ *  - If the groups match, the BSS rank is used as the comparison
+ *  - If the BSS ranks match, the signal strength is used as the comparison
+ */
+#define __scan_bss_rank_compare(a, b) ({			\
+	int ret;						\
+	enum scan_bss_group a_group = scan_bss_evaluate_group(	\
+			(a)->addr, (a)->signal_strength);	\
+	enum scan_bss_group b_group = scan_bss_evaluate_group(	\
+			(b)->addr, (b)->signal_strength);	\
+	if (b_group > a_group)					\
+		ret = 1;					\
+	else if (b_group < a_group)				\
+		ret = -1;					\
+	else if ((b)->rank == (a)->rank)			\
+		ret = ((b)->signal_strength > 			\
+				(a)->signal_strength) ? 1 : -1;	\
+	else							\
+		ret = ((b)->rank > (a)->rank) ? 1 : -1;		\
+	ret;							\
+})
+
 int scan_bss_rank_compare(const void *a, const void *b, void *user);
 
 int scan_bss_get_rsn_info(const struct scan_bss *bss, struct ie_rsn_info *info);

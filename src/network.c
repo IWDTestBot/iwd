@@ -78,7 +78,6 @@ struct network {
 	struct l_queue *bss_list;
 	struct l_settings *settings;
 	struct l_queue *secrets;
-	struct l_queue *blacklist; /* temporary blacklist for BSS's */
 	uint8_t hessid[6];
 	char **nai_realms;
 	uint8_t *rc_ie;
@@ -168,6 +167,18 @@ static bool network_secret_check_cacheable(void *data, void *user_data)
 	return false;
 }
 
+static void remove_temporary_blacklist(void *user_data)
+{
+	struct scan_bss *bss = user_data;
+
+	blacklist_remove_bss(bss->addr, BLACKLIST_REASON_TRANSIENT_ERROR);
+}
+
+static void remove_blacklist_foreach(void *data, void *user_data)
+{
+	remove_temporary_blacklist(data);
+}
+
 void network_connected(struct network *network)
 {
 	enum security security = network_get_security(network);
@@ -198,7 +209,7 @@ void network_connected(struct network *network)
 	l_queue_foreach_remove(network->secrets,
 				network_secret_check_cacheable, network);
 
-	l_queue_clear(network->blacklist, NULL);
+	l_queue_foreach(network->bss_list, remove_blacklist_foreach, NULL);
 
 	network->provisioning_hidden = false;
 }
@@ -207,7 +218,7 @@ void network_disconnected(struct network *network)
 {
 	network_settings_close(network);
 
-	l_queue_clear(network->blacklist, NULL);
+	l_queue_foreach(network->bss_list, remove_blacklist_foreach, NULL);
 
 	if (network->provisioning_hidden)
 		station_hide_network(network->station, network);
@@ -254,7 +265,6 @@ struct network *network_create(struct station *station, const char *ssid,
 	}
 
 	network->bss_list = l_queue_new();
-	network->blacklist = l_queue_new();
 
 	return network;
 }
@@ -1197,11 +1207,6 @@ struct scan_bss *network_bss_find_by_addr(struct network *network,
 	return l_queue_find(network->bss_list, match_addr, addr);
 }
 
-static bool match_bss(const void *a, const void *b)
-{
-	return a == b;
-}
-
 struct erp_cache_entry *network_get_erp_cache(struct network *network)
 {
 	struct erp_cache_entry *cache;
@@ -1277,10 +1282,12 @@ struct scan_bss *network_bss_select(struct network *network,
 			candidate = bss;
 
 		/* check if temporarily blacklisted */
-		if (l_queue_find(network->blacklist, match_bss, bss))
+		if (blacklist_contains_bss(bss->addr,
+					BLACKLIST_REASON_TRANSIENT_ERROR))
 			continue;
 
-		if (blacklist_contains_bss(bss->addr))
+		if (blacklist_contains_bss(bss->addr,
+					BLACKLIST_REASON_CONNECT_FAILED))
 			continue;
 
 		/* OWE Transition BSS */
@@ -1783,11 +1790,6 @@ struct l_dbus_message *network_connect_new_hidden_network(
 	return dbus_error_not_supported(message);
 }
 
-void network_blacklist_add(struct network *network, struct scan_bss *bss)
-{
-	l_queue_push_head(network->blacklist, bss);
-}
-
 static bool network_property_get_name(struct l_dbus *dbus,
 					struct l_dbus_message *message,
 					struct l_dbus_message_builder *builder,
@@ -1933,8 +1935,7 @@ void network_remove(struct network *network, int reason)
 	if (network->info)
 		network->info->seen_count -= 1;
 
-	l_queue_destroy(network->bss_list, NULL);
-	l_queue_destroy(network->blacklist, NULL);
+	l_queue_destroy(network->bss_list, remove_temporary_blacklist);
 
 	if (network->nai_realms)
 		l_strv_free(network->nai_realms);

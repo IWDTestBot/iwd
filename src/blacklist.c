@@ -45,22 +45,79 @@
 
 static uint64_t blacklist_multiplier;
 static uint64_t blacklist_initial_timeout;
+static uint64_t blacklist_roam_initial_timeout;
 static uint64_t blacklist_max_timeout;
 
 struct blacklist_entry {
 	uint8_t addr[6];
 	uint64_t added_time;
 	uint64_t expire_time;
+	enum blacklist_reason reason;
+};
+
+struct blacklist_search {
+	const uint8_t *addr;
+	enum blacklist_reason reason;
 };
 
 static struct l_queue *blacklist;
+
+static struct blacklist_entry *blacklist_entry_new(const uint8_t *addr,
+						enum blacklist_reason reason)
+{
+	struct blacklist_entry *entry;
+	uint64_t added;
+	uint64_t expires;
+
+	switch (reason) {
+	case BLACKLIST_REASON_CONNECT_FAILED:
+		if (!blacklist_initial_timeout)
+			return NULL;
+
+		added = l_time_now();
+		expires = l_time_offset(added, blacklist_initial_timeout);
+		break;
+	case BLACKLIST_REASON_TRANSIENT_ERROR:
+		/*
+		 * The temporary blacklist is a special case where entries are
+		 * required to be removed manually. This type of blacklist is
+		 * only used for an ongoing connection attempt to iterate BSS's
+		 * and not retry until all have been exhausted.
+		 */
+		added = 0;
+		expires = 0;
+		break;
+	case BLACKLIST_REASON_ROAM_REQUESTED:
+		if (!blacklist_roam_initial_timeout)
+			return NULL;
+
+		added = l_time_now();
+		expires = l_time_offset(added, blacklist_roam_initial_timeout);
+		break;
+	default:
+		l_warn("Unhandled blacklist reason: %u", reason);
+		return NULL;
+	}
+
+	entry = l_new(struct blacklist_entry, 1);
+
+	entry->added_time = added;
+	entry->expire_time = expires;
+	entry->reason = reason;
+	memcpy(entry->addr, addr, 6);
+
+	return entry;
+}
 
 static bool check_if_expired(void *data, void *user_data)
 {
 	struct blacklist_entry *entry = data;
 	uint64_t now = l_get_u64(user_data);
 
-	if (l_time_diff(now, entry->added_time) > blacklist_max_timeout) {
+	if (entry->reason == BLACKLIST_REASON_TRANSIENT_ERROR)
+		return false;
+
+	if (l_time_after(now, entry->expire_time)) {
 		l_debug("Removing entry "MAC" on prune", MAC_STR(entry->addr));
 		l_free(entry);
 		return true;
@@ -79,24 +136,28 @@ static void blacklist_prune(void)
 static bool match_addr(const void *a, const void *b)
 {
 	const struct blacklist_entry *entry = a;
-	const uint8_t *addr = b;
+	const struct blacklist_search *search = b;
 
-	if (!memcmp(entry->addr, addr, 6))
+	if (entry->reason != search->reason)
+		return false;
+
+	if (!memcmp(entry->addr, search->addr, 6))
 		return true;
 
 	return false;
 }
 
-void blacklist_add_bss(const uint8_t *addr)
+void blacklist_add_bss(const uint8_t *addr, enum blacklist_reason reason)
 {
 	struct blacklist_entry *entry;
-
-	if (!blacklist_initial_timeout)
-		return;
+	struct blacklist_search search = {
+		.addr = addr,
+		.reason = reason
+	};
 
 	blacklist_prune();
 
-	entry = l_queue_find(blacklist, match_addr, addr);
+	entry = l_queue_find(blacklist, match_addr, &search);
 
 	if (entry) {
 		uint64_t offset = l_time_diff(entry->added_time,
@@ -112,43 +173,34 @@ void blacklist_add_bss(const uint8_t *addr)
 		return;
 	}
 
-	entry = l_new(struct blacklist_entry, 1);
-
-	entry->added_time = l_time_now();
-	entry->expire_time = l_time_offset(entry->added_time,
-						blacklist_initial_timeout);
-	memcpy(entry->addr, addr, 6);
-
-	l_queue_push_tail(blacklist, entry);
+	entry = blacklist_entry_new(addr, reason);
+	if (entry)
+		l_queue_push_tail(blacklist, entry);
 }
 
-bool blacklist_contains_bss(const uint8_t *addr)
+bool blacklist_contains_bss(const uint8_t *addr, enum blacklist_reason reason)
 {
-	bool ret;
-	uint64_t time_now;
-	struct blacklist_entry *entry;
+	struct blacklist_search search = {
+		.addr = addr,
+		.reason = reason
+	};
 
 	blacklist_prune();
 
-	entry = l_queue_find(blacklist, match_addr, addr);
-
-	if (!entry)
-		return false;
-
-	time_now = l_time_now();
-
-	ret = l_time_after(time_now, entry->expire_time) ? false : true;
-
-	return ret;
+	return l_queue_find(blacklist, match_addr, &search) != NULL;
 }
 
-void blacklist_remove_bss(const uint8_t *addr)
+void blacklist_remove_bss(const uint8_t *addr, enum blacklist_reason reason)
 {
 	struct blacklist_entry *entry;
+	struct blacklist_search search = {
+		.addr = addr,
+		.reason = reason
+	};
 
 	blacklist_prune();
 
-	entry = l_queue_remove_if(blacklist, match_addr, addr);
+	entry = l_queue_remove_if(blacklist, match_addr, &search);
 
 	if (!entry)
 		return;
@@ -166,6 +218,14 @@ static int blacklist_init(void)
 
 	/* For easier user configuration the timeout values are in seconds */
 	blacklist_initial_timeout *= L_USEC_PER_SEC;
+
+	if (!l_settings_get_uint64(config, "Blacklist",
+					"InitialRoamRequestedTimeout",
+					&blacklist_roam_initial_timeout))
+		blacklist_roam_initial_timeout = BLACKLIST_DEFAULT_TIMEOUT;
+
+	/* For easier user configuration the timeout values are in seconds */
+	blacklist_roam_initial_timeout *= L_USEC_PER_SEC;
 
 	if (!l_settings_get_uint64(config, "Blacklist",
 					"Multiplier",

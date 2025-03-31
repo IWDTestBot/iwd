@@ -184,11 +184,7 @@ static int roam_bss_rank_compare(const void *a, const void *b, void *user_data)
 {
 	const struct roam_bss *new_bss = a, *bss = b;
 
-	if (bss->rank == new_bss->rank)
-		return (bss->signal_strength >
-					new_bss->signal_strength) ? 1 : -1;
-
-	return (bss->rank > new_bss->rank) ? 1 : -1;
+	return __scan_bss_rank_compare(new_bss, bss);
 }
 
 struct wiphy *station_get_wiphy(struct station *station)
@@ -2805,6 +2801,7 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 	struct handshake_state *hs = netdev_get_handshake(station->netdev);
 	struct scan_bss *current_bss = station->connected_bss;
 	struct scan_bss *bss;
+	enum scan_bss_group cur_bss_group = SCAN_BSS_GROUP_BLACKLISTED;
 	double cur_bss_rank = 0.0;
 	static const double RANK_FT_FACTOR = 1.3;
 	uint16_t mdid;
@@ -2835,6 +2832,9 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 	bss = l_queue_find(bss_list, bss_match_bssid, current_bss->addr);
 	if (bss && !station->ap_directed_roaming) {
 		cur_bss_rank = bss->rank;
+		cur_bss_group = scan_bss_evaluate_group(
+						current_bss->addr,
+						current_bss->signal_strength);
 
 		if (hs->mde && bss->mde_present && l_get_le16(bss->mde) == mdid)
 			cur_bss_rank *= RANK_FT_FACTOR;
@@ -2859,6 +2859,9 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 	while ((bss = l_queue_pop_head(bss_list))) {
 		double rank;
 		struct roam_bss *rbss;
+		enum scan_bss_group group = scan_bss_evaluate_group(
+							bss->addr,
+							bss->signal_strength);
 
 		station_print_scan_bss(bss);
 
@@ -2880,7 +2883,7 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 		if (network_can_connect_bss(network, bss) < 0)
 			goto next;
 
-		if (blacklist_contains_bss(bss->addr))
+		if (group == SCAN_BSS_GROUP_BLACKLISTED)
 			goto next;
 
 		rank = bss->rank;
@@ -2888,7 +2891,15 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 		if (hs->mde && bss->mde_present && l_get_le16(bss->mde) == mdid)
 			rank *= RANK_FT_FACTOR;
 
-		if (rank <= cur_bss_rank)
+		/*
+		 * First check the group:
+		 *   - If worse, disregard BSS candidate
+		 *   - If better, keep BSS candidate
+		 *   - If equal, compare based on rank
+		 */
+		if (group < cur_bss_group)
+			goto next;
+		else if (group == cur_bss_group && rank <= cur_bss_rank)
 			goto next;
 
 		/*
@@ -3165,11 +3176,9 @@ static void station_ap_directed_roam(struct station *station,
 	uint8_t req_mode;
 	uint16_t dtimer;
 	uint8_t valid_interval;
+	bool can_roam = !station_cannot_roam(station);
 
 	l_debug("ifindex: %u", netdev_get_ifindex(station->netdev));
-
-	if (station_cannot_roam(station))
-		return;
 
 	if (station->state != STATION_STATE_CONNECTED) {
 		l_debug("roam: unexpected AP directed roam -- ignore");
@@ -3234,8 +3243,13 @@ static void station_ap_directed_roam(struct station *station,
 	 * disassociating us. If either of these bits are set, set the
 	 * ap_directed_roaming flag. Otherwise still try roaming but don't
 	 * treat it any different than a normal roam.
+	 *
+	 * The only exception here is if we are in the middle of roaming
+	 * (can_roam == false) since we cannot reliably know if the roam scan
+	 * included frequencies from potential candidates in this request,
+	 * forcing a roam in this case might result in unintended behavior.
 	 */
-	if (req_mode & (WNM_REQUEST_MODE_DISASSOCIATION_IMMINENT |
+	if (can_roam && req_mode & (WNM_REQUEST_MODE_DISASSOCIATION_IMMINENT |
 			WNM_REQUEST_MODE_TERMINATION_IMMINENT |
 			WNM_REQUEST_MODE_ESS_DISASSOCIATION_IMMINENT))
 		station->ap_directed_roaming = true;
@@ -3261,6 +3275,19 @@ static void station_ap_directed_roam(struct station *station,
 
 		pos += url_len;
 	}
+
+	blacklist_add_bss(station->connected_bss->addr,
+				BLACKLIST_REASON_ROAM_REQUESTED);
+	station_debug_event(station, "ap-roam-blacklist-added");
+
+	/*
+	 * Validating the frame and blacklisting should still be done even if
+	 * we are mid-roam. Its important to track the BSS requesting the
+	 * transition so when the current roam completes IWD will be less likely
+	 * to roam back to the current BSS.
+	 */
+	if (!can_roam)
+		return;
 
 	station->preparing_roam = true;
 
@@ -3400,7 +3427,15 @@ static bool station_retry_with_reason(struct station *station,
 		break;
 	}
 
-	blacklist_add_bss(station->connected_bss->addr);
+	blacklist_add_bss(station->connected_bss->addr,
+				BLACKLIST_REASON_CONNECT_FAILED);
+
+	/*
+	 * Network blacklist the BSS as well, since the timeout blacklist could
+	 * be disabled
+	 */
+	blacklist_add_bss(station->connected_bss->addr,
+				BLACKLIST_REASON_TRANSIENT_ERROR);
 
 try_next:
 	return station_try_next_bss(station);
@@ -3449,6 +3484,10 @@ static bool station_pmksa_fallback(struct station *station, uint16_t status)
 static bool station_retry_with_status(struct station *station,
 					uint16_t status_code)
 {
+	/* If PMKSA failed don't blacklist so we can retry this BSS */
+	if (station_pmksa_fallback(station, status_code))
+		goto try_next;
+
 	/*
 	 * Certain Auth/Assoc failures should not cause a timeout blacklist.
 	 * In these cases we want to only temporarily blacklist the BSS until
@@ -3459,12 +3498,19 @@ static bool station_retry_with_status(struct station *station,
 	 *       specific BSS on our next attempt. There is currently no way to
 	 *       obtain that IE, but this should be done in the future.
 	 */
-	if (IS_TEMPORARY_STATUS(status_code))
-		network_blacklist_add(station->connected_network,
-						station->connected_bss);
-	else if (!station_pmksa_fallback(station, status_code))
-		blacklist_add_bss(station->connected_bss->addr);
+	if (!IS_TEMPORARY_STATUS(status_code))
+		blacklist_add_bss(station->connected_bss->addr,
+					BLACKLIST_REASON_CONNECT_FAILED);
 
+	/*
+	 * Unconditionally network blacklist the BSS if we are retrying. This
+	 * will allow network_bss_select to traverse the BSS list and ignore
+	 * BSS's which have previously failed
+	 */
+	blacklist_add_bss(station->connected_bss->addr,
+				BLACKLIST_REASON_TRANSIENT_ERROR);
+
+try_next:
 	iwd_notice(IWD_NOTICE_CONNECT_FAILED, "status: %u", status_code);
 
 	return station_try_next_bss(station);
@@ -3549,7 +3595,8 @@ static void station_connect_cb(struct netdev *netdev, enum netdev_result result,
 
 	switch (result) {
 	case NETDEV_RESULT_OK:
-		blacklist_remove_bss(station->connected_bss->addr);
+		blacklist_remove_bss(station->connected_bss->addr,
+					BLACKLIST_REASON_CONNECT_FAILED);
 		station_connect_ok(station);
 		return;
 	case NETDEV_RESULT_DISCONNECTED:
@@ -3558,8 +3605,8 @@ static void station_connect_cb(struct netdev *netdev, enum netdev_result result,
 		iwd_notice(IWD_NOTICE_DISCONNECT_INFO, "reason: %u", reason);
 
 		/* Disconnected while connecting */
-		network_blacklist_add(station->connected_network,
-						station->connected_bss);
+		blacklist_add_bss(station->connected_bss->addr,
+					BLACKLIST_REASON_TRANSIENT_ERROR);
 		if (station_try_next_bss(station))
 			return;
 
