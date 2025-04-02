@@ -1,3 +1,8 @@
+ver 3.6:
+	Fix issue with handling blacklisting and roaming requests.
+	Fix issue with handling CQM thresholds for FullMAC devices.
+	Add support for PMKSA when using FullMAC devices.
+
 ver 3.5:
 	Add support for option to disable blacklist handling.
 	Add support for option to disable SAE for broken drivers.
