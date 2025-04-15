@@ -62,6 +62,7 @@ static uint32_t SCAN_MAX_INTERVAL;
 static uint32_t SCAN_INIT_INTERVAL;
 
 static struct l_queue *scan_contexts;
+static struct l_hashmap *scan_freq_map;
 
 static struct l_genl_family *nl80211;
 
@@ -2316,6 +2317,37 @@ static void scan_retry_pending(uint32_t wiphy_id)
 	}
 }
 
+static void scan_update_freq_map_entry(uint32_t freq, void *user_data)
+{
+	void *existing = l_hashmap_lookup(scan_freq_map, L_UINT_TO_PTR(freq));
+	uint64_t now = l_time_now();
+
+	if (existing) {
+		l_hashmap_remove(scan_freq_map, L_UINT_TO_PTR(freq));
+	}
+
+	l_hashmap_insert(scan_freq_map, L_UINT_TO_PTR(freq), L_UINT_TO_PTR(now));
+}
+
+static void scan_update_freq_map(struct scan_freq_set *freqs)
+{
+	scan_freq_set_foreach(freqs, scan_update_freq_map_entry, NULL);
+}
+
+uint64_t scan_get_freq_age(uint32_t freq)
+{
+	void *entry = l_hashmap_lookup(scan_freq_map, L_UINT_TO_PTR(freq));
+
+	if (entry) {
+		uint64_t timestamp = (uintptr_t) entry;
+		uint64_t now = l_time_now();
+
+		return (now - timestamp) / 1000000;
+	}
+
+	return UINT64_MAX;
+}
+
 static void scan_notify(struct l_genl_msg *msg, void *user_data)
 {
 	struct l_genl_attr attr;
@@ -2460,6 +2492,8 @@ static void scan_notify(struct l_genl_msg *msg, void *user_data)
 		scan_parse_result_frequencies(msg, freqs);
 
 		scan_get_results(sc, sr, freqs);
+
+		scan_update_freq_map(freqs);
 
 		break;
 	}
@@ -2645,6 +2679,7 @@ static int scan_init(void)
 	const struct l_settings *config = iwd_get_config();
 
 	scan_contexts = l_queue_new();
+	scan_freq_map = l_hashmap_new();
 
 	RANK_2G_FACTOR = scan_get_band_rank_modifier(BAND_FREQ_2_4_GHZ);
 	RANK_5G_FACTOR = scan_get_band_rank_modifier(BAND_FREQ_5_GHZ);
@@ -2688,6 +2723,7 @@ static void scan_exit(void)
 	scan_contexts = NULL;
 	l_genl_family_free(nl80211);
 	nl80211 = NULL;
+	l_hashmap_destroy(scan_freq_map, NULL);
 }
 
 IWD_MODULE(scan, scan_init, scan_exit)

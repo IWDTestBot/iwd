@@ -67,6 +67,8 @@
 
 #define STATION_RECENT_NETWORK_LIMIT	5
 #define STATION_RECENT_FREQS_LIMIT	5
+#define STATION_MAX_SCAN_FREQ_AGE	3
+#define STATION_MAX_SCAN_FREQS	10
 
 static struct l_queue *station_list;
 static uint32_t netdev_watch;
@@ -124,7 +126,7 @@ struct station {
 	struct l_queue *roam_bss_list;
 
 	/* Frequencies split into subsets by priority */
-	struct scan_freq_set *scan_freqs_order[3];
+	struct scan_freq_set *scan_freqs_order[4];
 	unsigned int dbus_scan_subset_idx;
 
 	uint32_t wiphy_watch;
@@ -2385,6 +2387,8 @@ static void station_roam_retry(struct station *station)
 		station_roam_timeout_rearm(station, roam_retry_interval);
 }
 
+static void station_start_roam(struct station *station);
+
 static void station_roam_failed(struct station *station)
 {
 	l_debug("%u", netdev_get_ifindex(station->netdev));
@@ -2414,10 +2418,9 @@ static void station_roam_failed(struct station *station)
 		goto delayed_retry;
 
 	/*
-	 * If we tried a limited scan, failed and the signal is still low,
-	 * repeat with a full scan right away
+	 * If the signal is still low, keep trying to roam
 	 */
-	if (station->signal_low && !station->roam_scan_full) {
+	if (station->signal_low) {
 		/*
 		 * Since we're re-using roam_scan_id, explicitly cancel
 		 * the scan here, so that the destroy callback is not called
@@ -2426,8 +2429,8 @@ static void station_roam_failed(struct station *station)
 		scan_cancel(netdev_get_wdev_id(station->netdev),
 						station->roam_scan_id);
 
-		if (!station_roam_scan(station, NULL))
-			return;
+		station_start_roam(station);
+		return;
 	}
 
 delayed_retry:
@@ -3102,11 +3105,84 @@ static void station_neighbor_report_cb(struct netdev *netdev, int err,
 		station_roam_failed(station);
 }
 
+static void station_filter_roam_scan_freq(uint32_t freq, void *user_data)
+{
+	struct scan_freq_set *freqs = user_data;
+	uint64_t age = scan_get_freq_age(freq);
+
+	if (scan_freq_set_size(freqs) >= STATION_MAX_SCAN_FREQS) {
+		return;
+	}
+
+	if (age < STATION_MAX_SCAN_FREQ_AGE) {
+		return;
+	}
+
+	scan_freq_set_add(freqs, freq);
+}
+
+static struct scan_freq_set *station_get_roam_scan_freqs(struct station *station)
+{
+	struct scan_freq_set *tmp;
+	struct scan_freq_set *scan_freqs;
+
+	scan_freqs = scan_freq_set_new();
+
+	/* Add current frequency, always scan this to get updated data for the
+	 * current BSS */
+	scan_freq_set_add(scan_freqs, station->connected_bss->frequency);
+
+	/* Add neighbor frequencies */
+	scan_freq_set_foreach(station->roam_freqs, station_filter_roam_scan_freq, scan_freqs);
+	if (scan_freq_set_size(scan_freqs) >= STATION_MAX_SCAN_FREQS) {
+		goto out;
+	}
+
+	/* Add known frequencies */
+	const struct network_info *info = network_get_info(
+						station->connected_network);
+	tmp = network_info_get_roam_frequencies(info,
+					station->connected_bss->frequency,
+					10);
+	scan_freq_set_foreach(tmp, station_filter_roam_scan_freq, scan_freqs);
+	scan_freq_set_free(tmp);
+	if (scan_freq_set_size(scan_freqs) >= STATION_MAX_SCAN_FREQS) {
+		goto out;
+	}
+
+	/* Add frequencies based on the prioritized subsets */
+	for (uint8_t i = 0; i < L_ARRAY_SIZE(station->scan_freqs_order); i++) {
+		scan_freq_set_foreach(station->scan_freqs_order[i], station_filter_roam_scan_freq, scan_freqs);
+		if (scan_freq_set_size(scan_freqs) >= STATION_MAX_SCAN_FREQS) {
+			goto out;
+		}
+	}
+
+out:
+	/* TODO: Arbitrary number to not have too small freq list */
+	if (scan_freq_set_size(scan_freqs) <= 5) {
+		/* Might as well add the neighbors */
+		scan_freq_set_merge(scan_freqs, station->roam_freqs);
+	}
+
+	return scan_freqs;
+}
+
 static void station_start_roam(struct station *station)
 {
 	int r;
+	struct scan_freq_set *freqs;
 
 	station->preparing_roam = true;
+
+	/* TODO: Need to request neighbor report here, like below */
+
+	freqs = station_get_roam_scan_freqs(station);
+	station_roam_scan(station, freqs);
+
+	scan_freq_set_free(freqs);
+
+	return;
 
 	/*
 	 * If current BSS supports Neighbor Reports, narrow the scan down
@@ -5007,44 +5083,79 @@ static void station_add_2_4ghz_freq(uint32_t freq, void *user_data)
 
 static void station_fill_scan_freq_subsets(struct station *station)
 {
-	const struct scan_freq_set *supported =
-				wiphy_get_supported_freqs(station->wiphy);
 	unsigned int subset_idx = 0;
 
-	/*
-	 * Scan the 2.4GHz "social channels" first, 5GHz second, if supported,
-	 * all other 2.4GHz channels last.  To be refined as needed.
-	 */
+	station->scan_freqs_order[subset_idx] = scan_freq_set_new();
+
+	/* Subset 0: 2.4GHz "social channels" and lower 5GHz non-DFS channels */
 	if (allowed_bands & BAND_FREQ_2_4_GHZ) {
-		station->scan_freqs_order[subset_idx] = scan_freq_set_new();
-		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2412);
-		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2437);
-		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2462);
-		subset_idx++;
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2412); /* 1 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2437); /* 6 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2462); /* 11 */
 	}
 
-	/*
-	 * TODO: It may might sense to split up 5 and 6ghz into separate subsets
-	 *       since the channel set is so large.
-	 */
-	if (allowed_bands & (BAND_FREQ_5_GHZ | BAND_FREQ_6_GHZ)) {
-		uint32_t mask = allowed_bands &
-					(BAND_FREQ_5_GHZ | BAND_FREQ_6_GHZ);
-		struct scan_freq_set *set = scan_freq_set_clone(supported,
-								mask);
-
-		/* 5/6ghz didn't add any frequencies */
-		if (scan_freq_set_isempty(set)) {
-			scan_freq_set_free(set);
-		} else
-			station->scan_freqs_order[subset_idx++] = set;
+	if (allowed_bands & BAND_FREQ_5_GHZ) {
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5180); /* 36 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5200); /* 40 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5220); /* 44 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5240); /* 48 */
 	}
 
-	/* Add remaining 2.4ghz channels to subset */
+	station->scan_freqs_order[++subset_idx] = scan_freq_set_new();
+
+	/* Subset 1: 2.4GHz common "middle channels" and high 5GHz non-DFS channels */
 	if (allowed_bands & BAND_FREQ_2_4_GHZ) {
-		station->scan_freqs_order[subset_idx] = scan_freq_set_new();
-		scan_freq_set_foreach(supported, station_add_2_4ghz_freq,
-					station->scan_freqs_order[subset_idx]);
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2422); /* 3 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2427); /* 4 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2447); /* 8 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2452); /* 9 */
+	}
+
+	if (allowed_bands & BAND_FREQ_5_GHZ) {
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5745); /* 149 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5765); /* 153 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5785); /* 157 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5805); /* 161 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5825); /* 165 */
+	}
+
+	station->scan_freqs_order[++subset_idx] = scan_freq_set_new();
+
+	/* TODO: Add 6GHz here, after more common 2.4 and 5GHz, but before DFS */
+
+	/* Subset 2: 2.4GHz remaining channels and 5GHz most common DFS channels */
+	if (allowed_bands & BAND_FREQ_2_4_GHZ) {
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2417); /* 2 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2432); /* 5 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2442); /* 7 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2457); /* 10 */
+	}
+
+	if (allowed_bands & BAND_FREQ_5_GHZ) {
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5260); /* 52 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5280); /* 56 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5300); /* 60 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5320); /* 64 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5500); /* 100 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5520); /* 104 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5540); /* 108 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5560); /* 112 */
+	}
+
+	station->scan_freqs_order[++subset_idx] = scan_freq_set_new();
+
+	/* Subset 3: Remaining 5GHz DFS channels */
+	if (allowed_bands & BAND_FREQ_5_GHZ) {
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5340); /* 68 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5480); /* 96 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5580); /* 116 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5600); /* 120 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5620); /* 124 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5640); /* 128 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5660); /* 132 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5680); /* 136 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5700); /* 140 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 5720); /* 144 */
 	}
 
 	/*
@@ -5223,11 +5334,8 @@ static void station_free(struct station *station)
 
 	l_queue_destroy(station->anqp_pending, remove_anqp);
 
-	scan_freq_set_free(station->scan_freqs_order[0]);
-	scan_freq_set_free(station->scan_freqs_order[1]);
-
-	if (station->scan_freqs_order[2])
-		scan_freq_set_free(station->scan_freqs_order[2]);
+	for (uint8_t i = 0; i < 4; i++)
+		scan_freq_set_free(station->scan_freqs_order[i]);
 
 	wiphy_state_watch_remove(station->wiphy, station->wiphy_watch);
 
