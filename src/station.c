@@ -4836,7 +4836,8 @@ static struct l_dbus_message *station_property_set_affinities(
 		return dbus_error_invalid_args(message);
 
 	/* Get first entry, there should be only one */
-	l_dbus_message_iter_next_entry(&array, &new_path);
+	if (!l_dbus_message_iter_next_entry(&array, &new_path))
+		return dbus_error_invalid_args(message);
 
 	if (l_dbus_message_iter_next_entry(&array, &new_path))
 		return dbus_error_invalid_args(message);
