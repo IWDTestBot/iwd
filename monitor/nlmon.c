@@ -1915,7 +1915,7 @@ static void print_ie_interworking(unsigned int level,
 	size--;
 	ptr++;
 
-	if (!size)
+	if (size < 2)
 		return;
 
 	/*
