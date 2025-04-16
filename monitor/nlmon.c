@@ -7433,7 +7433,7 @@ static bool check_pcap(struct nlmon *nlmon, size_t next_size)
 
 	pcap_close(nlmon->pcap);
 
-	/* Exausted the single PCAP file */
+	/* Exhausted the single PCAP file */
 	if (nlmon->max_files < 2) {
 		printf("Reached maximum size of PCAP, exiting\n");
 		nlmon->pcap = NULL;
