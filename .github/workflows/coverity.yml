@@ -1,0 +1,86 @@
+name: Coverity Scan and Submit
+description: Runs a coverity scan, then sends results to the cloud
+on:
+  schedule:
+    - cron:  "0 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  scan-and-submit:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Lookup latest tool
+        id: cache-lookup
+        run: |
+          hash=$(curl https://scan.coverity.com/download/cxx/linux64 \
+                 --data "token=${{ secrets.COVERITY_IWD_TOKEN }}&project=IWD&md5=1");
+          echo "hash=${hash}" >> $GITHUB_OUTPUT
+
+      - name: Get cached coverity tool
+        id: build-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/cov-analysis
+          key: cov-build-cxx-linux64-${{ steps.cache-lookup.outputs.hash }}
+
+      - name: Download Coverity Build Tool
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        run: |
+          curl https://scan.coverity.com/download/cxx/linux64 \
+            --no-progress-meter \
+            --output cov-analysis.tar.gz \
+            --data "token=${{ secrets.COVERITY_IWD_TOKEN }}&project=IWD"
+        shell: bash
+        working-directory: ${{ github.workspace }}
+
+      - if: steps.build-cache.outputs.cache-hit != 'true'
+        run: mkdir cov-analysis
+        shell: bash
+        working-directory: ${{ github.workspace }}
+
+      - if: steps.build-cache.outputs.cache-hit != 'true'
+        run: tar -xzf cov-analysis.tar.gz --strip 1 -C cov-analysis
+        shell: bash
+        working-directory: ${{ github.workspace }}
+
+      - name: Checkout IWD
+        uses: actions/checkout@v3
+        with:
+          path: ${{ github.workspace }}/iwd
+          repository: IWDTestBot/iwd
+          token: ${{ secrets.ACTION_TOKEN }}
+
+      - name: Checkout ELL
+        uses: actions/checkout@v3
+        with:
+          path: ${{ github.workspace }}/ell
+          repository: IWDTestBot/ell
+          token: ${{ secrets.ACTION_TOKEN }}
+
+      - name: Configure IWD
+        run: |
+          cd ${{ github.workspace }}/iwd
+          ./bootstrap-configure --disable-manual-pages
+
+      - name: Build with cov-build
+        run: |
+          export PATH="${{ github.workspace }}/cov-analysis/bin:${PATH}"
+          cov-build --dir cov-int make -j4
+        shell: bash
+        working-directory: ${{ github.workspace }}/iwd
+
+      - name: Tar results
+        run: tar -czvf cov-int.tgz cov-int
+        shell: bash
+        working-directory: ${{ github.workspace }}/iwd
+
+      - name: Submit results to Coverity Scan
+        if: ${{ ! inputs.dry_run }}
+        run: |
+          curl \
+            --form token="${{ secrets.COVERITY_IWD_TOKEN }}" \
+            --form email="iwd.ci.bot@gmail.com" \
+            --form file=@cov-int.tgz \
+            "https://scan.coverity.com/builds?project=IWD"
+        shell: bash
+        working-directory: ${{ github.workspace }}/iwd
