@@ -765,9 +765,11 @@ static enum cmd_status cmd_get_bsses(const char *device_name,
 			continue;
 
 		display_table_row(MARGIN, 1, strlen(path), path);
-		proxy_properties_display_inline(bss_i, MARGIN, 10, 18);
+		proxy_properties_display_inline(bss_i, MARGIN, 14, 18);
 		display_table_row(MARGIN, 1, 1, "");
 	}
+
+	display_table_footer();
 
 	return CMD_STATUS_DONE;
 }
