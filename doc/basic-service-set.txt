@@ -8,3 +8,11 @@ Object path	/net/connman/iwd/{phy0,phy1,...}/{1,2,...}/Xxx
 Properties	string Address [readonly]
 
 			MAC address of BSS
+
+		int16 SignalStrength [readonly]
+
+			RSSI of BSS in dB
+
+		uint32 Frequency [readonly]
+
+			Frequency of BSS (MHz)
