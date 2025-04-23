@@ -32,6 +32,8 @@
 
 struct bss {
 	char *address;
+	int16_t signal;
+	uint32_t frequency;
 };
 
 static const char *get_address(const void *data)
@@ -57,8 +59,52 @@ static void update_address(void *data, struct l_dbus_message_iter *variant)
 	bss->address = l_strdup(value);
 }
 
+static const char *get_signal(const void *data)
+{
+	const struct bss *bss = data;
+	static char signal_str[7];
+
+	sprintf(signal_str, "%d", bss->signal);
+
+	return signal_str;
+}
+
+static void update_signal(void *data, struct l_dbus_message_iter *variant)
+{
+	struct bss *bss = data;
+	int16_t value;
+
+	if (!l_dbus_message_iter_get_variant(variant, "n", &value))
+		return;
+
+	bss->signal = value;
+}
+
+static const char *get_frequency(const void *data)
+{
+	const struct bss *bss = data;
+	static char freq_str[5];
+
+	sprintf(freq_str, "%u", bss->frequency);
+
+	return freq_str;
+}
+
+static void update_frequency(void *data, struct l_dbus_message_iter *variant)
+{
+	struct bss *bss = data;
+	uint32_t value;
+
+	if (!l_dbus_message_iter_get_variant(variant, "u", &value))
+		return;
+
+	bss->frequency = value;
+}
+
 static const struct proxy_interface_property bss_properties[] = {
-	{ "Address",       "s", update_address, get_address },
+	{ "Address",        "s", update_address, get_address },
+	{ "SignalStrength", "n", update_signal, get_signal },
+	{ "Frequency",      "u", update_frequency, get_frequency },
 	{ }
 };
 
