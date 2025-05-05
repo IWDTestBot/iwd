@@ -30,26 +30,37 @@
 
 #include "src/storage.h"
 
+static bool aes_ctr_supported(void)
+{
+	return l_cipher_is_supported(L_CIPHER_AES_CTR);
+}
+
 static void test_short_encrypted_bytes(const void *data)
 {
 	struct l_settings *settings = l_settings_new();
 	bool changed;
+	int err;
+
+	storage_init((const uint8_t *)"abc123", 6);
 
 	l_settings_set_string(settings, "Security", "EncryptedSecurity", "012345");
 	l_settings_set_string(settings, "Security", "EncryptedSalt", "012345");
 
-	assert(__storage_decrypt(settings, "mySSID", &changed) < 0);
+	err = __storage_decrypt(settings, "mySSID", &changed);
+	assert(err == -EBADMSG);
+
 	l_settings_free(settings);
+
+	storage_exit();
 }
 
 int main(int argc, char *argv[])
 {
 	l_test_init(&argc, &argv);
 
-	storage_init((const uint8_t *)"abc123", 6);
-
-	l_test_add("/storage/profile encryption",
-			test_short_encrypted_bytes, NULL);
+	l_test_add_func_precheck("/storage/profile encryption",
+						test_short_encrypted_bytes,
+						aes_ctr_supported, 0);
 
 	return l_test_run();
 }
