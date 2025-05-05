@@ -2194,10 +2194,39 @@ static bool network_bss_property_get_address(struct l_dbus *dbus,
 	return true;
 }
 
+static bool network_bss_property_get_signal(struct l_dbus *dbus,
+					struct l_dbus_message *message,
+					struct l_dbus_message_builder *builder,
+					void *user_data)
+{
+	struct scan_bss *bss = user_data;
+	int16_t signal = bss->signal_strength / 100;
+
+	l_dbus_message_builder_append_basic(builder, 'n', &signal);
+
+	return true;
+}
+
+static bool network_bss_property_get_freq(struct l_dbus *dbus,
+					struct l_dbus_message *message,
+					struct l_dbus_message_builder *builder,
+					void *user_data)
+{
+	struct scan_bss *bss = user_data;
+
+	l_dbus_message_builder_append_basic(builder, 'u', &bss->frequency);
+
+	return true;
+}
+
 static void setup_bss_interface(struct l_dbus_interface *interface)
 {
 	l_dbus_interface_property(interface, "Address", 0, "s",
 					network_bss_property_get_address, NULL);
+	l_dbus_interface_property(interface, "SignalStrength", 0, "n",
+					network_bss_property_get_signal, NULL);
+	l_dbus_interface_property(interface, "Frequency", 0, "u",
+					network_bss_property_get_freq, NULL);
 }
 
 static int network_init(void)
