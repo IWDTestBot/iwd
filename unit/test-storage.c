@@ -30,7 +30,7 @@
 
 #include "src/storage.h"
 
-static bool aes_ctr_supported(void)
+static bool aes_ctr_supported(const void *data)
 {
 	return l_cipher_is_supported(L_CIPHER_AES_CTR);
 }
