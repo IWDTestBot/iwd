@@ -3522,13 +3522,6 @@ static bool station_pmksa_fallback(struct station *station, uint16_t status)
 	return true;
 }
 
-/* A bit more concise for trying to fit these into 80 characters */
-#define IS_TEMPORARY_STATUS(code) \
-	((code) == MMPDU_STATUS_CODE_DENIED_UNSUFFICIENT_BANDWIDTH || \
-	(code) == MMPDU_STATUS_CODE_DENIED_POOR_CHAN_CONDITIONS || \
-	(code) == MMPDU_STATUS_CODE_REJECTED_WITH_SUGG_BSS_TRANS || \
-	(code) == MMPDU_STATUS_CODE_DENIED_NO_MORE_STAS)
-
 static bool station_retry_with_status(struct station *station,
 					uint16_t status_code)
 {
@@ -3536,19 +3529,37 @@ static bool station_retry_with_status(struct station *station,
 	if (station_pmksa_fallback(station, status_code))
 		goto try_next;
 
+	switch (status_code) {
 	/*
 	 * Certain Auth/Assoc failures should not cause a timeout blacklist.
 	 * In these cases we want to only temporarily blacklist the BSS until
 	 * the connection is complete.
-	 *
+	 */
+	case MMPDU_STATUS_CODE_DENIED_UNSUFFICIENT_BANDWIDTH:
+	case MMPDU_STATUS_CODE_DENIED_POOR_CHAN_CONDITIONS:
+	/*
 	 * TODO: The WITH_SUGG_BSS_TRANS case should also include a neighbor
 	 *       report IE in the frame. This would allow us to target a
 	 *       specific BSS on our next attempt. There is currently no way to
 	 *       obtain that IE, but this should be done in the future.
+	*/
+	case MMPDU_STATUS_CODE_REJECTED_WITH_SUGG_BSS_TRANS:
+		break;
+	/*
+	 * If a BSS is indicating its unable to handle more connections we will
+	 * blacklist this the same way we do for BSS's issuing BSS-TM requests
+	 * thereby avoiding roams to this BSS for the configured timeout.
 	 */
-	if (!IS_TEMPORARY_STATUS(status_code))
+	case MMPDU_STATUS_CODE_DENIED_NO_MORE_STAS:
+		blacklist_add_bss(station->connected_bss->addr,
+					BLACKLIST_REASON_AP_BUSY);
+		break;
+	/* For any other status codes, blacklist the BSS */
+	default:
 		blacklist_add_bss(station->connected_bss->addr,
 					BLACKLIST_REASON_CONNECT_FAILED);
+		break;
+	}
 
 	/*
 	 * Unconditionally network blacklist the BSS if we are retrying. This
