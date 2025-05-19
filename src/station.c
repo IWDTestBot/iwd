@@ -191,8 +191,7 @@ static uint32_t evaluate_bss_group_rank(const uint8_t *addr, uint32_t freq,
 	if (blacklist_contains_bss(addr, BLACKLIST_REASON_CONNECT_FAILED))
 		return 0;
 
-	roam_blacklist = blacklist_contains_bss(addr,
-					BLACKLIST_REASON_ROAM_REQUESTED);
+	roam_blacklist = blacklist_contains_bss(addr, BLACKLIST_REASON_AP_BUSY);
 	good_signal = signal >= netdev_get_low_signal_threshold(freq);
 
 	if (good_signal)
@@ -3326,7 +3325,7 @@ static void station_ap_directed_roam(struct station *station,
 	}
 
 	blacklist_add_bss(station->connected_bss->addr,
-				BLACKLIST_REASON_ROAM_REQUESTED);
+				BLACKLIST_REASON_AP_BUSY);
 	station_debug_event(station, "ap-roam-blacklist-added");
 
 	/*
