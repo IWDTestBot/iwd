@@ -169,6 +169,14 @@ static int sae_choose_next_group(struct sae_sm *sm)
 				!sm->handshake->ecc_sae_pts[sm->group_retry])
 			continue;
 
+		/*
+		 * TODO: Groups for P192, P224 and P521 are currently
+		 * non-functional with SAE. Until this is fixed we need to
+		 * avoid these groups from being used.
+		 */
+		if (group == 21 || group == 25 || group == 26)
+			continue;
+
 		break;
 	}
 
