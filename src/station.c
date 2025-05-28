@@ -1795,6 +1795,13 @@ static void station_enter_state(struct station *station,
 		periodic_scan_stop(station);
 		break;
 	case STATION_STATE_CONNECTED:
+		if (station->connect_pending) {
+			struct l_dbus_message *reply =
+				l_dbus_message_new_method_return(
+						station->connect_pending);
+			dbus_pending_reply(&station->connect_pending, reply);
+		}
+
 		l_dbus_object_add_interface(dbus,
 					netdev_get_path(station->netdev),
 					IWD_STATION_DIAGNOSTIC_INTERFACE,
@@ -3580,13 +3587,6 @@ static void station_connect_ok(struct station *station)
 	struct handshake_state *hs = netdev_get_handshake(station->netdev);
 
 	l_debug("");
-
-	if (station->connect_pending) {
-		struct l_dbus_message *reply =
-			l_dbus_message_new_method_return(
-						station->connect_pending);
-		dbus_pending_reply(&station->connect_pending, reply);
-	}
 
 	/*
 	 * Get a neighbor report now so future roams can avoid waiting for
