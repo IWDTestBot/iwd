@@ -637,13 +637,28 @@ static bool netdev_parse_sta_info(struct l_genl_attr *attr,
 				info->have_tx_mcs = true;
 
 			break;
-
 		case NL80211_STA_INFO_EXPECTED_THROUGHPUT:
 			if (len != 4)
 				return false;
 
 			info->expected_throughput = l_get_u32(data);
 			info->have_expected_throughput = true;
+
+			break;
+		case NL80211_STA_INFO_INACTIVE_TIME:
+			if (len != 4)
+				return false;
+
+			info->inactive_time = l_get_u32(data);
+			info->have_inactive_time = true;
+
+			break;
+		case NL80211_STA_INFO_CONNECTED_TIME:
+			if (len != 4)
+				return false;
+
+			info->connected_time = l_get_u32(data);
+			info->have_connected_time = true;
 
 			break;
 		}
