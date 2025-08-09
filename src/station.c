@@ -544,9 +544,20 @@ static bool station_register_bss(struct network *network, struct scan_bss *bss)
 	 * scan_bss pointer, as this one will be freed soon.
 	 */
 	old = l_dbus_object_get_data(dbus_get_bus(), path, IWD_BSS_INTERFACE);
-	if (old)
-		return l_dbus_object_set_data(dbus_get_bus(), path,
+	if (old) {
+		l_dbus_object_set_data(dbus_get_bus(), path,
 						IWD_BSS_INTERFACE, bss);
+
+		if (old->signal_strength != bss->signal_strength)
+			l_dbus_property_changed(dbus_get_bus(), path,
+					IWD_BSS_INTERFACE, "SignalStrength");
+
+		if (old->frequency != bss->frequency)
+			l_dbus_property_changed(dbus_get_bus(), path,
+					IWD_BSS_INTERFACE, "Frequency");
+
+		return true;
+	}
 
 	if (!l_dbus_object_add_interface(dbus_get_bus(), path,
 						IWD_BSS_INTERFACE, bss))
