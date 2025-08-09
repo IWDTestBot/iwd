@@ -182,3 +182,5 @@ double scan_get_band_rank_modifier(enum band_freq band);
 
 bool scan_wdev_add(uint64_t wdev_id);
 bool scan_wdev_remove(uint64_t wdev_id);
+
+uint64_t scan_get_freq_age(uint32_t freq);
