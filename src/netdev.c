@@ -3008,15 +3008,32 @@ static void netdev_cmd_ft_reassociate_cb(struct l_genl_msg *msg,
 						void *user_data)
 {
 	struct netdev *netdev = user_data;
+	int err = l_genl_msg_get_error(msg);
 
 	netdev->connect_cmd_id = 0;
 
-	if (l_genl_msg_get_error(msg) >= 0)
+	/*
+	 * If CMD_ASSOCIATE was accepted we're committed to association and
+	 * can no longer go back. Signal this to station so the state can
+	 * transition to ft-roaming.
+	 */
+	if (err >= 0) {
+		if (netdev->event_filter)
+			netdev->event_filter(netdev, NETDEV_EVENT_ASSOCIATING,
+						NULL, netdev->user_data);
 		return;
+	}
 
-	netdev_deauth_and_fail_connection(netdev,
-					NETDEV_RESULT_ASSOCIATION_FAILED,
-					MMPDU_STATUS_CODE_UNSPECIFIED);
+	l_debug("failed FT reassocaition (%d)", err);
+
+	/*
+	 * A failed ACK should not have changed the kernel's state. This means
+	 * we should still be connected to the current AP and can proceed to
+	 * trying more BSS's.
+	 */
+
+	netdev->connect_cb(netdev, NETDEV_RESULT_ASSOCIATION_FAILED, NULL,
+				netdev->user_data);
 }
 
 static bool kernel_will_retry_auth(uint16_t status_code,
@@ -3200,7 +3217,12 @@ static void netdev_associate_event(struct l_genl_msg *msg,
 	if (!netdev->connected || netdev->aborting)
 		return;
 
-	if (netdev->event_filter)
+	/*
+	 * For FT this event is sent in the CMD_ASSOCIATE ack to indicate
+	 * association was successfully started in the kernel, don't duplicate
+	 * and send here too.
+	 */
+	if (!netdev->in_ft && netdev->event_filter)
 		netdev->event_filter(netdev, NETDEV_EVENT_ASSOCIATING,
 					NULL, netdev->user_data);
 
@@ -5415,6 +5437,9 @@ static void netdev_channel_switch_event(struct l_genl_msg *msg,
 	_auto_(l_free) struct band_chandef *chandef = NULL;
 
 	if (netdev->type != NL80211_IFTYPE_STATION)
+		return;
+
+	if (L_WARN_ON(!netdev->connected))
 		return;
 
 	chandef = l_new(struct band_chandef, 1);

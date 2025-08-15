@@ -2457,6 +2457,8 @@ delayed_retry:
 	station_roam_retry(station);
 }
 
+static void station_transition_start(struct station *station);
+
 static void station_reassociate_cb(struct netdev *netdev,
 					enum netdev_result result,
 					void *event_data,
@@ -2467,13 +2469,25 @@ static void station_reassociate_cb(struct netdev *netdev,
 	l_debug("%u, result: %d", netdev_get_ifindex(station->netdev), result);
 
 	if (station->state != STATION_STATE_ROAMING &&
-			station->state != STATION_STATE_FT_ROAMING)
+			station->state != STATION_STATE_FT_ROAMING &&
+			!station->preparing_roam)
 		return;
 
 	if (result == NETDEV_RESULT_OK)
 		station_roamed(station);
-	else
-		station_roam_failed(station);
+	else {
+		/*
+		 * If we are still in a preparing_roam state this means that
+		 * the CMD_ASSOCIATE was rejected in the ACK. This rejection is
+		 * recoverable since the kernel should not have changed any
+		 * internal state. We can pop the current and try another BSS.
+		 */
+		if (station->preparing_roam) {
+			l_free(l_queue_pop_head(station->roam_bss_list));
+			station_transition_start(station);
+		} else
+			station_roam_failed(station);
+	}
 }
 
 static void station_netdev_event(struct netdev *netdev, enum netdev_event event,
@@ -2586,13 +2600,10 @@ static void station_preauthenticate_cb(struct netdev *netdev,
 	station->hs = handshake_state_ref(new_hs);
 }
 
-static void station_transition_start(struct station *station);
-
 static bool station_ft_work_ready(struct wiphy_radio_work_item *item)
 {
 	struct station *station = l_container_of(item, struct station, ft_work);
-	_auto_(l_free) struct roam_bss *rbss = l_queue_pop_head(
-							station->roam_bss_list);
+	struct roam_bss *rbss = l_queue_peek_head(station->roam_bss_list);
 	struct scan_bss *bss;
 	int ret;
 
@@ -2617,6 +2628,11 @@ static bool station_ft_work_ready(struct wiphy_radio_work_item *item)
 		l_debug("Re-inserting BSS "MAC" using reassociation, rank: %u",
 					MAC_STR(rbss->addr), rbss->rank);
 
+		/*
+		 * Pop off the roam bss, then re-insert as there isn't a
+		 * guarantee that it will end up back at the head
+		 */
+		l_queue_pop_head(station->roam_bss_list);
 		l_queue_insert(station->roam_bss_list, rbss,
 				roam_bss_rank_compare, NULL);
 
@@ -2625,13 +2641,14 @@ static bool station_ft_work_ready(struct wiphy_radio_work_item *item)
 					MMPDU_STATUS_CODE_INVALID_PMKID);
 
 		station_transition_start(station);
-		l_steal_ptr(rbss);
 		break;
 	case -ENOENT:
 		station_debug_event(station, "ft-roam-failed");
 		iwd_notice(IWD_NOTICE_FT_ROAM_FAILED,
 				"status: authentication timeout");
 try_next:
+		l_queue_pop_head(station->roam_bss_list);
+		l_free(rbss);
 		station_transition_start(station);
 		break;
 	case 0:
@@ -2641,10 +2658,6 @@ try_next:
 					station_reassociate_cb, station);
 		if (ret < 0)
 			goto disassociate;
-
-		station->connected_bss = bss;
-		station->preparing_roam = false;
-		station_enter_state(station, STATION_STATE_FT_ROAMING);
 
 		break;
 	case -EINVAL:
@@ -3836,6 +3849,8 @@ static void station_netdev_event(struct netdev *netdev, enum netdev_event event,
 					void *event_data, void *user_data)
 {
 	struct station *station = user_data;
+	_auto_(l_free) struct roam_bss *rbss = NULL;
+	struct scan_bss *bss;
 
 	switch (event) {
 	case NETDEV_EVENT_AUTHENTICATING:
@@ -3843,6 +3858,28 @@ static void station_netdev_event(struct netdev *netdev, enum netdev_event event,
 		break;
 	case NETDEV_EVENT_ASSOCIATING:
 		station_debug_event(station, "associating");
+
+		if (!station->preparing_roam)
+			break;
+
+		/* Both !rbss and !bss should NEVER happen */
+		rbss = l_queue_pop_head(station->roam_bss_list);
+		if (L_WARN_ON(!rbss)) {
+			station_roam_failed(station);
+			return;
+		}
+
+		bss = network_bss_find_by_addr(station->connected_network,
+						rbss->addr);
+		if (L_WARN_ON(!bss)) {
+			station_roam_failed(station);
+			return;
+		}
+
+		station->connected_bss = bss;
+		station->preparing_roam = false;
+		station_enter_state(station, STATION_STATE_FT_ROAMING);
+
 		break;
 	case NETDEV_EVENT_DISCONNECT_BY_AP:
 	case NETDEV_EVENT_DISCONNECT_BY_SME:
