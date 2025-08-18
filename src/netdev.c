@@ -3008,13 +3008,26 @@ static void netdev_cmd_ft_reassociate_cb(struct l_genl_msg *msg,
 						void *user_data)
 {
 	struct netdev *netdev = user_data;
+	int err = l_genl_msg_get_error(msg);
 
 	netdev->connect_cmd_id = 0;
 
-	if (l_genl_msg_get_error(msg) >= 0)
+	l_debug("%d", err);
+
+	if (err >= 0)
 		return;
 
-	netdev_deauth_and_fail_connection(netdev,
+	/*
+	 * TODO: It is possible to not trigger a disconnect here and maintain
+	 *       the current connection. The issue is that IWD has already
+	 *       modified the handshake and we've lost all reference to the old
+	 *       BSS keys.
+	 *
+	 *       This could be remedied in the future by creating an entirely
+	 *       new handshake_state object for the association and only when
+	 *       the ack indicates success do we clear out the old object.
+	 */
+	netdev_disconnect_and_fail_connection(netdev,
 					NETDEV_RESULT_ASSOCIATION_FAILED,
 					MMPDU_STATUS_CODE_UNSPECIFIED);
 }
