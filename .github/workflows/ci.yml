@@ -33,7 +33,7 @@ on:
         default: '6.2'
       hostapd_version:
         description: Hostapd and wpa_supplicant version
-        default: 'hostapd_2_11'
+        default: 'hostap_2_11'
       ell_ref:
         description: ELL reference
         default: refs/heads/workflow
