@@ -5417,6 +5417,9 @@ static void netdev_channel_switch_event(struct l_genl_msg *msg,
 	if (netdev->type != NL80211_IFTYPE_STATION)
 		return;
 
+	if (L_WARN_ON(!netdev->connected))
+		return;
+
 	chandef = l_new(struct band_chandef, 1);
 
 	if (nl80211_parse_chandef(msg, chandef) < 0) {
