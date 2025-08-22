@@ -69,11 +69,23 @@ static uint32_t work_ids;
 static unsigned int wiphy_dump_id;
 
 enum driver_flag {
+	/* Force the use of the default interface created by the kernel */
 	DEFAULT_IF = 0x1,
+	/*
+	 * Force the use of the PAE socket rather than control port, even if
+	 * control port is supported
+	 */
 	FORCE_PAE = 0x2,
+	/* Disable power save on the adapter during initialization */
 	POWER_SAVE_DISABLE = 0x4,
+	/* Don't use OWE when connecting to open networks */
 	OWE_DISABLE = 0x8,
+	/* Disables multicast RX frame registration */
 	MULTICAST_RX_DISABLE = 0x10,
+	/*
+	 * Don't use SAE (WPA3) when connecting to hybrid networks. This will
+	 * prevent IWD from connecting to WPA3-only networks
+	 */
 	SAE_DISABLE = 0x20,
 	/* Disables use of the NL80211_SCAN_FLAG_COLOCATED_6GHZ flag in scans */
 	COLOCATED_SCAN_DISABLE = 0x40,
