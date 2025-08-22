@@ -44,6 +44,7 @@
 #include "src/erp.h"
 #include "src/band.h"
 #include "src/pmksa.h"
+#include "src/vendor_quirks.h"
 
 static inline unsigned int n_ecc_groups(void)
 {
@@ -914,11 +915,15 @@ bool handshake_util_ap_ie_matches(struct handshake_state *s,
 	if (msg_info->no_pairwise != scan_info.no_pairwise)
 		return false;
 
-	if (msg_info->ptksa_replay_counter != scan_info.ptksa_replay_counter)
-		return false;
+	if (!(s->vendor_quirks & VENDOR_QUIRK_REPLAY_COUNTER_MISMATCH)) {
+		if (msg_info->ptksa_replay_counter !=
+					scan_info.ptksa_replay_counter)
+			return false;
 
-	if (msg_info->gtksa_replay_counter != scan_info.gtksa_replay_counter)
-		return false;
+		if (msg_info->gtksa_replay_counter !=
+					scan_info.gtksa_replay_counter)
+			return false;
+	}
 
 	if (msg_info->mfpr != scan_info.mfpr)
 		return false;
