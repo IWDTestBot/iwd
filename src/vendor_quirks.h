@@ -22,4 +22,19 @@
 
 #include <stdint.h>
 
+enum vendor_quirk {
+	/*
+	 * The neighbor list in a BSS Transition Management request from an AP
+	 * contains a very sparse BSS list which generally leads to poor roaming
+	 * decisions.
+	 */
+	VENDOR_QUIRK_BAD_BSS_TM_CANDIDATE_LIST = 1 << 0,
+	/*
+	 * The PTK/GTK replay counter differs between a scan and FT
+	 * authentication. This is not allowable in the spec, but seen with
+	 * certain vendors.
+	 */
+	VENDOR_QUIRK_REPLAY_COUNTER_MISMATCH = 1 << 1,
+};
+
 uint32_t vendor_quirks(const uint8_t *oui);

@@ -34,7 +34,10 @@ static const struct {
 	uint8_t oui[3];
 	uint32_t quirks;
 } quirk_db[] = {
-	{ }
+	/* Cisco Meraki */
+	{ { 0x00, 0x18, 0x0a }, VENDOR_QUIRK_BAD_BSS_TM_CANDIDATE_LIST },
+	/* Hewlitt Packard, owns Aruba */
+	{ { 0x00, 0x0b, 0x86 }, VENDOR_QUIRK_REPLAY_COUNTER_MISMATCH },
 };
 
 uint32_t vendor_quirks(const uint8_t *oui)
