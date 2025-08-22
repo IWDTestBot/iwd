@@ -64,6 +64,7 @@
 #include "src/eap-tls-common.h"
 #include "src/storage.h"
 #include "src/pmksa.h"
+#include "src/vendor_quirks.h"
 
 #define STATION_RECENT_NETWORK_LIMIT	5
 #define STATION_RECENT_FREQS_LIMIT	5
@@ -1446,6 +1447,8 @@ static struct handshake_state *station_handshake_setup(struct station *station,
 	vendor_ies = network_info_get_extra_ies(info, bss, &iov_elems);
 	handshake_state_set_vendor_ies(hs, vendor_ies, iov_elems);
 
+	handshake_state_set_vendor_quirks(hs, bss->vendor_quirks);
+
 	/*
 	 * It can't hurt to try the FILS IP Address Assignment independent of
 	 * which auth-proto is actually used.
@@ -2404,6 +2407,11 @@ static void station_roam_retry(struct station *station)
 	station->roam_scan_full = false;
 	station->ap_directed_roaming = false;
 
+	if (station->roam_freqs) {
+		scan_freq_set_free(station->roam_freqs);
+		station->roam_freqs = NULL;
+	}
+
 	if (station->signal_low)
 		station_roam_timeout_rearm(station, roam_retry_interval);
 }
@@ -2433,8 +2441,16 @@ static void station_roam_failed(struct station *station)
 	 * We were told by the AP to roam, but failed.  Try ourselves or
 	 * wait for the AP to tell us to roam again
 	 */
-	if (station->ap_directed_roaming)
+	if (station->ap_directed_roaming) {
+		/*
+		 * The candidate list from the AP (or neighbor report) found
+		 * no BSS's. Force a full scan
+		 */
+		if (!station->roam_scan_full)
+			goto full_scan;
+
 		goto delayed_retry;
+	}
 
 	/*
 	 * If we tried a limited scan, failed and the signal is still low,
@@ -2446,6 +2462,8 @@ static void station_roam_failed(struct station *station)
 		 * the scan here, so that the destroy callback is not called
 		 * after the return of this function
 		 */
+full_scan:
+		station_debug_event(station, "full-roam-scan");
 		scan_cancel(netdev_get_wdev_id(station->netdev),
 						station->roam_scan_id);
 
@@ -3366,12 +3384,22 @@ static void station_ap_directed_roam(struct station *station,
 	l_timeout_remove(station->roam_trigger_timeout);
 	station->roam_trigger_timeout = NULL;
 
-	if (req_mode & WNM_REQUEST_MODE_PREFERRED_CANDIDATE_LIST) {
+	if ((req_mode & WNM_REQUEST_MODE_PREFERRED_CANDIDATE_LIST) &&
+				!(station->connected_bss->vendor_quirks &
+				VENDOR_QUIRK_BAD_BSS_TM_CANDIDATE_LIST)) {
 		l_debug("roam: AP sent a preferred candidate list");
 		station_neighbor_report_cb(station->netdev, 0, body + pos,
 				body_len - pos, station);
 	} else {
-		l_debug("roam: AP did not include a preferred candidate list");
+		if (station->connected_bss->cap_rm_neighbor_report) {
+			if (!netdev_neighbor_report_req(station->netdev,
+					station_neighbor_report_cb))
+				return;
+
+			l_warn("failed to request neighbor report!");
+		}
+
+		l_debug("full scan after BSS transition request");
 		if (station_roam_scan(station, NULL) < 0)
 			station_roam_failed(station);
 	}

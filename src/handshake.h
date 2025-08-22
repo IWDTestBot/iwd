@@ -107,6 +107,7 @@ struct handshake_state {
 	uint8_t *authenticator_fte;
 	uint8_t *supplicant_fte;
 	uint8_t *vendor_ies;
+	uint32_t vendor_quirks;
 	size_t vendor_ies_len;
 	enum ie_rsn_cipher_suite pairwise_cipher;
 	enum ie_rsn_cipher_suite group_cipher;
@@ -237,6 +238,9 @@ void handshake_state_set_vendor_ies(struct handshake_state *s,
 					const struct iovec *iov,
 					size_t n_iovs);
 
+void handshake_state_set_vendor_quirks(struct handshake_state *s,
+					uint32_t quirks_mask);
+
 void handshake_state_set_kh_ids(struct handshake_state *s,
 				const uint8_t *r0khid, size_t r0khid_len,
 				const uint8_t *r1khid);
@@ -312,7 +316,8 @@ bool handshake_state_set_pmksa(struct handshake_state *s, struct pmksa *pmksa);
 void handshake_state_cache_pmksa(struct handshake_state *s);
 bool handshake_state_remove_pmksa(struct handshake_state *s);
 
-bool handshake_util_ap_ie_matches(const struct ie_rsn_info *msg_info,
+bool handshake_util_ap_ie_matches(struct handshake_state *s,
+					const struct ie_rsn_info *msg_info,
 					const uint8_t *scan_ie, bool is_wpa);
 
 const uint8_t *handshake_util_find_kde(enum handshake_kde selector,

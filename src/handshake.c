@@ -44,6 +44,7 @@
 #include "src/erp.h"
 #include "src/band.h"
 #include "src/pmksa.h"
+#include "src/vendor_quirks.h"
 
 static inline unsigned int n_ecc_groups(void)
 {
@@ -366,6 +367,12 @@ void handshake_state_set_vendor_ies(struct handshake_state *s,
 		memcpy(s->vendor_ies + len, iov[i].iov_base, iov[i].iov_len);
 		len += iov[i].iov_len;
 	}
+}
+
+void handshake_state_set_vendor_quirks(struct handshake_state *s,
+					uint32_t quirks_mask)
+{
+	s->vendor_quirks = quirks_mask;
 }
 
 void handshake_state_set_kh_ids(struct handshake_state *s,
@@ -877,7 +884,8 @@ void handshake_state_set_igtk(struct handshake_state *s, const uint8_t *key,
  * results vs the RSN/WPA IE obtained as part of the 4-way handshake.  If they
  * don't match, the EAPoL packet must be silently discarded.
  */
-bool handshake_util_ap_ie_matches(const struct ie_rsn_info *msg_info,
+bool handshake_util_ap_ie_matches(struct handshake_state *s,
+					const struct ie_rsn_info *msg_info,
 					const uint8_t *scan_ie, bool is_wpa)
 {
 	struct ie_rsn_info scan_info;
@@ -907,11 +915,15 @@ bool handshake_util_ap_ie_matches(const struct ie_rsn_info *msg_info,
 	if (msg_info->no_pairwise != scan_info.no_pairwise)
 		return false;
 
-	if (msg_info->ptksa_replay_counter != scan_info.ptksa_replay_counter)
-		return false;
+	if (!(s->vendor_quirks & VENDOR_QUIRK_REPLAY_COUNTER_MISMATCH)) {
+		if (msg_info->ptksa_replay_counter !=
+					scan_info.ptksa_replay_counter)
+			return false;
 
-	if (msg_info->gtksa_replay_counter != scan_info.gtksa_replay_counter)
-		return false;
+		if (msg_info->gtksa_replay_counter !=
+					scan_info.gtksa_replay_counter)
+			return false;
+	}
 
 	if (msg_info->mfpr != scan_info.mfpr)
 		return false;
