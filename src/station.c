@@ -64,6 +64,7 @@
 #include "src/eap-tls-common.h"
 #include "src/storage.h"
 #include "src/pmksa.h"
+#include "src/vendor_quirks.h"
 
 #define STATION_RECENT_NETWORK_LIMIT	5
 #define STATION_RECENT_FREQS_LIMIT	5
@@ -3378,7 +3379,9 @@ static void station_ap_directed_roam(struct station *station,
 	l_timeout_remove(station->roam_trigger_timeout);
 	station->roam_trigger_timeout = NULL;
 
-	if (req_mode & WNM_REQUEST_MODE_PREFERRED_CANDIDATE_LIST) {
+	if ((req_mode & WNM_REQUEST_MODE_PREFERRED_CANDIDATE_LIST) &&
+				!(station->connected_bss->vendor_quirks &
+				VENDOR_QUIRK_BAD_BSS_TM_CANDIDATE_LIST)) {
 		l_debug("roam: AP sent a preferred candidate list");
 		station_neighbor_report_cb(station->netdev, 0, body + pos,
 				body_len - pos, station);
