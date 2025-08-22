@@ -2407,6 +2407,11 @@ static void station_roam_retry(struct station *station)
 	station->roam_scan_full = false;
 	station->ap_directed_roaming = false;
 
+	if (station->roam_freqs) {
+		scan_freq_set_free(station->roam_freqs);
+		station->roam_freqs = NULL;
+	}
+
 	if (station->signal_low)
 		station_roam_timeout_rearm(station, roam_retry_interval);
 }
