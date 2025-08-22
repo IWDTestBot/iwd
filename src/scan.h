@@ -79,6 +79,7 @@ struct scan_bss {
 	uint8_t *wfd;		/* Concatenated WFD IEs */
 	ssize_t wfd_size;	/* Size of Concatenated WFD IEs */
 	int8_t snr;
+	uint32_t vendor_quirks;
 	bool mde_present : 1;
 	bool cc_present : 1;
 	bool cap_rm_neighbor_report : 1;
