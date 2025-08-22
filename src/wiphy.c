@@ -75,6 +75,8 @@ enum driver_flag {
 	OWE_DISABLE = 0x8,
 	MULTICAST_RX_DISABLE = 0x10,
 	SAE_DISABLE = 0x20,
+	/* Disables use of the NL80211_SCAN_FLAG_COLOCATED_6GHZ flag in scans */
+	COLOCATED_SCAN_DISABLE = 0x40,
 };
 
 struct driver_flag_name {
@@ -103,12 +105,13 @@ static const struct driver_info driver_infos[] = {
 };
 
 static const struct driver_flag_name driver_flag_names[] = {
-	{ "DefaultInterface",   DEFAULT_IF },
-	{ "ForcePae",           FORCE_PAE },
-	{ "PowerSaveDisable",   POWER_SAVE_DISABLE },
-	{ "OweDisable",         OWE_DISABLE },
-	{ "MulticastRxDisable", MULTICAST_RX_DISABLE },
-	{ "SaeDisable",         SAE_DISABLE },
+	{ "DefaultInterface",     DEFAULT_IF },
+	{ "ForcePae",             FORCE_PAE },
+	{ "PowerSaveDisable",     POWER_SAVE_DISABLE },
+	{ "OweDisable",           OWE_DISABLE },
+	{ "MulticastRxDisable",   MULTICAST_RX_DISABLE },
+	{ "SaeDisable",           SAE_DISABLE },
+	{ "ColocatedScanDisable", COLOCATED_SCAN_DISABLE },
 };
 
 struct wiphy {
@@ -963,6 +966,11 @@ bool wiphy_supports_multicast_rx(const struct wiphy *wiphy)
 				!(wiphy->driver_flags & MULTICAST_RX_DISABLE);
 }
 
+bool wiphy_supports_colocated_flag(const struct wiphy *wiphy)
+{
+	return !(wiphy->driver_flags & COLOCATED_SCAN_DISABLE);
+}
+
 const uint8_t *wiphy_get_ht_capabilities(const struct wiphy *wiphy,
 						enum band_freq band,
 						size_t *size)
@@ -1381,6 +1389,9 @@ static void wiphy_print_basic_info(struct wiphy *wiphy)
 
 		if (wiphy->driver_flags & SAE_DISABLE)
 			flags = l_strv_append(flags, "SaeDisable");
+
+		if (wiphy->driver_flags & COLOCATED_SCAN_DISABLE)
+			flags = l_strv_append(flags, "ColocatedScanDisable");
 
 		joined = l_strjoinv(flags, ' ');
 
