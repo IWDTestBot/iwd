@@ -25,6 +25,7 @@
 #endif
 
 #include <string.h>
+#include <stdio.h>
 
 #include <ell/ell.h>
 
@@ -34,7 +35,16 @@ static const struct {
 	uint8_t oui[3];
 	struct vendor_quirk quirks;
 } oui_quirk_db[] = {
-	{ }
+	{
+		/* Cisco Meraki */
+		{ 0x00, 0x18, 0x0a },
+		{ .ignore_bss_tm_candidates = true },
+	},
+	{
+		/* Hewlett Packard, owns Aruba */
+		{ 0x00, 0x0b, 0x86 },
+		{ .replay_counter_mismatch = true },
+	},
 };
 
 void vendor_quirks_append_for_oui(const uint8_t *oui,
@@ -58,7 +68,14 @@ void vendor_quirks_append_for_oui(const uint8_t *oui,
 const char *vendor_quirks_to_string(struct vendor_quirk quirks)
 {
 	static char out[1024];
+	char *pos = out;
 	size_t s = 0;
+
+	if (quirks.ignore_bss_tm_candidates)
+		s += snprintf(pos, sizeof(out) - s, "IgnoreBssTmCandidateList");
+
+	if (quirks.replay_counter_mismatch)
+		s += snprintf(pos, sizeof(out) - s, "ReplayCounterMismatch");
 
 	if (!s)
 		return NULL;
