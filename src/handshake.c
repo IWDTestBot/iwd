@@ -914,11 +914,15 @@ bool handshake_util_ap_ie_matches(struct handshake_state *s,
 	if (msg_info->no_pairwise != scan_info.no_pairwise)
 		return false;
 
-	if (msg_info->ptksa_replay_counter != scan_info.ptksa_replay_counter)
-		return false;
+	if (!(s->vendor_quirks.replay_counter_mismatch)) {
+		if (msg_info->ptksa_replay_counter !=
+					scan_info.ptksa_replay_counter)
+			return false;
 
-	if (msg_info->gtksa_replay_counter != scan_info.gtksa_replay_counter)
-		return false;
+		if (msg_info->gtksa_replay_counter !=
+					scan_info.gtksa_replay_counter)
+			return false;
+	}
 
 	if (msg_info->mfpr != scan_info.mfpr)
 		return false;
