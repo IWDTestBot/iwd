@@ -877,7 +877,8 @@ void handshake_state_set_igtk(struct handshake_state *s, const uint8_t *key,
  * results vs the RSN/WPA IE obtained as part of the 4-way handshake.  If they
  * don't match, the EAPoL packet must be silently discarded.
  */
-bool handshake_util_ap_ie_matches(const struct ie_rsn_info *msg_info,
+bool handshake_util_ap_ie_matches(struct handshake_state *s,
+					const struct ie_rsn_info *msg_info,
 					const uint8_t *scan_ie, bool is_wpa)
 {
 	struct ie_rsn_info scan_info;
