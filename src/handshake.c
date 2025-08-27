@@ -368,6 +368,12 @@ void handshake_state_set_vendor_ies(struct handshake_state *s,
 	}
 }
 
+void handshake_state_set_vendor_quirks(struct handshake_state *s,
+					struct vendor_quirk quirks)
+{
+	s->vendor_quirks = quirks;
+}
+
 void handshake_state_set_kh_ids(struct handshake_state *s,
 				const uint8_t *r0khid, size_t r0khid_len,
 				const uint8_t *r1khid)

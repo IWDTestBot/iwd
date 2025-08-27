@@ -26,6 +26,8 @@
 #include <linux/types.h>
 #include <ell/cleanup.h>
 
+#include "src/vendor_quirks.h"
+
 struct handshake_state;
 enum crypto_cipher;
 struct eapol_frame;
@@ -107,6 +109,7 @@ struct handshake_state {
 	uint8_t *authenticator_fte;
 	uint8_t *supplicant_fte;
 	uint8_t *vendor_ies;
+	struct vendor_quirk vendor_quirks;
 	size_t vendor_ies_len;
 	enum ie_rsn_cipher_suite pairwise_cipher;
 	enum ie_rsn_cipher_suite group_cipher;
@@ -236,6 +239,9 @@ void handshake_state_set_supplicant_fte(struct handshake_state *s,
 void handshake_state_set_vendor_ies(struct handshake_state *s,
 					const struct iovec *iov,
 					size_t n_iovs);
+
+void handshake_state_set_vendor_quirks(struct handshake_state *s,
+					struct vendor_quirk quirks);
 
 void handshake_state_set_kh_ids(struct handshake_state *s,
 				const uint8_t *r0khid, size_t r0khid_len,
