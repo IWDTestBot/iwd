@@ -2440,8 +2440,16 @@ static void station_roam_failed(struct station *station)
 	 * We were told by the AP to roam, but failed.  Try ourselves or
 	 * wait for the AP to tell us to roam again
 	 */
-	if (station->ap_directed_roaming)
+	if (station->ap_directed_roaming) {
+		/*
+		 * The candidate list from the AP (or neighbor report) found
+		 * no BSS's. Force a full scan
+		 */
+		if (!station->roam_scan_full)
+			goto full_scan;
+
 		goto delayed_retry;
+	}
 
 	/*
 	 * If we tried a limited scan, failed and the signal is still low,
@@ -2453,6 +2461,7 @@ static void station_roam_failed(struct station *station)
 		 * the scan here, so that the destroy callback is not called
 		 * after the return of this function
 		 */
+full_scan:
 		scan_cancel(netdev_get_wdev_id(station->netdev),
 						station->roam_scan_id);
 
@@ -3045,6 +3054,7 @@ static int station_roam_scan(struct station *station,
 	if (!freq_set) {
 		station->roam_scan_full = true;
 		params.freqs = allowed;
+		station_debug_event(station, "full-roam-scan");
 	} else
 		scan_freq_set_constrain(freq_set, allowed);
 
@@ -3378,7 +3388,15 @@ static void station_ap_directed_roam(struct station *station,
 		station_neighbor_report_cb(station->netdev, 0, body + pos,
 				body_len - pos, station);
 	} else {
-		l_debug("roam: AP did not include a preferred candidate list");
+		if (station->connected_bss->cap_rm_neighbor_report) {
+			if (!netdev_neighbor_report_req(station->netdev,
+					station_neighbor_report_cb))
+				return;
+
+			l_warn("failed to request neighbor report!");
+		}
+
+		l_debug("full scan after BSS transition request");
 		if (station_roam_scan(station, NULL) < 0)
 			station_roam_failed(station);
 	}
