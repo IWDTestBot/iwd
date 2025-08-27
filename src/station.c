@@ -2750,11 +2750,15 @@ static bool station_try_next_transition(struct station *station,
 	enum security security = network_get_security(connected);
 	struct handshake_state *new_hs;
 	struct ie_rsn_info cur_rsne, target_rsne;
+	const char *vendor_quirks = vendor_quirks_to_string(bss->vendor_quirks);
 
 	iwd_notice(IWD_NOTICE_ROAM_INFO, "bss: "MAC", signal: %d, load: %d/255",
 					MAC_STR(bss->addr),
 					bss->signal_strength / 100,
 					bss->utilization);
+	if (vendor_quirks)
+		l_debug("vendor quirks for "MAC": %s",
+				MAC_STR(bss->addr), vendor_quirks);
 
 	/* Reset AP roam flag, at this point the roaming behaves the same */
 	station->ap_directed_roaming = false;
@@ -3913,6 +3917,7 @@ int __station_connect_network(struct station *station, struct network *network,
 {
 	struct handshake_state *hs;
 	int r;
+	const char *vendor_quirks = vendor_quirks_to_string(bss->vendor_quirks);
 
 	/*
 	 * If we already have a handshake_state ref this is due to a retry,
@@ -3946,6 +3951,10 @@ int __station_connect_network(struct station *station, struct network *network,
 					MAC_STR(bss->addr),
 					bss->signal_strength / 100,
 					bss->utilization);
+
+	if (vendor_quirks)
+		l_debug("vendor quirks for "MAC": %s",
+				MAC_STR(bss->addr), vendor_quirks);
 
 	station->connected_bss = bss;
 	station->connected_network = network;
