@@ -1446,6 +1446,8 @@ static struct handshake_state *station_handshake_setup(struct station *station,
 	vendor_ies = network_info_get_extra_ies(info, bss, &iov_elems);
 	handshake_state_set_vendor_ies(hs, vendor_ies, iov_elems);
 
+	handshake_state_set_vendor_quirks(hs, bss->vendor_quirks);
+
 	/*
 	 * It can't hurt to try the FILS IP Address Assignment independent of
 	 * which auth-proto is actually used.
