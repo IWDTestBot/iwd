@@ -125,7 +125,7 @@ struct station {
 	struct l_queue *roam_bss_list;
 
 	/* Frequencies split into subsets by priority */
-	struct scan_freq_set *scan_freqs_order[3];
+	struct scan_freq_set *scan_freqs_order[5];
 	unsigned int dbus_scan_subset_idx;
 
 	uint32_t wiphy_watch;
@@ -4500,8 +4500,7 @@ static bool station_dbus_scan_results(int err, struct l_queue *bss_list,
 		return false;
 	}
 
-	last_subset = next_idx >= L_ARRAY_SIZE(station->scan_freqs_order) ||
-		station->scan_freqs_order[next_idx] == NULL;
+	last_subset = next_idx >= L_ARRAY_SIZE(station->scan_freqs_order);
 	station->dbus_scan_subset_idx = next_idx;
 
 	station_set_scan_results(station, bss_list, freqs, false);
@@ -4515,6 +4514,15 @@ static bool station_dbus_scan_results(int err, struct l_queue *bss_list,
 static bool station_dbus_scan_subset(struct station *station)
 {
 	unsigned int idx = station->dbus_scan_subset_idx;
+
+	/* Find the next non-empty subset */
+	while (idx < L_ARRAY_SIZE(station->scan_freqs_order) &&
+			scan_freq_set_isempty(station->scan_freqs_order[idx]))
+		idx++;
+	station->dbus_scan_subset_idx = idx;
+
+	if (idx >= L_ARRAY_SIZE(station->scan_freqs_order))
+		return false;
 
 	station->dbus_scan_id = station_scan_trigger(station,
 						station->scan_freqs_order[idx],
@@ -5061,40 +5069,91 @@ static void station_fill_scan_freq_subsets(struct station *station)
 				wiphy_get_supported_freqs(station->wiphy);
 	unsigned int subset_idx = 0;
 
-	/*
-	 * Scan the 2.4GHz "social channels" first, 5GHz second, if supported,
-	 * all other 2.4GHz channels last.  To be refined as needed.
-	 */
+	station->scan_freqs_order[subset_idx] = scan_freq_set_new();
+
+	/* Subset 0: 2.4GHz "social channels" and low 5GHz non-DFS channels */
 	if (allowed_bands & BAND_FREQ_2_4_GHZ) {
-		station->scan_freqs_order[subset_idx] = scan_freq_set_new();
+		/* Channels 1, 6, 11 */
 		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2412);
 		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2437);
 		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2462);
-		subset_idx++;
 	}
 
-	/*
-	 * TODO: It may might sense to split up 5 and 6ghz into separate subsets
-	 *       since the channel set is so large.
-	 */
-	if (allowed_bands & (BAND_FREQ_5_GHZ | BAND_FREQ_6_GHZ)) {
-		uint32_t mask = allowed_bands &
-					(BAND_FREQ_5_GHZ | BAND_FREQ_6_GHZ);
-		struct scan_freq_set *set = scan_freq_set_clone(supported,
-								mask);
-
-		/* 5/6ghz didn't add any frequencies */
-		if (scan_freq_set_isempty(set)) {
-			scan_freq_set_free(set);
-		} else
-			station->scan_freqs_order[subset_idx++] = set;
+	if (allowed_bands & BAND_FREQ_5_GHZ) {
+		/* Channels 32 - 48 */
+		for (int i = 5160; i <= 5240; i+=20) {
+			scan_freq_set_add(station->scan_freqs_order[subset_idx], i);
+		}
 	}
 
-	/* Add remaining 2.4ghz channels to subset */
+	scan_freq_set_constrain(station->scan_freqs_order[subset_idx], supported);
+	station->scan_freqs_order[++subset_idx] = scan_freq_set_new();
+
+	/* Subset 1: Remaining common 2.4GHz channels and high 5GHz non-DFS channels */
 	if (allowed_bands & BAND_FREQ_2_4_GHZ) {
-		station->scan_freqs_order[subset_idx] = scan_freq_set_new();
-		scan_freq_set_foreach(supported, station_add_2_4ghz_freq,
-					station->scan_freqs_order[subset_idx]);
+		/* Channels 2 - 10, except 6 */
+		for (int i = 2417; i < 2462; i+=5) {
+			if (i != 2437)
+				scan_freq_set_add(station->scan_freqs_order[subset_idx], i);
+		}
+	}
+
+	if (allowed_bands & BAND_FREQ_5_GHZ) {
+		/* Channels 149 - 177 */
+		for (int i = 5745; i <= 5885; i+=20) {
+			scan_freq_set_add(station->scan_freqs_order[subset_idx], i);
+		}
+	}
+
+	scan_freq_set_constrain(station->scan_freqs_order[subset_idx], supported);
+	station->scan_freqs_order[++subset_idx] = scan_freq_set_new();
+
+	/* Subset 2: Uncommon 2.4GHz channels and 5GHz DFS channels */
+	if (allowed_bands & BAND_FREQ_2_4_GHZ) {
+		/* Channels 12 - 14 */
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2467);
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2472);
+		scan_freq_set_add(station->scan_freqs_order[subset_idx], 2484);
+	}
+
+	if (allowed_bands & BAND_FREQ_5_GHZ) {
+		/* Channels 52 - 68 */
+		for (int i = 5260; i <= 5340; i+=20) {
+			scan_freq_set_add(station->scan_freqs_order[subset_idx], i);
+		}
+
+		/* Channels 96 - 144 */
+		for (int i = 5480; i <= 5720; i+=20) {
+			scan_freq_set_add(station->scan_freqs_order[subset_idx], i);
+		}
+	}
+
+	scan_freq_set_constrain(station->scan_freqs_order[subset_idx], supported);
+	station->scan_freqs_order[++subset_idx] = scan_freq_set_new();
+
+	/* Subset 3: 6GHz channels */
+	if (allowed_bands & BAND_FREQ_6_GHZ) {
+		struct scan_freq_set *set = scan_freq_set_clone(supported, BAND_FREQ_6_GHZ);
+
+		if (scan_freq_set_isempty(set))
+			scan_freq_set_free(set);
+		else
+			scan_freq_set_merge(station->scan_freqs_order[subset_idx], set);
+	}
+
+	scan_freq_set_constrain(station->scan_freqs_order[subset_idx], supported);
+	station->scan_freqs_order[++subset_idx] = scan_freq_set_clone(supported, allowed_bands);
+
+	/* All channels that are both supported and allowed should be in the subsets,
+	 * if this is not the case then some new channel has been added that we are
+	 * not tracking, put it in the last subset to make sure it's scanned */
+	for (int i = 0; i < 4; i++) {
+		scan_freq_set_subtract(station->scan_freqs_order[subset_idx],
+				station->scan_freqs_order[i]);
+	}
+
+	if (!scan_freq_set_isempty(station->scan_freqs_order[subset_idx])) {
+		l_warn("Final subset is not empty");
 	}
 
 	/*
@@ -5273,11 +5332,8 @@ static void station_free(struct station *station)
 
 	l_queue_destroy(station->anqp_pending, remove_anqp);
 
-	scan_freq_set_free(station->scan_freqs_order[0]);
-	scan_freq_set_free(station->scan_freqs_order[1]);
-
-	if (station->scan_freqs_order[2])
-		scan_freq_set_free(station->scan_freqs_order[2]);
+	for (uint8_t i = 0; i < L_ARRAY_SIZE(station->scan_freqs_order); i++)
+		scan_freq_set_free(station->scan_freqs_order[i]);
 
 	wiphy_state_watch_remove(station->wiphy, station->wiphy_watch);
 
