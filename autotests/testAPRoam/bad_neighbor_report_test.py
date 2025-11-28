@@ -114,15 +114,14 @@ class Test(unittest.TestCase):
 
         self.initial_connection()
 
-        # Send with a candidate list (should be ignored)
+        # Send with a bad candidate list (should be ignored)
         self.bss_hostapd[0].send_bss_transition(
             self.device.address,
             [(self.bss_hostapd[1].bssid, "8f0000005105060603000000")]
         )
-        # IWD should ignore the list and trigger a full scan since we have not
-        # set any neighbors
-        self.device.wait_for_event("full-roam-scan")
-        self.device.wait_for_event("roaming", timeout=30)
+        # IWD should ignore the list and not try to scan the bad channel,
+        # so we shouldn't get no-roam-candidates before we roam
+        self.device.wait_for_event("roaming", timeout=30, disallow=["no-roam-candidates"])
         self.device.wait_for_event("connected")
 
     def setUp(self):
