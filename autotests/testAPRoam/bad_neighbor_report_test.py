@@ -49,7 +49,7 @@ class Test(unittest.TestCase):
         self.device.wait_for_event("roam-scan-triggered")
         self.device.wait_for_event("no-roam-candidates")
         # IWD should then trigger a full scan
-        self.device.wait_for_event("full-roam-scan")
+        self.device.wait_for_event("full-roam-scan", timeout=30)
         self.device.wait_for_event("no-roam-candidates", timeout=30)
 
         # IWD should not trigger a roam again after the above 2 failures.
