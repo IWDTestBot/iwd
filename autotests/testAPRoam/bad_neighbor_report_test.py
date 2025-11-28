@@ -136,7 +136,7 @@ class Test(unittest.TestCase):
         self.device = None
 
         for hapd in self.bss_hostapd:
-            hapd.reload()
+            hapd.default()
 
     @classmethod
     def setUpClass(cls):
