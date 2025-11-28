@@ -68,6 +68,8 @@
 
 #define STATION_RECENT_NETWORK_LIMIT	5
 #define STATION_RECENT_FREQS_LIMIT	5
+#define STATION_MAX_SCAN_FREQS	10
+#define STATION_SCANS_BEFORE_NEIGHBOR_SCAN	2
 
 static struct l_queue *station_list;
 static uint32_t netdev_watch;
@@ -123,6 +125,9 @@ struct station {
 	/* Set of frequencies to scan first when attempting a roam */
 	struct scan_freq_set *roam_freqs;
 	struct l_queue *roam_bss_list;
+	struct scan_freq_set *scan_freqs;
+	struct scan_freq_set *scanned_freqs;
+	uint8_t roam_scans_since_neighbor_scan;
 
 	/* Frequencies split into subsets by priority */
 	struct scan_freq_set *scan_freqs_order[5];
@@ -141,7 +146,6 @@ struct station {
 	struct handshake_state *hs;
 
 	bool preparing_roam : 1;
-	bool roam_scan_full : 1;
 	bool signal_low : 1;
 	bool ap_directed_roaming : 1;
 	bool scanning : 1;
@@ -1940,7 +1944,6 @@ static void station_roam_state_clear(struct station *station)
 	l_timeout_remove(station->roam_trigger_timeout);
 	station->roam_trigger_timeout = NULL;
 	station->preparing_roam = false;
-	station->roam_scan_full = false;
 	station->signal_low = false;
 	station->netconfig_after_roam = false;
 	station->last_roam_scan = 0;
@@ -2205,27 +2208,6 @@ static void parse_neighbor_report(struct station *station,
 	}
 }
 
-static void station_early_neighbor_report_cb(struct netdev *netdev, int err,
-						const uint8_t *reports,
-						size_t reports_len,
-						void *user_data)
-{
-	struct station *station = user_data;
-
-	if (err == -ENODEV)
-		return;
-
-	l_debug("ifindex: %u, error: %d(%s)",
-			netdev_get_ifindex(station->netdev),
-			err, err < 0 ? strerror(-err) : "");
-
-	if (!reports || err)
-		return;
-
-	parse_neighbor_report(station, reports, reports_len,
-				&station->roam_freqs);
-}
-
 static bool station_try_next_bss(struct station *station)
 {
 	struct scan_bss *next;
@@ -2360,9 +2342,32 @@ static bool netconfig_after_roam(struct station *station)
 	return true;
 }
 
+static void station_neighbor_report_cb(struct netdev *netdev, int err,
+					const uint8_t *reports,
+					size_t reports_len, void *user_data)
+{
+	struct station *station = user_data;
+
+	if (err == -ENODEV)
+		return;
+
+	l_debug("ifindex: %u, error: %d(%s)",
+			netdev_get_ifindex(station->netdev),
+			err, err < 0 ? strerror(-err) : "");
+
+	if (!reports || err) {
+		l_debug("no neighbor report results");
+		return;
+	}
+
+	parse_neighbor_report(station, reports, reports_len, &station->roam_freqs);
+}
+
 static void station_roamed(struct station *station)
 {
-	station->roam_scan_full = false;
+	scan_freq_set_free(station->scanned_freqs);
+	station->scanned_freqs = scan_freq_set_new();
+	station->roam_scans_since_neighbor_scan = STATION_SCANS_BEFORE_NEIGHBOR_SCAN;
 
 	/*
 	 * Schedule another roaming attempt in case the signal continues to
@@ -2382,7 +2387,7 @@ static void station_roamed(struct station *station)
 
 	if (station->connected_bss->cap_rm_neighbor_report) {
 		if (netdev_neighbor_report_req(station->netdev,
-					station_early_neighbor_report_cb) < 0)
+					station_neighbor_report_cb) < 0)
 			l_warn("Could not request neighbor report");
 	}
 
@@ -2404,8 +2409,10 @@ static void station_roam_retry(struct station *station)
 	 * time.
 	 */
 	station->preparing_roam = false;
-	station->roam_scan_full = false;
 	station->ap_directed_roaming = false;
+	scan_freq_set_free(station->scanned_freqs);
+	station->scanned_freqs = scan_freq_set_new();
+	station->roam_scans_since_neighbor_scan = STATION_SCANS_BEFORE_NEIGHBOR_SCAN;
 
 	if (station->roam_freqs) {
 		scan_freq_set_free(station->roam_freqs);
@@ -2415,6 +2422,8 @@ static void station_roam_retry(struct station *station)
 	if (station->signal_low)
 		station_roam_timeout_rearm(station, roam_retry_interval);
 }
+
+static void station_start_roam(struct station *station);
 
 static void station_roam_failed(struct station *station)
 {
@@ -2438,39 +2447,22 @@ static void station_roam_failed(struct station *station)
 	}
 
 	/*
-	 * We were told by the AP to roam, but failed.  Try ourselves or
-	 * wait for the AP to tell us to roam again
+	 * Keep trying to roam if the signal is still low, or we were told by the AP
+	 * to roam but failed.
 	 */
-	if (station->ap_directed_roaming) {
-		/*
-		 * The candidate list from the AP (or neighbor report) found
-		 * no BSS's. Force a full scan
-		 */
-		if (!station->roam_scan_full)
-			goto full_scan;
-
-		goto delayed_retry;
-	}
-
-	/*
-	 * If we tried a limited scan, failed and the signal is still low,
-	 * repeat with a full scan right away
-	 */
-	if (station->signal_low && !station->roam_scan_full) {
+	if (station->signal_low || station->ap_directed_roaming) {
 		/*
 		 * Since we're re-using roam_scan_id, explicitly cancel
 		 * the scan here, so that the destroy callback is not called
 		 * after the return of this function
 		 */
-full_scan:
 		scan_cancel(netdev_get_wdev_id(station->netdev),
 						station->roam_scan_id);
 
-		if (!station_roam_scan(station, NULL))
-			return;
+		station_start_roam(station);
+		return;
 	}
 
-delayed_retry:
 	station_roam_retry(station);
 }
 
@@ -3057,7 +3049,6 @@ static int station_roam_scan(struct station *station,
 	}
 
 	if (!freq_set) {
-		station->roam_scan_full = true;
 		params.freqs = allowed;
 		station_debug_event(station, "full-roam-scan");
 	} else
@@ -3080,108 +3071,103 @@ static int station_roam_scan(struct station *station,
 	return 0;
 }
 
-static int station_roam_scan_known_freqs(struct station *station)
-{
-	const struct network_info *info = network_get_info(
-						station->connected_network);
-	struct scan_freq_set *freqs = network_info_get_roam_frequencies(info,
-					station->connected_bss->frequency,
-					STATION_RECENT_FREQS_LIMIT);
-	int r = -ENODATA;
-
-	if (!freqs)
-		return r;
-
-	if (!wiphy_constrain_freq_set(station->wiphy, freqs))
-		goto free_set;
-
-	r = station_roam_scan(station, freqs);
-
-free_set:
-	scan_freq_set_free(freqs);
-	return r;
-}
-
-static void station_neighbor_report_cb(struct netdev *netdev, int err,
-					const uint8_t *reports,
-					size_t reports_len, void *user_data)
+static void station_filter_roam_scan_freq(uint32_t freq, void *user_data)
 {
 	struct station *station = user_data;
-	struct scan_freq_set *freq_set;
-	int r;
 
-	if (err == -ENODEV)
+	if (scan_freq_set_size(station->scan_freqs) >= STATION_MAX_SCAN_FREQS)
 		return;
 
-	l_debug("ifindex: %u, error: %d(%s)",
-			netdev_get_ifindex(station->netdev),
-			err, err < 0 ? strerror(-err) : "");
-
-	/*
-	 * Check if we're still attempting to roam -- if dbus Disconnect
-	 * had been called in the meantime we just abort the attempt.
-	 */
-	if (!station->preparing_roam || err == -ENODEV)
+	/* Skip freq if already scanned */
+	if (scan_freq_set_contains(station->scanned_freqs, freq))
 		return;
 
-	if (!reports || err) {
-		r = station_roam_scan_known_freqs(station);
+	scan_freq_set_add(station->scan_freqs, freq);
+	scan_freq_set_add(station->scanned_freqs, freq);
+}
 
-		if (r == -ENODATA)
-			l_debug("no neighbor report results or known freqs");
+static void station_populate_roam_scan_freqs(struct station *station)
+{
+	struct scan_freq_set *tmp;
+	const struct network_info *info;
 
-		if (r < 0)
-			station_roam_failed(station);
+	station->scan_freqs = scan_freq_set_new();
 
+	/* Add current frequency, always scan this to get updated data for the
+	 * current BSS */
+	scan_freq_set_add(station->scan_freqs, station->connected_bss->frequency);
+	scan_freq_set_add(station->scanned_freqs, station->connected_bss->frequency);
+
+	/* Add neighbor frequencies */
+	if (station->roam_scans_since_neighbor_scan >=
+			STATION_SCANS_BEFORE_NEIGHBOR_SCAN && station->roam_freqs) {
+		station->roam_scans_since_neighbor_scan = 0;
+		scan_freq_set_merge(station->scan_freqs, station->roam_freqs);
+		scan_freq_set_merge(station->scanned_freqs, station->roam_freqs);
+		return;
+	}
+	station->roam_scans_since_neighbor_scan++;
+
+	/* Add known frequencies */
+	info = network_get_info(station->connected_network);
+	tmp = network_info_get_roam_frequencies(info,
+					station->connected_bss->frequency,
+					STATION_RECENT_FREQS_LIMIT);
+	scan_freq_set_foreach(tmp, station_filter_roam_scan_freq, station);
+	scan_freq_set_free(tmp);
+	if (scan_freq_set_size(station->scan_freqs) >= STATION_MAX_SCAN_FREQS) {
 		return;
 	}
 
-	parse_neighbor_report(station, reports, reports_len, &freq_set);
+	/* Add frequencies based on the prioritized subsets */
+	for (uint8_t i = 0; i < L_ARRAY_SIZE(station->scan_freqs_order); i++) {
+		scan_freq_set_foreach(station->scan_freqs_order[i], station_filter_roam_scan_freq, station);
+		if (scan_freq_set_size(station->scan_freqs) >= STATION_MAX_SCAN_FREQS) {
+			return;
+		}
+	}
 
-	r = station_roam_scan(station, freq_set);
+	if (scan_freq_set_size(station->scan_freqs) <= STATION_MAX_SCAN_FREQS) {
+		/* All freqs have been scanned after this, so empty the list of scanned
+		 * freqs to restart */
+		scan_freq_set_free(station->scanned_freqs);
+		station->scanned_freqs = scan_freq_set_new();
 
-	if (freq_set)
-		scan_freq_set_free(freq_set);
+		/* At this point we've gone through all frequencies, which is equivalent to
+		 * a full scan */
+		station_debug_event(station, "full-roam-scan");
 
-	if (r < 0)
-		station_roam_failed(station);
+		/* If we were told by the AP to roam, we've now made the best possible
+		 * effort to do so, clear the flag to stop trying to roam */
+		station->ap_directed_roaming = false;
+	}
 }
 
 static void station_start_roam(struct station *station)
 {
-	int r;
-
 	station->preparing_roam = true;
 
 	/*
-	 * If current BSS supports Neighbor Reports, narrow the scan down
-	 * to channels occupied by known neighbors in the ESS. If no neighbor
-	 * report was obtained upon connection, request one now. This isn't
-	 * 100% reliable as the neighbor lists are not required to be
-	 * complete or current.  It is likely still better than doing a
-	 * full scan.  10.11.10.1: "A neighbor report may not be exhaustive
-	 * either by choice, or due to the fact that there may be neighbor
-	 * APs not known to the AP."
+	 * If no neighbor report was obtained upon connection, request one now if BSS
+	 * supports it. This isn't 100% reliable as the neighbor lists are not
+	 * required to be complete or current.
+	 * 10.11.10.1: "A neighbor report may not be exhaustive either by choice, or
+	 * due to the fact that there may be neighbor APs not known to the AP."
+	 *
+	 * Continue roaming while waiting for the neighbor report, the neighbors will
+	 * be added to the roam scan when/if they're available.
 	 */
-	if (station->roam_freqs) {
-		if (station_roam_scan(station, station->roam_freqs) == 0) {
-			l_debug("Using cached neighbor report for roam");
-			return;
-		}
-	} else if (station->connected_bss->cap_rm_neighbor_report) {
+	if (!station->roam_freqs && station->connected_bss->cap_rm_neighbor_report) {
 		if (netdev_neighbor_report_req(station->netdev,
 					station_neighbor_report_cb) == 0) {
 			l_debug("Requesting neighbor report for roam");
-			return;
 		}
 	}
 
-	r = station_roam_scan_known_freqs(station);
-	if (r == -ENODATA)
-		l_debug("No neighbor report or known frequencies, roam failed");
-
-	if (r < 0)
-		station_roam_failed(station);
+	station_populate_roam_scan_freqs(station);
+	station_roam_scan(station, station->scan_freqs);
+	scan_freq_set_free(station->scan_freqs);
+	station->scan_freqs = NULL;
 }
 
 static bool station_cannot_roam(struct station *station)
@@ -3395,19 +3381,11 @@ static void station_ap_directed_roam(struct station *station,
 		l_debug("roam: AP sent a preferred candidate list");
 		station_neighbor_report_cb(station->netdev, 0, body + pos,
 				body_len - pos, station);
-	} else {
-		if (station->connected_bss->cap_rm_neighbor_report) {
-			if (!netdev_neighbor_report_req(station->netdev,
-					station_neighbor_report_cb))
-				return;
-
-			l_warn("failed to request neighbor report!");
-		}
-
-		l_debug("full scan after BSS transition request");
-		if (station_roam_scan(station, NULL) < 0)
-			station_roam_failed(station);
 	}
+
+	/* Initiate roaming, any candidates will be scanned and roaming will continue
+	 * until successful if ap_directed_roaming is set */
+	station_start_roam(station);
 
 	return;
 
@@ -3624,7 +3602,7 @@ static void station_connect_ok(struct station *station)
 	 */
 	if (station->connected_bss->cap_rm_neighbor_report) {
 		if (netdev_neighbor_report_req(station->netdev,
-					station_early_neighbor_report_cb) < 0)
+					station_neighbor_report_cb) < 0)
 			l_warn("Could not request neighbor report");
 	}
 
@@ -5229,6 +5207,9 @@ static struct station *station_create(struct netdev *netdev)
 	station->roam_bss_list = l_queue_new();
 	station->affinities = l_queue_new();
 
+	station->scanned_freqs = scan_freq_set_new();
+	station->roam_scans_since_neighbor_scan = STATION_SCANS_BEFORE_NEIGHBOR_SCAN;
+
 	return station;
 }
 
@@ -5326,6 +5307,11 @@ static void station_free(struct station *station)
 		l_dbus_remove_watch(dbus_get_bus(), station->affinity_watch);
 
 	l_queue_destroy(station->affinities, l_free);
+
+	scan_freq_set_free(station->scanned_freqs);
+
+	if (station->scan_freqs)
+		scan_freq_set_free(station->scan_freqs);
 
 	l_free(station);
 }
