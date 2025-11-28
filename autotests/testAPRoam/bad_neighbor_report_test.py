@@ -71,8 +71,7 @@ class Test(unittest.TestCase):
         )
         self.device.wait_for_event("roam-scan-triggered")
         self.device.wait_for_event("no-roam-candidates")
-        # IWD should then trigger a full scan
-        self.device.wait_for_event("full-roam-scan")
+        # IWD should then start scanning until it finds a BSS
         self.device.wait_for_event("roaming", timeout=30)
         self.device.wait_for_event("connected")
 
@@ -99,8 +98,7 @@ class Test(unittest.TestCase):
         # channel 11 which no AP is on. This should result in a limited scan
         # picking up no candidates.
         self.device.wait_for_event("no-roam-candidates", timeout=30)
-        # IWD should then trigger a full scan
-        self.device.wait_for_event("full-roam-scan")
+        # IWD should then start scanning until it finds a BSS
         self.device.wait_for_event("roaming", timeout=30)
         self.device.wait_for_event("connected")
 
