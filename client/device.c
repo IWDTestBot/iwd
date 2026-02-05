@@ -29,6 +29,7 @@
 #include "client/command.h"
 #include "client/dbus-proxy.h"
 #include "client/device.h"
+#include "client/adapter.h"
 #include "client/display.h"
 #include "client/network.h"
 #include "client/properties.h"
@@ -432,6 +433,36 @@ static void device_command_family_exit(void)
 
 COMMAND_FAMILY(device_command_family, device_command_family_init,
 						device_command_family_exit)
+
+void device_check_station_error(const struct proxy_interface *device_i,
+					const char *device_name)
+{
+	const struct device *device;
+
+	if (!device_i) {
+		/* device_proxy_find_by_name already displays "Device %s not found" */
+		return;
+	}
+
+	device = proxy_interface_get_data(device_i);
+
+	if (!device->mode || strcmp(device->mode, "station") != 0) {
+		display("Device '%s' is not in station mode.\n", device_name);
+		return;
+	}
+
+	if (!device->powered) {
+		if (device->adapter && !adapter_is_powered(device->adapter)) {
+			display("Device '%s' is rfkilled.\n", device_name);
+		} else {
+			display("Device '%s' is not powered.\n", device_name);
+		}
+		return;
+	}
+
+	/* Fallback for other cases */
+	display("No station on device: '%s'\n", device_name);
+}
 
 static int device_interface_init(void)
 {
