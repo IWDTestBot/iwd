@@ -1,3 +1,6 @@
+ver 3.11:
+	Fix issue with interface registration before acquiring name.
+
 ver 3.10:
 	Fix issue with handling neighbor report on BSS TM request.
 	Fix issue with handling deauth and FT association failure.
