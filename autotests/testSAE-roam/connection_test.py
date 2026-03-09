@@ -13,29 +13,46 @@ import testutil
 from config import ctx
 
 class Test(unittest.TestCase):
-    def validate_connection(self, wd, ft=True, check_used_pmksa=False):
-        device = wd.list_devices(1)[0]
-
+    def connect(self, wd, device, hapd):
         # This won't guarantee all BSS's are found, but at least ensures that
         # at least one will be.
         device.get_ordered_network('TestFT', full_scan=True)
 
-        self.assertFalse(self.bss_hostapd[0].list_sta())
-        self.assertFalse(self.bss_hostapd[1].list_sta())
+        self.assertFalse(hapd.list_sta())
 
-        device.connect_bssid(self.bss_hostapd[0].bssid)
+        device.connect_bssid(hapd.bssid)
 
         condition = 'obj.state == DeviceState.connected'
         wd.wait_for_object_condition(device, condition)
 
-        self.bss_hostapd[0].wait_for_event('AP-STA-CONNECTED %s' % device.address)
+        hapd.wait_for_event('AP-STA-CONNECTED %s' % device.address)
 
         self.assertFalse(self.bss_hostapd[1].list_sta())
 
         testutil.test_iface_operstate(device.name)
-        testutil.test_ifaces_connected(self.bss_hostapd[0].ifname, device.name)
+        testutil.test_ifaces_connected(hapd.ifname, device.name)
+
+    def roam(self, wd, device, hapd_from, hapd_to):
+        device.roam(hapd_to.bssid)
+
+        # Check that iwd is on hapd_to once out of roaming state and doesn't
+        # go through 'disconnected', 'autoconnect', 'connecting' in between
+        from_condition = 'obj.state == DeviceState.roaming'
+        to_condition = 'obj.state == DeviceState.connected'
+        wd.wait_for_object_change(device, from_condition, to_condition)
+
+        hapd_to.wait_for_event('AP-STA-CONNECTED %s' % device.address)
+
+        testutil.test_iface_operstate(device.name)
+        testutil.test_ifaces_connected(hapd_to.ifname, device.name)
         self.assertRaises(Exception, testutil.test_ifaces_connected,
-                          (self.bss_hostapd[1].ifname, device.name, True, True))
+                          (hapd_from.ifname, device.name, True, True))
+
+
+    def validate_connection(self, wd, ft=True, check_used_pmksa=False):
+        device = wd.list_devices(1)[0]
+
+        self.connect(wd, device, self.bss_hostapd[0])
 
         # If PMKSA was used, hostapd should not include the sae_group key in
         # its status for the station.
@@ -45,41 +62,12 @@ class Test(unittest.TestCase):
         else:
             self.assertIn("sae_group", sta_status.keys())
 
-        device.roam(self.bss_hostapd[1].bssid)
-
-        # Check that iwd is on BSS 1 once out of roaming state and doesn't
-        # go through 'disconnected', 'autoconnect', 'connecting' in between
-        from_condition = 'obj.state == DeviceState.roaming'
-        to_condition = 'obj.state == DeviceState.connected'
-        wd.wait_for_object_change(device, from_condition, to_condition)
-
-        self.bss_hostapd[1].wait_for_event('AP-STA-CONNECTED %s' % device.address)
-
-        testutil.test_iface_operstate(device.name)
-        testutil.test_ifaces_connected(self.bss_hostapd[1].ifname, device.name)
-        self.assertRaises(Exception, testutil.test_ifaces_connected,
-                          (self.bss_hostapd[0].ifname, device.name, True, True))
+        self.roam(wd, device, self.bss_hostapd[0], self.bss_hostapd[1])
 
         if not ft:
-                return
+            return
 
-        device.roam(self.bss_hostapd[2].bssid)
-
-        condition = 'obj.state == DeviceState.roaming'
-        wd.wait_for_object_condition(device, condition)
-
-        condition = 'obj.state != DeviceState.roaming'
-        wd.wait_for_object_condition(device, condition)
-
-        condition = 'obj.state == DeviceState.connected'
-        wd.wait_for_object_condition(device, condition)
-
-        self.bss_hostapd[2].wait_for_event('AP-STA-CONNECTED %s' % device.address)
-
-        testutil.test_iface_operstate(device.name)
-        testutil.test_ifaces_connected(self.bss_hostapd[2].ifname, device.name)
-        self.assertRaises(Exception, testutil.test_ifaces_connected,
-                            (self.bss_hostapd[1].ifname, device.name, True, True))
+        self.roam(wd, device, self.bss_hostapd[1], self.bss_hostapd[2])
 
     def test_ft_roam_success(self):
         wd = IWD(True)
