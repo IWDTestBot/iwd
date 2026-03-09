@@ -109,6 +109,26 @@ class Test(unittest.TestCase):
 
         self.validate_connection(wd, True, check_used_pmksa=True)
 
+    def test_ft_roam_with_pmksa(self):
+        wd = IWD(True)
+
+        self.bss_hostapd[0].set_value('wpa_key_mgmt', 'FT-SAE SAE')
+        self.bss_hostapd[0].reload()
+        self.bss_hostapd[0].wait_for_event("AP-ENABLED")
+        self.bss_hostapd[1].set_value('wpa_key_mgmt', 'FT-SAE SAE')
+        self.bss_hostapd[1].reload()
+        self.bss_hostapd[1].wait_for_event("AP-ENABLED")
+        self.bss_hostapd[2].set_value('wpa_key_mgmt', 'FT-PSK')
+        self.bss_hostapd[2].reload()
+        self.bss_hostapd[2].wait_for_event("AP-ENABLED")
+
+        device = wd.list_devices(1)[0]
+
+        self.connect(wd, device, self.bss_hostapd[0])
+
+        self.roam(wd, device, self.bss_hostapd[0], self.bss_hostapd[1])
+        self.roam(wd, device, self.bss_hostapd[1], self.bss_hostapd[0])
+
     def test_reassociate_roam_success(self):
         wd = IWD(True)
 
