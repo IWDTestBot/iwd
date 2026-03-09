@@ -1228,8 +1228,9 @@ done:
 bool handshake_state_set_pmksa(struct handshake_state *s,
 					struct pmksa *pmksa)
 {
-	/* checks for both expiration || pmksa being set */
-	if (s->expiration)
+	uint64_t now = l_time_now();
+
+	if (s->expiration && l_time_after(now, s->expiration))
 		return false;
 
 	s->pmksa = pmksa;
