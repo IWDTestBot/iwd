@@ -45,6 +45,7 @@ struct pmksa *pmksa_cache_get(const uint8_t spa[static 6],
 int pmksa_cache_put(struct pmksa *pmksa);
 int pmksa_cache_expire(uint64_t cutoff);
 int pmksa_cache_flush(void);
+int pmksa_cache_flush_ssid(const char ssid[static 32]);
 int pmksa_cache_free(struct pmksa *pmksa);
 
 uint64_t pmksa_lifetime(void);

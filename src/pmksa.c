@@ -213,6 +213,33 @@ int pmksa_cache_flush(void)
 	return 0;
 }
 
+/*
+ * Flushes all PMKSA entries that match an SSID
+ */
+int pmksa_cache_flush_ssid(const char ssid[static 32])
+{
+	int i;
+	int used = cache.used;
+	int remaining = 0;
+
+	for (i = 0; i < used; i++) {
+		if (!memcmp(ssid, cache.data[i]->ssid, cache.data[i]->ssid_len)) {
+			pmksa_cache_free(cache.data[i]);
+			continue;
+		}
+
+		cache.data[remaining] = cache.data[i];
+		remaining += 1;
+	}
+
+	cache.used = remaining;
+
+	for (i = cache.used >> 1; i >= 0; i--)
+		__minheap_sift_down(cache.data, cache.used, i, &ops);
+
+	return used - remaining;
+}
+
 int pmksa_cache_free(struct pmksa *pmksa)
 {
 	if (driver_remove)

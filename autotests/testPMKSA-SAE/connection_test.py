@@ -4,7 +4,7 @@ import unittest
 import sys
 
 sys.path.append('../util')
-from iwd import IWD
+from iwd import IWD, FailedEx
 from iwd import PSKAgent
 from iwd import NetworkType
 from hostapd import HostapdCLI
@@ -93,6 +93,36 @@ class Test(unittest.TestCase):
     def test_pmksa_sae(self):
         self.hostapd.wait_for_event("AP-ENABLED")
         self.validate_connection(self.wd, "ssidSAE", self.hostapd, 19)
+
+    def test_pmksa_forget_network(self):
+        psk_agent = PSKAgent(["secret123", "wrong_password"])
+        self.wd.register_psk_agent(psk_agent)
+
+        devices = self.wd.list_devices(1)
+        self.assertIsNotNone(devices)
+        device = devices[0]
+
+        device.disconnect()
+
+        network = device.get_ordered_network("ssidSAE", full_scan=True)
+
+        self.assertEqual(network.type, NetworkType.psk)
+
+        network.network_object.connect()
+
+        condition = 'obj.state == DeviceState.connected'
+        self.wd.wait_for_object_condition(device, condition)
+
+        self.wd.wait(2)
+
+        testutil.test_iface_operstate(intf=device.name)
+        testutil.test_ifaces_connected(if0=device.name, if1=self.hostapd.ifname)
+
+        known_network = self.wd.list_known_networks()[0]
+        known_network.forget()
+
+        with self.assertRaises(FailedEx):
+            network.network_object.connect()
 
     def setUp(self):
         self.hostapd.default()
