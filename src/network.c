@@ -58,6 +58,7 @@
 #include "src/handshake.h"
 #include "src/band.h"
 #include "src/util.h"
+#include "src/pmksa.h"
 
 #define SAE_PT_SETTING "SAE-PT-Group%u"
 
@@ -2051,6 +2052,10 @@ static void emit_known_network_removed(struct station *station, void *user_data)
 
 		l_queue_destroy(network->secrets, eap_secret_info_free);
 		network->secrets = NULL;
+
+		pmksa_cache_flush_ssid((uint8_t *)info->ssid,
+					sizeof(info->ssid),
+					security_to_akms(network->security));
 	}
 
 	connected_network = station_get_connected_network(station);

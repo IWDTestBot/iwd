@@ -213,6 +213,36 @@ int pmksa_cache_flush(void)
 	return 0;
 }
 
+/*
+ * Flushes all PMKSA entries that match an SSID
+ */
+int pmksa_cache_flush_ssid(const uint8_t *ssid, size_t ssid_len, uint32_t akms)
+{
+	int i;
+	int used = cache.used;
+	int remaining = 0;
+
+	for (i = 0; i < used; i++) {
+		/* Check that the both the AKM matches as well as the SSID */
+		if ((cache.data[i]->akm & akms) &&
+				!memcmp(ssid, cache.data[i]->ssid,
+					cache.data[i]->ssid_len)) {
+			pmksa_cache_free(cache.data[i]);
+			continue;
+		}
+
+		cache.data[remaining] = cache.data[i];
+		remaining += 1;
+	}
+
+	cache.used = remaining;
+
+	for (i = cache.used >> 1; i >= 0; i--)
+		__minheap_sift_down(cache.data, cache.used, i, &ops);
+
+	return used - remaining;
+}
+
 int pmksa_cache_free(struct pmksa *pmksa)
 {
 	if (driver_remove)
