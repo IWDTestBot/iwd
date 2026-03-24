@@ -36,3 +36,4 @@ const char *security_to_str(enum security security);
 bool security_from_str(const char *str, enum security *security);
 enum security security_determine(uint16_t bss_capability,
 					const struct ie_rsn_info *info);
+uint32_t security_to_akms(enum security security);

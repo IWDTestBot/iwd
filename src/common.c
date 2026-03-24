@@ -28,6 +28,8 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include <ell/ell.h>
+
 #include "src/iwd.h"
 #include "src/common.h"
 #include "src/ie.h"
@@ -64,18 +66,15 @@ bool security_from_str(const char *str, enum security *security)
 	return true;
 }
 
-#define AKM_IS_PSK(akm)							\
-(									\
-	akm & (IE_RSN_AKM_SUITE_PSK |					\
+#define AKMS_PSK \
+	(IE_RSN_AKM_SUITE_PSK |						\
 		IE_RSN_AKM_SUITE_PSK_SHA256 |				\
 		IE_RSN_AKM_SUITE_FT_USING_PSK |				\
 		IE_RSN_AKM_SUITE_SAE_SHA256 |				\
-		IE_RSN_AKM_SUITE_FT_OVER_SAE_SHA256)			\
-)
+		IE_RSN_AKM_SUITE_FT_OVER_SAE_SHA256)
 
-#define AKM_IS_8021X(akm) \
-(									\
-	akm & (IE_RSN_AKM_SUITE_8021X |					\
+#define AKMS_8021X \
+	(IE_RSN_AKM_SUITE_8021X |					\
 		IE_RSN_AKM_SUITE_8021X_SHA256 |				\
 		IE_RSN_AKM_SUITE_FT_OVER_8021X |			\
 		IE_RSN_AKM_SUITE_FT_OVER_8021X_SHA384 |			\
@@ -83,8 +82,11 @@ bool security_from_str(const char *str, enum security *security)
 		IE_RSN_AKM_SUITE_FILS_SHA384 |				\
 		IE_RSN_AKM_SUITE_FT_OVER_FILS_SHA256 |			\
 		IE_RSN_AKM_SUITE_FT_OVER_FILS_SHA384 |			\
-		IE_RSN_AKM_SUITE_OSEN)					\
-)
+		IE_RSN_AKM_SUITE_OSEN)
+
+#define AKM_IS_PSK(akm) (akm & AKMS_PSK)
+
+#define AKM_IS_8021X(akm) (akm & AKMS_8021X)
 
 enum security security_determine(uint16_t bss_capability,
 					const struct ie_rsn_info *info)
@@ -102,4 +104,23 @@ enum security security_determine(uint16_t bss_capability,
 		return SECURITY_WEP;
 
 	return SECURITY_NONE;
+}
+
+/* Returns all possible AKMs (as bitmask) for a given security type */
+uint32_t security_to_akms(enum security security)
+{
+	switch (security) {
+	case SECURITY_WEP:
+		l_warn("WEP security type not supported");
+		/* Fall through */
+	case SECURITY_NONE:
+		return 0;
+	case SECURITY_PSK:
+		return AKMS_PSK;
+	case SECURITY_8021X:
+		return AKMS_8021X;
+	default:
+		l_warn("Unhandled security type: %u", security);
+		return 0;
+	}
 }
