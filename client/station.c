@@ -242,6 +242,14 @@ static void display_station_inline(const char *margin, const void *data)
 				8, station->scanning ? "scanning" : "");
 }
 
+static void display_station_error(const char *device_name)
+{
+	const struct proxy_interface *device_i =
+					device_proxy_find_by_name(device_name);
+
+	device_check_station_error(device_i, device_name);
+}
+
 static enum cmd_status cmd_list(const char *device_name, char **argv, int argc)
 {
 	const struct l_queue_entry *entry;
@@ -351,7 +359,7 @@ static enum cmd_status cmd_connect_hidden_network(const char *device_name,
 
 	station_i = device_proxy_find(device_name, IWD_STATION_INTERFACE);
 	if (!station_i) {
-		display("No station on device: '%s'\n", device_name);
+		display_station_error(device_name);
 		return CMD_STATUS_INVALID_VALUE;
 	}
 
@@ -369,7 +377,7 @@ static enum cmd_status cmd_disconnect(const char *device_name,
 			device_proxy_find(device_name, IWD_STATION_INTERFACE);
 
 	if (!station_i) {
-		display("No station on device: '%s'\n", device_name);
+		display_station_error(device_name);
 		return CMD_STATUS_INVALID_VALUE;
 	}
 
@@ -527,7 +535,7 @@ static enum cmd_status cmd_get_networks(const char *device_name,
 			device_proxy_find(device_name, IWD_STATION_INTERFACE);
 
 	if (!station_i) {
-		display("No station on device: '%s'\n", device_name);
+		display_station_error(device_name);
 		return CMD_STATUS_INVALID_VALUE;
 	}
 
@@ -661,7 +669,7 @@ static enum cmd_status cmd_scan(const char *device_name,
 			device_proxy_find(device_name, IWD_STATION_INTERFACE);
 
 	if (!station_i) {
-		display("No station on device: '%s'\n", device_name);
+		display_station_error(device_name);
 		return CMD_STATUS_INVALID_VALUE;
 	}
 
@@ -701,7 +709,7 @@ static enum cmd_status cmd_show(const char *device_name,
 					IWD_STATION_DIAGNOSTIC_INTERFACE);
 
 	if (!station) {
-		display("No station on device: '%s'\n", device_name);
+		display_station_error(device_name);
 		return CMD_STATUS_INVALID_VALUE;
 	}
 

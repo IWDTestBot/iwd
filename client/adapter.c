@@ -28,6 +28,7 @@
 
 #include "client/command.h"
 #include "client/dbus-proxy.h"
+#include "client/adapter.h"
 #include "client/display.h"
 #include "client/properties.h"
 
@@ -408,6 +409,17 @@ static int adapter_interface_init(void)
 static void adapter_interface_exit(void)
 {
 	proxy_interface_type_unregister(&adapter_interface_type);
+}
+
+bool adapter_is_powered(const struct proxy_interface *adapter_i)
+{
+	const struct adapter *adapter;
+
+	if (!adapter_i)
+		return false;
+
+	adapter = proxy_interface_get_data(adapter_i);
+	return adapter->powered;
 }
 
 INTERFACE_TYPE(adapter_interface_type, adapter_interface_init,
