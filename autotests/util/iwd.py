@@ -297,8 +297,11 @@ class StationDebug(IWDDBusAbstract):
         frequencies = dbus.Array([dbus.UInt16(f) for f in frequencies])
         self._iface.Scan(frequencies)
 
-    def _poll_event(self, event):
+    def _poll_event(self, event, disallow):
         for idx, e in enumerate(self._events):
+            for d in disallow:
+                if d in e:
+                    raise Exception('Event %s found while waiting for %s' % (d, event))
             if event == e[0]:
                 # Consume any older events
                 self._events = self._events[:idx]
@@ -309,8 +312,8 @@ class StationDebug(IWDDBusAbstract):
     def clear_events(self):
         self._events = []
 
-    def wait_for_event(self, event, timeout=10):
-        return ctx.non_block_wait(self._poll_event, timeout, event,
+    def wait_for_event(self, event, timeout=10, disallow=[]):
+        return ctx.non_block_wait(self._poll_event, timeout, event, disallow,
                                     exception=TimeoutError("waiting for event"))
 
     def event_ocurred(self, event):
@@ -886,8 +889,8 @@ class Device(IWDDBusAbstract):
     def debug_scan(self, frequencies):
         self._station_debug.scan(frequencies)
 
-    def wait_for_event(self, event, timeout=10):
-        self._station_debug.wait_for_event(event, timeout)
+    def wait_for_event(self, event, timeout=10, disallow=[]):
+        self._station_debug.wait_for_event(event, timeout, disallow)
 
     def clear_events(self):
         self._station_debug.clear_events()
