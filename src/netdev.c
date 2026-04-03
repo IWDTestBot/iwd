@@ -2600,6 +2600,11 @@ static struct l_genl_msg *netdev_build_cmd_connect(struct netdev *netdev,
 	uint32_t auth_type = IE_AKM_IS_SAE(hs->akm_suite) && !hs->have_pmksa ?
 					NL80211_AUTHTYPE_SAE :
 					NL80211_AUTHTYPE_OPEN_SYSTEM;
+	uint8_t sae_pwe = nhs->type == CONNECTION_TYPE_FULLMAC &&
+				IE_AKM_IS_SAE(hs->akm_suite) &&
+				!hs->have_pmksa ?
+				NL80211_SAE_PWE_BOTH :
+				NL80211_SAE_PWE_UNSPECIFIED;
 	enum mpdu_management_subtype subtype = prev_bssid ?
 				MPDU_MANAGEMENT_SUBTYPE_REASSOCIATION_REQUEST :
 				MPDU_MANAGEMENT_SUBTYPE_ASSOCIATION_REQUEST;
@@ -2618,6 +2623,8 @@ static struct l_genl_msg *netdev_build_cmd_connect(struct netdev *netdev,
 	l_genl_msg_append_attr(msg, NL80211_ATTR_MAC, ETH_ALEN, hs->aa);
 	l_genl_msg_append_attr(msg, NL80211_ATTR_SSID, hs->ssid_len, hs->ssid);
 	l_genl_msg_append_attr(msg, NL80211_ATTR_AUTH_TYPE, 4, &auth_type);
+	if (sae_pwe != NL80211_SAE_PWE_UNSPECIFIED)
+		l_genl_msg_append_attr(msg, NL80211_ATTR_SAE_PWE, 1, &sae_pwe);
 
 	switch (nhs->type) {
 	case CONNECTION_TYPE_SOFTMAC:
@@ -4218,7 +4225,6 @@ static void netdev_connect_common(struct netdev *netdev,
 					netdev_external_auth_sae_tx_associate,
 					netdev);
 		sae_sm_force_default_group(netdev->ap);
-		sae_sm_force_hunt_and_peck(netdev->ap);
 	}
 
 	if (sae_sm_is_h2e(netdev->ap)) {
