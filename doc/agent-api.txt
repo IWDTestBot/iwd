@@ -90,6 +90,18 @@ Methods		void Release() [noreply]
 
 			Possible Errors: net.connman.iwd.Agent.Error.Canceled
 
+		(string, dict) RequestPassphraseWithOptions(object network)
+
+			This method gets called when trying to connect to
+			a network and passphrase is required.  Agents
+			implementing this method can return options for the
+			passphrase.  If the Store boolean option is present
+			and false, IWD will use the passphrase for this
+			connection attempt but will not save it to the
+			network profile.
+
+			Possible Errors: net.connman.iwd.Agent.Error.Canceled
+
 		string RequestPrivateKeyPassphrase(object network)
 
 			This method gets called when connecting to

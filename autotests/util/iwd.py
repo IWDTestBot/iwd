@@ -1153,7 +1153,7 @@ agent_count = 0
 
 class PSKAgent(dbus.service.Object):
 
-    def __init__(self, passphrases=[], users=[], namespace=ctx):
+    def __init__(self, passphrases=[], users=[], namespace=ctx, store=True):
         global agent_count
 
         if type(passphrases) != list:
@@ -1162,6 +1162,7 @@ class PSKAgent(dbus.service.Object):
         if type(users) != list:
             users = [users]
         self.users = users
+        self.store = store
         self._path = '/test/agent/%s' % agent_count
         self._bus = dbus.bus.BusConnection(address_or_type=namespace.dbus_address)
 
@@ -1192,6 +1193,17 @@ class PSKAgent(dbus.service.Object):
             raise CanceledEx("canceled")
 
         return self.passphrases.pop(0)
+
+    @dbus.service.method(IWD_AGENT_INTERFACE, in_signature='o',
+                                                        out_signature='sa{sv}')
+    def RequestPassphraseWithOptions(self, path):
+        print('Requested PSK with options for ' + path)
+
+        if not self.passphrases:
+            raise CanceledEx("canceled")
+
+        return (self.passphrases.pop(0),
+                {'Store': dbus.Boolean(self.store, variant_level=1)})
 
     @dbus.service.method(IWD_AGENT_INTERFACE, in_signature='o',
                                                               out_signature='s')

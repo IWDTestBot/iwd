@@ -21,6 +21,17 @@ class Test(unittest.TestCase):
 
         return True
 
+    def profile_has_psk_secret(self, profile):
+        with open('/tmp/iwd/' + profile) as f:
+            contents = f.read()
+
+        return any(secret in contents for secret in [
+            'Passphrase',
+            'PreSharedKey',
+            'SAE-PT-Group19',
+            'SAE-PT-Group20',
+        ])
+
     def validate(self, wd):
         devices = wd.list_devices(1)
         device = devices[0]
@@ -77,6 +88,22 @@ class Test(unittest.TestCase):
         self.validate(wd)
 
         self.assertTrue(self.profile_is_encrypted('ssidCCMP.psk'))
+
+        wd.unregister_psk_agent(psk_agent)
+
+    # Tests that an agent can request one-time use of a passphrase.
+    def test_agent_transient_profile(self):
+        wd = IWD(True)
+
+        psk_agent = PSKAgent("secret123", store=False)
+        wd.register_psk_agent(psk_agent)
+
+        with self.assertRaises(FileNotFoundError):
+            self.profile_has_psk_secret('ssidCCMP.psk')
+
+        self.validate(wd)
+
+        self.assertFalse(self.profile_has_psk_secret('ssidCCMP.psk'))
 
         wd.unregister_psk_agent(psk_agent)
 
