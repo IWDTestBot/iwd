@@ -44,11 +44,13 @@ enum agent_request_type {
 struct agent_request {
 	enum agent_request_type type;
 	struct l_dbus_message *message;
+	char *path;
 	unsigned int id;
 	void *user_data;
 	void *user_callback;
 	struct l_dbus_message *trigger;
 	agent_request_destroy_func_t destroy;
+	bool passphrase_with_options;
 };
 
 struct agent {
@@ -126,6 +128,7 @@ static void agent_request_free(void *user_data)
 	if (request->destroy)
 		request->destroy(request->user_data);
 
+	l_free(request->path);
 	l_free(request);
 }
 
@@ -134,19 +137,37 @@ static void passphrase_reply(struct l_dbus_message *reply,
 {
 	const char *error, *text;
 	char *passphrase = NULL;
+	bool store = true;
 	enum agent_result result = AGENT_RESULT_FAILED;
 	agent_request_passphrase_func_t user_callback = request->user_callback;
 
 	if (l_dbus_message_get_error(reply, &error, &text))
 		goto done;
 
-	if (!l_dbus_message_get_arguments(reply, "s", &passphrase))
+	if (request->passphrase_with_options) {
+		struct l_dbus_message_iter options;
+		struct l_dbus_message_iter value;
+		const char *key;
+
+		if (!l_dbus_message_get_arguments(reply, "sa{sv}",
+							&passphrase, &options))
+			goto done;
+
+		while (l_dbus_message_iter_next_entry(&options, &key, &value)) {
+			if (!strcmp(key, "Store")) {
+				if (!l_dbus_message_iter_get_variant(&value,
+								"b", &store))
+					goto done;
+			}
+		}
+	} else if (!l_dbus_message_get_arguments(reply, "s", &passphrase))
 		goto done;
 
 	result = AGENT_RESULT_OK;
 
 done:
-	user_callback(result, passphrase, request->trigger, request->user_data);
+	user_callback(result, passphrase, store, request->trigger,
+			request->user_data);
 }
 
 static void user_name_passwd_reply(struct l_dbus_message *reply,
@@ -224,6 +245,57 @@ static void agent_free(void *data)
 }
 
 static void agent_send_next_request(struct agent *agent);
+static void agent_receive_reply(struct l_dbus_message *message,
+							void *user_data);
+
+static struct l_dbus_message *agent_new_passphrase_message(struct agent *agent,
+					const char *path, bool with_options)
+{
+	struct l_dbus_message *message;
+
+	message = l_dbus_message_new_method_call(dbus_get_bus(),
+							agent->owner,
+							agent->path,
+							IWD_AGENT_INTERFACE,
+							with_options ?
+							"RequestPassphraseWithOptions" :
+							"RequestPassphrase");
+
+	l_dbus_message_set_arguments(message, "o", path);
+
+	return message;
+}
+
+static bool agent_retry_passphrase_without_options(struct agent *agent,
+					struct agent_request *request,
+					struct l_dbus_message *reply)
+{
+	const char *error, *text;
+
+	if (request->type != AGENT_REQUEST_TYPE_PASSPHRASE ||
+			!request->passphrase_with_options)
+		return false;
+
+	if (!l_dbus_message_get_error(reply, &error, &text))
+		return false;
+
+	if (strcmp(error, "org.freedesktop.DBus.Error.UnknownMethod") &&
+			strcmp(error, "org.freedesktop.DBus.Error.UnknownInterface"))
+		return false;
+
+	request->passphrase_with_options = false;
+	request->message = agent_new_passphrase_message(agent, request->path,
+							false);
+
+	agent->pending_id = l_dbus_send_with_reply(dbus_get_bus(),
+							request->message,
+							agent_receive_reply,
+							agent, NULL);
+
+	request->message = NULL;
+
+	return true;
+}
 
 static void request_timeout(struct l_timeout *timeout, void *user_data)
 {
@@ -242,10 +314,16 @@ static void agent_receive_reply(struct l_dbus_message *message,
 							void *user_data)
 {
 	struct agent *agent = user_data;
+	struct agent_request *pending;
 
 	l_debug("agent %p request id %u", agent, agent->pending_id);
 
 	agent->pending_id = 0;
+
+	pending = l_queue_peek_head(agent->requests);
+	if (pending && agent_retry_passphrase_without_options(agent, pending,
+								message))
+		return;
 
 	agent_finalize_pending(agent, message);
 
@@ -281,7 +359,9 @@ static unsigned int agent_queue_request(struct agent *agent,
 					int timeout, void *callback,
 					struct l_dbus_message *trigger,
 					void *user_data,
-					agent_request_destroy_func_t destroy)
+					agent_request_destroy_func_t destroy,
+					const char *path,
+					bool passphrase_with_options)
 {
 	struct agent_request *request;
 
@@ -289,11 +369,13 @@ static unsigned int agent_queue_request(struct agent *agent,
 
 	request->type = type;
 	request->message = message;
+	request->path = l_strdup(path);
 	request->id = ++next_request_id;
 	request->user_data = user_data;
 	request->user_callback = callback;
 	request->trigger = l_dbus_message_ref(trigger);
 	request->destroy = destroy;
+	request->passphrase_with_options = passphrase_with_options;
 
 	agent->timeout_secs = timeout;
 
@@ -365,17 +447,12 @@ unsigned int agent_request_passphrase(const char *path,
 
 	l_debug("agent %p owner %s path %s", agent, agent->owner, agent->path);
 
-	message = l_dbus_message_new_method_call(dbus_get_bus(),
-							agent->owner,
-							agent->path,
-							IWD_AGENT_INTERFACE,
-							"RequestPassphrase");
-
-	l_dbus_message_set_arguments(message, "o", path);
+	message = agent_new_passphrase_message(agent, path, true);
 
 	return agent_queue_request(agent, AGENT_REQUEST_TYPE_PASSPHRASE,
 					message, agent_timeout_input_request(),
-					callback, trigger, user_data, destroy);
+					callback, trigger, user_data, destroy,
+					path, true);
 }
 
 unsigned int agent_request_pkey_passphrase(const char *path,
@@ -401,7 +478,8 @@ unsigned int agent_request_pkey_passphrase(const char *path,
 
 	return agent_queue_request(agent, AGENT_REQUEST_TYPE_PASSPHRASE,
 					message, agent_timeout_input_request(),
-					callback, trigger, user_data, destroy);
+					callback, trigger, user_data, destroy,
+					NULL, false);
 }
 
 unsigned int agent_request_user_name_password(const char *path,
@@ -427,7 +505,8 @@ unsigned int agent_request_user_name_password(const char *path,
 
 	return agent_queue_request(agent, AGENT_REQUEST_TYPE_USER_NAME_PASSWD,
 					message, agent_timeout_input_request(),
-					callback, trigger, user_data, destroy);
+					callback, trigger, user_data, destroy,
+					NULL, false);
 }
 
 unsigned int agent_request_user_password(const char *path, const char *user,
@@ -452,7 +531,8 @@ unsigned int agent_request_user_password(const char *path, const char *user,
 
 	return agent_queue_request(agent, AGENT_REQUEST_TYPE_PASSPHRASE,
 					message, agent_timeout_input_request(),
-					callback, trigger, user_data, destroy);
+					callback, trigger, user_data, destroy,
+					NULL, false);
 }
 
 static bool find_request(const void *a, const void *b)

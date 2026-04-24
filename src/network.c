@@ -84,6 +84,7 @@ struct network {
 	char **nai_realms;
 	uint8_t *rc_ie;
 	bool sync_settings:1;  /* should settings be synced on connect? */
+	bool agent_passphrase_transient:1;
 	bool ask_passphrase:1; /* Whether we should force-ask agent */
 	bool is_hs20:1;
 	bool anqp_pending:1;	/* Set if there is a pending ANQP request */
@@ -324,6 +325,7 @@ static bool __network_set_passphrase(struct network *network,
 
 	network_reset_passphrase(network);
 	network->passphrase = l_strdup(passphrase);
+	network->agent_passphrase_transient = false;
 
 	network->sae_pt_19 = network_generate_sae_pt(network, 19);
 	network->sae_pt_20 = network_generate_sae_pt(network, 20);
@@ -664,6 +666,7 @@ static int network_load_psk(struct network *network, struct scan_bss *bss)
 
 	network_reset_passphrase(network);
 	network_reset_psk(network);
+	network->agent_passphrase_transient = false;
 	network->passphrase = l_steal_ptr(passphrase);
 	network->password_identifier = l_steal_ptr(password_id);
 
@@ -726,6 +729,9 @@ static void network_settings_save(struct network *network,
 
 	/* We only update the [Security] bits here, wipe the group first */
 	l_settings_remove_group(settings, "Security");
+
+	if (network->agent_passphrase_transient)
+		return;
 
 	if (network->psk)
 		l_settings_set_bytes(settings, "Security", "PreSharedKey",
@@ -1316,6 +1322,7 @@ struct scan_bss *network_bss_select(struct network *network,
 
 static void passphrase_callback(enum agent_result result,
 				const char *passphrase,
+				bool store,
 				struct l_dbus_message *message,
 				void *user_data)
 {
@@ -1354,6 +1361,8 @@ static void passphrase_callback(enum agent_result result,
 				dbus_error_invalid_format(message));
 		goto err;
 	}
+
+	network->agent_passphrase_transient = !store;
 
 	station_connect_network(station, network, bss, message);
 	l_dbus_message_unref(message);
@@ -1424,10 +1433,13 @@ static bool eap_secret_info_match_local(const void *a, const void *b)
 }
 
 static void eap_password_callback(enum agent_result result, const char *value,
+					bool store,
 					struct l_dbus_message *message,
 					void *user_data)
 {
 	struct eap_secret_request *req = user_data;
+
+	(void) store;
 
 	req->network->agent_request = 0;
 

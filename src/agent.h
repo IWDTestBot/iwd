@@ -29,6 +29,7 @@ enum agent_result {
 
 typedef void (*agent_request_passphrase_func_t) (enum agent_result result,
 					const char *passphrase,
+					bool store,
 					struct l_dbus_message *message,
 					void *user_data);
 typedef void (*agent_request_user_name_passwd_func_t) (enum agent_result result,
