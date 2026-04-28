@@ -109,6 +109,29 @@ static bool network_settings_load(struct network *network)
 	return network->settings != NULL;
 }
 
+static bool network_settings_are_externally_managed(
+					struct l_settings *settings)
+{
+	bool externally_managed;
+
+	if (!settings)
+		return false;
+
+	if (!l_settings_get_bool(settings, NET_EXTERNALLY_MANAGED,
+					&externally_managed))
+		return false;
+
+	return externally_managed;
+}
+
+static bool network_is_externally_managed(struct network *network)
+{
+	if (network->info)
+		return network->info->config.externally_managed;
+
+	return network_settings_are_externally_managed(network->settings);
+}
+
 static void network_reset_psk(struct network *network)
 {
 	if (network->psk)
@@ -180,25 +203,27 @@ void network_connected(struct network *network)
 	const char *ssid = network_get_ssid(network);
 	int err;
 
-	if (!network->info) {
-		/*
-		 * This is an open network seen for the first time:
-		 *
-		 * Write a settings file to keep track of the
-		 * last connected time.  This will also make iwd autoconnect
-		 * to this network in the future.
-		 */
-		if (!network->settings)
-			network->settings = l_settings_new();
+	if (!network_is_externally_managed(network)) {
+		if (!network->info) {
+			/*
+			 * This is an open network seen for the first time:
+			 *
+			 * Write a settings file to keep track of the
+			 * last connected time.  This will also make iwd
+			 * autoconnect to this network in the future.
+			 */
+			if (!network->settings)
+				network->settings = l_settings_new();
 
-		storage_network_sync(security, ssid, network->settings);
-	} else {
-		err = network_info_touch(network->info);
-		if (err < 0)
-			l_error("Error %i touching network config", err);
+			storage_network_sync(security, ssid, network->settings);
+		} else {
+			err = network_info_touch(network->info);
+			if (err < 0)
+				l_error("Error %i touching network config", err);
 
-		/* Syncs frequencies of already known network*/
-		known_network_frequency_sync(network->info);
+			/* Syncs frequencies of already known network*/
+			known_network_frequency_sync(network->info);
+		}
 	}
 
 	l_queue_foreach_remove(network->secrets,
@@ -758,6 +783,9 @@ void network_sync_settings(struct network *network)
 
 	network->sync_settings = false;
 
+	if (network_is_externally_managed(network))
+		return;
+
 	/*
 	 * Re-open the settings from Disk, in case they were updated
 	 * since we last opened them.
@@ -767,6 +795,11 @@ void network_sync_settings(struct network *network)
 
 		if (L_WARN_ON(!fs_settings))
 			return;
+
+		if (network_settings_are_externally_managed(fs_settings)) {
+			l_settings_free(fs_settings);
+			return;
+		}
 
 		network_settings_save(network, fs_settings);
 		info->ops->sync(info, fs_settings);
