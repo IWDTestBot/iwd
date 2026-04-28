@@ -559,10 +559,22 @@ done:
 	return 0;
 }
 
+static bool storage_settings_are_externally_managed(
+					struct l_settings *settings)
+{
+	bool externally_managed;
+
+	if (!l_settings_get_bool(settings, "Settings", "ExternallyManaged",
+					&externally_managed))
+		return false;
+
+	return externally_managed;
+}
+
 /*
  * Decrypts a network profile (if needed). If profile encryption is enabled
  * and the profile is unencrypted it will be encrypted and written back to
- * the file system automatically.
+ * the file system automatically, unless [Settings].ExternallyManaged is true.
  *
  * 'name' is used for decryption and is used as part of the IV.  Callers
  * should provide a unique identifier here if available.  For example, the
@@ -579,6 +591,9 @@ bool storage_decrypt(struct l_settings *settings, const char *path,
 		return false;
 
 	if (!needs_encryption)
+		return true;
+
+	if (storage_settings_are_externally_managed(settings))
 		return true;
 
 	/* Profile never encrypted before. Encrypt and write to disk */

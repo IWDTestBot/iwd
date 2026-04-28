@@ -30,6 +30,7 @@
 #define NET_TRANSITION_DISABLE SETTINGS, "TransitionDisable"
 #define NET_TRANSITION_DISABLE_MODES SETTINGS, "DisabledTransitionModes"
 #define NET_USE_DEFAULT_ECC_GROUP SETTINGS, "UseDefaultEccGroup"
+#define NET_EXTERNALLY_MANAGED SETTINGS, "ExternallyManaged"
 
 enum security;
 struct scan_freq_set;
@@ -82,6 +83,7 @@ struct network_config {
 	bool have_transition_disable : 1;
 	uint8_t transition_disable;
 	enum known_network_ecc_group ecc_group;
+	bool externally_managed : 1;
 };
 
 struct network_info {

@@ -82,6 +82,11 @@ void __network_config_parse(const struct l_settings *settings,
 
 	config->always_random_addr = b;
 
+	if (!l_settings_get_bool(settings, NET_EXTERNALLY_MANAGED, &b))
+		b = false;
+
+	config->externally_managed = b;
+
 	value = l_settings_get_value(settings, NET_ADDRESS_OVERRIDE);
 	if (value) {
 		if (util_string_to_address(value, new_addr) &&
@@ -689,6 +694,9 @@ static struct l_dbus_message *known_network_property_set_autoconnect(
 
 	if (network->config.is_autoconnectable == autoconnect)
 		return l_dbus_message_new_method_return(message);
+
+	if (network->config.externally_managed)
+		return dbus_error_not_available(message);
 
 	settings = network->ops->open(network);
 	if (!settings)
