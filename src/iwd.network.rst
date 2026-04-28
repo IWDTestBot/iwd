@@ -174,6 +174,14 @@ The group ``[Settings]`` contains general settings.
        Properly configured Access Points will typically update this setting
        appropriately via Transition Disable indications.  User customization
        of this value is thus typically not required.
+   * - ExternallyManaged
+     - Values: true, **false**
+
+       If enabled, the profile contents are managed by an external
+       application.  IWD will read the profile but will not update it as a
+       side effect of network operation, for example to persist connection
+       metadata or security material learned at runtime.  Explicit profile
+       removal through the KnownNetwork Forget method is still allowed.
    * - UseDefaultEccGroup
      - Values: true, false
 
