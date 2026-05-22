@@ -35,6 +35,7 @@
 #include <sys/mman.h>
 #include <linux/rtnetlink.h>
 #include <ell/ell.h>
+#include <linux/limits.h>
 
 #include <ell/useful.h>
 
@@ -64,7 +65,7 @@ static const char *phys;
 static const char *nophys;
 static const char *debugopt;
 static const char *logger;
-static bool developeropt;
+static uint32_t iwd_developer_mode;
 static bool terminating;
 static bool nl80211_complete;
 
@@ -137,9 +138,23 @@ const char *iwd_get_phy_blacklist(void)
 	return nophys;
 }
 
-bool iwd_is_developer_mode(void)
+uint32_t iwd_get_developer_modes(void)
 {
-	return developeropt;
+	return iwd_developer_mode;
+}
+
+static const char *iwd_mode_to_string(uint32_t mode)
+{
+	static char str[PATH_MAX];
+	int idx = 0;
+
+	if (mode & IWD_MODE_NO_AUTOCONNECT)
+		idx = sprintf(str, "no-autoconnect ");
+
+	if (mode & IWD_MODE_DEBUG_INTERFACE)
+		idx += sprintf(str + idx, "debug-interface ");
+
+	return str;
 }
 
 static void usage(void)
@@ -160,7 +175,7 @@ static void usage(void)
 }
 
 static const struct option main_options[] = {
-	{ "developer",    no_argument,       NULL, 'E' },
+	{ "developer",    optional_argument, NULL, 'E' },
 	{ "version",      no_argument,       NULL, 'v' },
 	{ "interfaces",   required_argument, NULL, 'i' },
 	{ "nointerfaces", required_argument, NULL, 'I' },
@@ -473,14 +488,31 @@ int main(int argc, char *argv[])
 	for (;;) {
 		int opt;
 
-		opt = getopt_long(argc, argv, "Ei:I:p:P:d::vhl:",
+		opt = getopt_long(argc, argv, "E::i:I:p:P:d::vhl:",
 							main_options, NULL);
 		if (opt < 0)
 			break;
 
 		switch (opt) {
 		case 'E':
-			developeropt = true;
+			if (optarg)
+				if (!strcmp(optarg, "test"))
+					iwd_developer_mode =
+						IWD_MODE_DEBUG_INTERFACE |
+						IWD_MODE_NO_AUTOCONNECT;
+				else if (!strcmp(optarg, "debug"))
+					iwd_developer_mode =
+						IWD_MODE_DEBUG_INTERFACE;
+				else {
+					fprintf(stderr,
+						"Invalid developer mode '%s'\n",
+						optarg);
+					return EXIT_FAILURE;
+				}
+			else
+				iwd_developer_mode = IWD_MODE_DEBUG_INTERFACE |
+							IWD_MODE_NO_AUTOCONNECT;
+
 			break;
 		case 'i':
 			interfaces = optarg;
@@ -538,6 +570,10 @@ int main(int argc, char *argv[])
 
 	if (debugopt)
 		l_debug_enable(debugopt);
+
+	if (iwd_developer_mode)
+		l_debug("Developer mode enabled: %s",
+				iwd_mode_to_string(iwd_developer_mode));
 
 #ifdef HAVE_BACKTRACE
 	__iwd_backtrace_init();

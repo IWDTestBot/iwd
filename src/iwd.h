@@ -30,6 +30,11 @@
 struct l_genl;
 struct l_genl_family;
 
+enum iwd_mode {
+	IWD_MODE_NO_AUTOCONNECT = 1 << 0,
+	IWD_MODE_DEBUG_INTERFACE = 1 << 1,
+};
+
 const struct l_settings *iwd_get_config(void);
 struct l_genl *iwd_get_genl(void);
 struct l_netlink *iwd_get_rtnl(void);
@@ -41,7 +46,7 @@ const char *iwd_get_iface_blacklist(void);
 
 const char *iwd_get_phy_whitelist(void);
 const char *iwd_get_phy_blacklist(void);
-bool iwd_is_developer_mode(void);
+uint32_t iwd_get_developer_modes(void);
 
 #define IWD_NOTICE_STATE		"state"
 #define IWD_NOTICE_CONNECT_INFO		"connect-info"

@@ -279,7 +279,7 @@ static bool station_debug_event(struct station *station, const char *name)
 {
 	struct l_dbus_message *signal;
 
-	if (!iwd_is_developer_mode())
+	if (!(iwd_get_developer_modes() & IWD_MODE_DEBUG_INTERFACE))
 		return true;
 
 	l_debug("StationDebug.Event(%s)", name);
@@ -1921,7 +1921,7 @@ bool station_set_autoconnect(struct station *station, bool autoconnect)
 	if (station_is_autoconnecting(station) && !autoconnect)
 		station_enter_state(station, STATION_STATE_DISCONNECTED);
 
-	if (iwd_is_developer_mode())
+	if (iwd_get_developer_modes() & IWD_MODE_DEBUG_INTERFACE)
 		l_dbus_property_changed(dbus_get_bus(),
 				netdev_get_path(station->netdev),
 				IWD_STATION_DEBUG_INTERFACE, "AutoConnect");
@@ -5144,6 +5144,7 @@ static struct station *station_create(struct netdev *netdev)
 	struct station *station;
 	struct l_dbus *dbus = dbus_get_bus();
 	bool autoconnect = true;
+	uint32_t iwd_mode = iwd_get_developer_modes();
 
 	station = l_new(struct station, 1);
 	watchlist_init(&station->state_watches, NULL);
@@ -5175,13 +5176,14 @@ static struct station *station_create(struct netdev *netdev)
 
 	station_fill_scan_freq_subsets(station);
 
-	if (iwd_is_developer_mode()) {
+	if (iwd_mode & IWD_MODE_DEBUG_INTERFACE)
 		l_dbus_object_add_interface(dbus,
 					netdev_get_path(station->netdev),
 					IWD_STATION_DEBUG_INTERFACE,
 					station);
+
+	if (iwd_mode & IWD_MODE_NO_AUTOCONNECT)
 		autoconnect = false;
-	}
 
 	station_set_autoconnect(station, autoconnect);
 
@@ -5201,7 +5203,7 @@ static void station_free(struct station *station)
 	l_dbus_object_remove_interface(dbus_get_bus(),
 					netdev_get_path(station->netdev),
 					IWD_STATION_DIAGNOSTIC_INTERFACE);
-	if (iwd_is_developer_mode())
+	if (iwd_get_developer_modes() & IWD_MODE_DEBUG_INTERFACE)
 		l_dbus_object_remove_interface(dbus_get_bus(),
 					netdev_get_path(station->netdev),
 					IWD_STATION_DEBUG_INTERFACE);
@@ -5995,7 +5997,7 @@ static int station_init(void)
 					station_setup_diagnostic_interface,
 					station_destroy_diagnostic_interface,
 					false);
-	if (iwd_is_developer_mode())
+	if (iwd_get_developer_modes() & IWD_MODE_DEBUG_INTERFACE)
 		l_dbus_register_interface(dbus_get_bus(),
 					IWD_STATION_DEBUG_INTERFACE,
 					station_setup_debug_interface,
@@ -6062,7 +6064,7 @@ static void station_exit(void)
 {
 	l_dbus_unregister_interface(dbus_get_bus(),
 					IWD_STATION_DIAGNOSTIC_INTERFACE);
-	if (iwd_is_developer_mode())
+	if (iwd_get_developer_modes() & IWD_MODE_DEBUG_INTERFACE)
 		l_dbus_unregister_interface(dbus_get_bus(),
 					IWD_STATION_DEBUG_INTERFACE);
 	l_dbus_unregister_interface(dbus_get_bus(), IWD_STATION_INTERFACE);
