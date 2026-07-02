@@ -135,6 +135,11 @@ void __network_config_parse(const struct l_settings *settings,
 					NET_USE_DEFAULT_ECC_GROUP);
 	} else
 		config->ecc_group = KNOWN_NETWORK_ECC_GROUP_AUTO;
+
+	if (!l_settings_get_bool(settings, NET_DISABLE_ROAMING_SCAN, &b))
+		b = false;
+
+	config->disable_roaming_scan = b;
 }
 
 void __network_info_init(struct network_info *info,

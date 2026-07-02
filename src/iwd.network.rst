@@ -181,6 +181,10 @@ The group ``[Settings]`` contains general settings.
        (WPA3 and OWE) if set true. If unset IWD will learn the capabilities of
        the network based on its initial association and retain that setting for
        the duration of its process lifetime.
+   * - DisableRoamingScan
+     - Values: true, **false**
+
+       Whether roaming scans are inhibited while connected to this network.
 
 Network Authentication Settings
 -------------------------------
