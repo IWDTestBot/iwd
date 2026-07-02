@@ -3198,6 +3198,14 @@ static bool station_cannot_roam(struct station *station)
 	if (wiphy_supports_firmware_roam(station->wiphy))
 		return true;
 
+	if (station->connected_network) {
+		const struct network_info *info =
+		    network_get_info(station->connected_network);
+
+		if (info && info->config.disable_roaming_scan)
+			return true;
+	}
+
 	if (!l_settings_get_bool(config, "Scan", "DisableRoamingScan",
 								&disabled))
 		disabled = false;

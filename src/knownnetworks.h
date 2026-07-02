@@ -30,6 +30,7 @@
 #define NET_TRANSITION_DISABLE SETTINGS, "TransitionDisable"
 #define NET_TRANSITION_DISABLE_MODES SETTINGS, "DisabledTransitionModes"
 #define NET_USE_DEFAULT_ECC_GROUP SETTINGS, "UseDefaultEccGroup"
+#define NET_DISABLE_ROAMING_SCAN SETTINGS, "DisableRoamingScan"
 
 enum security;
 struct scan_freq_set;
@@ -78,6 +79,7 @@ struct network_config {
 	bool is_autoconnectable:1;
 	bool override_addr:1;
 	bool always_random_addr:1;
+	bool disable_roaming_scan:1;
 	uint8_t sta_addr[6];
 	bool have_transition_disable : 1;
 	uint8_t transition_disable;
