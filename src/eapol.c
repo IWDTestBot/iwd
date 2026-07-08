@@ -2824,6 +2824,10 @@ void eapol_register(struct eapol_sm *sm)
 
 	l_queue_push_head(state_machines, sm);
 
+	/* workaround against SEGV on fct. eapol_rx_packet by avoiding for two different eapol_frame_watches with different ids, but same eapol_sm ptr */
+	if ((sm->watch_id > 0) && eapol_frame_watch_remove(sm->watch_id)) {
+		l_debug("existing frame_watch for sm=%p with id=%u successfully removed", sm, sm->watch_id);
+	}
 	sm->watch_id = eapol_frame_watch_add(sm->handshake->ifindex,
 						rx_handler, sm);
 	sm->protocol_version = sm->handshake->proto_version;
