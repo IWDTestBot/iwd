@@ -2253,7 +2253,7 @@ static bool station_can_fast_transition(struct station *station,
 {
 	uint16_t mdid;
 
-	if (!hs->mde)
+	if (!hs || !hs->mde)
 		return false;
 
 	if (ie_parse_mobility_domain_from_data(hs->mde, hs->mde[1] + 2,
@@ -2917,7 +2917,7 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 
 	orig_security = network_get_security(network);
 
-	if (hs->mde)
+	if (hs && hs->mde)
 		ie_parse_mobility_domain_from_data(hs->mde, hs->mde[1] + 2,
 							&mdid, NULL, NULL);
 
@@ -2930,7 +2930,7 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 	if (bss && !station->ap_directed_roaming) {
 		double cur_bss_rank = bss->rank;
 
-		if (hs->mde && bss->mde_present && l_get_le16(bss->mde) == mdid)
+		if (hs && hs->mde && bss->mde_present && l_get_le16(bss->mde) == mdid)
 			cur_bss_rank *= RANK_FT_FACTOR;
 
 		cur_bss_group_rank = evaluate_bss_group_rank(bss->addr,
@@ -2967,8 +2967,8 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 			goto next;
 
 		/* Skip result if it is not part of the ESS */
-		if (bss->ssid_len != hs->ssid_len ||
-				memcmp(bss->ssid, hs->ssid, hs->ssid_len))
+		if (hs && (bss->ssid_len != hs->ssid_len ||
+				memcmp(bss->ssid, hs->ssid, hs->ssid_len)))
 			goto next;
 
 		if (scan_bss_get_security(bss, &security) < 0)
@@ -2986,7 +2986,7 @@ static bool station_roam_scan_notify(int err, struct l_queue *bss_list,
 
 		rank = bss->rank;
 
-		if (hs->mde && bss->mde_present && l_get_le16(bss->mde) == mdid)
+		if (hs && hs->mde && bss->mde_present && l_get_le16(bss->mde) == mdid)
 			rank *= RANK_FT_FACTOR;
 
 		group_rank = evaluate_bss_group_rank(bss->addr, bss->frequency,
