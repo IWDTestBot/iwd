@@ -27,6 +27,9 @@ Methods		dict GetDiagnostics()
 
 			Security - The chosen security for the connection.
 
+			BssLastSeen - The time in seconds since the BSS was seen
+				in a scan.
+
 			RSSI [optional] - The RSSI of the currently connected BSS.
 
 			AverageRSSI [optional] - Average RSSI of currently connected BSS.
@@ -58,6 +61,19 @@ Methods		dict GetDiagnostics()
 
 			ConnectedTime [optional] - Time Duration (in s) for which this STA
 						   remains connected to the BSS.
+
+			ChannelUtilization [optional] - The channel utilization
+				advertised by the BSS load element in scans.
+				Note the confidence of this value heavily
+				depends on the BssLastSeen time as this only
+				updates when IWD scans.
+
+			SignalNoiseRatio [optional] - The signal to noise ratio
+				(SNR) received on the last scan.
+				Note the confidence of this value heavily
+				depends on the BssLastSeen time as this only
+				updates when IWD scans.
+
 
 			Possible errors: net.connman.iwd.Busy
 					 net.connman.iwd.Failed

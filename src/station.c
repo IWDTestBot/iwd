@@ -5337,6 +5337,14 @@ static void station_destroy_interface(void *user_data)
 	station_free(station);
 }
 
+/* Gets the time in seconds since the BSS was last seen */
+static uint32_t bss_last_seen_time(const struct scan_bss *bss)
+{
+	uint64_t diff = l_time_diff(bss->time_stamp, l_time_now());
+
+	return (uint32_t)l_time_to_secs(diff);
+}
+
 static void station_get_diagnostic_cb(
 				const struct diagnostic_station_info *info,
 				void *user_data)
@@ -5346,6 +5354,7 @@ static void station_get_diagnostic_cb(
 	struct l_dbus_message_builder *builder;
 	struct handshake_state *hs = netdev_get_handshake(station->netdev);
 	uint16_t channel_num;
+	uint32_t last_seen;
 
 	if (!info) {
 		reply = dbus_error_aborted(station->get_station_pending);
@@ -5387,6 +5396,23 @@ static void station_get_diagnostic_cb(
 			dbus_append_dict_basic(builder, "PairwiseCipher",
 						's', str);
 	}
+
+	if (station->connected_bss->have_utilization) {
+		uint8_t percent =
+			(station->connected_bss->utilization * 100) / 255;
+		dbus_append_dict_basic(builder, "ChannelUtilization", 'y',
+			&percent);
+	}
+
+	if (station->connected_bss->have_snr) {
+		uint8_t snr = (uint8_t)station->connected_bss->snr;
+		dbus_append_dict_basic(builder, "SignalNoiseRatio", 'y', &snr);
+	}
+
+	last_seen = bss_last_seen_time(station->connected_bss);
+
+	dbus_append_dict_basic(builder, "BssLastSeen", 'u',
+			&last_seen);
 
 	diagnostic_info_to_dict(info, builder);
 
