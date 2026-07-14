@@ -2198,10 +2198,120 @@ static bool network_bss_property_get_address(struct l_dbus *dbus,
 	return true;
 }
 
+struct network_bss_suite_name {
+	uint32_t suite;
+	const char *name;
+};
+
+static const struct network_bss_suite_name network_bss_akm_names[] = {
+	{ IE_RSN_AKM_SUITE_PSK, "wpa-psk" },
+	{ IE_RSN_AKM_SUITE_FT_USING_PSK, "wpa-ft-psk" },
+	{ IE_RSN_AKM_SUITE_PSK_SHA256, "wpa-psk-sha256" },
+	{ IE_RSN_AKM_SUITE_8021X, "wpa-eap" },
+	{ IE_RSN_AKM_SUITE_FT_OVER_8021X, "wpa-ft-eap" },
+	{ IE_RSN_AKM_SUITE_8021X_SHA256, "wpa-eap-sha256" },
+	{ IE_RSN_AKM_SUITE_8021X_SUITE_B_SHA256, "wpa-eap-suite-b" },
+	{ IE_RSN_AKM_SUITE_8021X_SUITE_B_SHA384, "wpa-eap-suite-b-192" },
+	{ IE_RSN_AKM_SUITE_FT_OVER_8021X_SHA384, "wpa-ft-eap-sha384" },
+	{ IE_RSN_AKM_SUITE_FILS_SHA256, "wpa-fils-sha256" },
+	{ IE_RSN_AKM_SUITE_FILS_SHA384, "wpa-fils-sha384" },
+	{ IE_RSN_AKM_SUITE_FT_OVER_FILS_SHA256, "wpa-ft-fils-sha256" },
+	{ IE_RSN_AKM_SUITE_FT_OVER_FILS_SHA384, "wpa-ft-fils-sha384" },
+	{ IE_RSN_AKM_SUITE_SAE_SHA256, "sae" },
+	{ IE_RSN_AKM_SUITE_FT_OVER_SAE_SHA256, "ft-sae" },
+	{ IE_RSN_AKM_SUITE_OWE, "owe" },
+};
+
+static const struct network_bss_suite_name network_bss_pairwise_names[] = {
+	{ IE_RSN_CIPHER_SUITE_TKIP, "tkip" },
+	{ IE_RSN_CIPHER_SUITE_CCMP, "ccmp" },
+	{ IE_RSN_CIPHER_SUITE_GCMP, "gcmp" },
+	{ IE_RSN_CIPHER_SUITE_CCMP_256, "ccmp-256" },
+	{ IE_RSN_CIPHER_SUITE_GCMP_256, "gcmp-256" },
+};
+
+static const struct network_bss_suite_name network_bss_group_names[] = {
+	{ IE_RSN_CIPHER_SUITE_WEP40, "wep40" },
+	{ IE_RSN_CIPHER_SUITE_WEP104, "wep104" },
+	{ IE_RSN_CIPHER_SUITE_TKIP, "tkip" },
+	{ IE_RSN_CIPHER_SUITE_CCMP, "ccmp" },
+	{ IE_RSN_CIPHER_SUITE_GCMP, "gcmp" },
+	{ IE_RSN_CIPHER_SUITE_CCMP_256, "ccmp-256" },
+	{ IE_RSN_CIPHER_SUITE_GCMP_256, "gcmp-256" },
+};
+
+static void network_bss_append_suite_names(
+					struct l_dbus_message_builder *builder,
+					const char *name, uint32_t suites,
+					const struct network_bss_suite_name *names,
+					size_t names_len)
+{
+	size_t i;
+
+	l_dbus_message_builder_enter_dict(builder, "sv");
+	l_dbus_message_builder_append_basic(builder, 's', name);
+	l_dbus_message_builder_enter_variant(builder, "as");
+	l_dbus_message_builder_enter_array(builder, "s");
+
+	for (i = 0; i < names_len; i++)
+		if (suites & names[i].suite)
+			l_dbus_message_builder_append_basic(builder, 's',
+								names[i].name);
+
+	l_dbus_message_builder_leave_array(builder);
+	l_dbus_message_builder_leave_variant(builder);
+	l_dbus_message_builder_leave_dict(builder);
+}
+
+static const char *network_bss_group_cipher_name(
+					enum ie_rsn_cipher_suite cipher)
+{
+	size_t i;
+
+	for (i = 0; i < L_ARRAY_SIZE(network_bss_group_names); i++)
+		if (network_bss_group_names[i].suite == cipher)
+			return network_bss_group_names[i].name;
+
+	return "";
+}
+
+static bool network_bss_property_get_rsn(struct l_dbus *dbus,
+					struct l_dbus_message *message,
+					struct l_dbus_message_builder *builder,
+					void *user_data)
+{
+	struct scan_bss *bss = user_data;
+	struct ie_rsn_info info;
+	const char *group;
+
+	if (!bss->rsne || ie_parse_rsne_from_data(bss->rsne, bss->rsne[1] + 2,
+								&info) < 0)
+		return false;
+
+	l_dbus_message_builder_enter_array(builder, "{sv}");
+
+	network_bss_append_suite_names(builder, "KeyMgmt", info.akm_suites,
+					network_bss_akm_names,
+					L_ARRAY_SIZE(network_bss_akm_names));
+	network_bss_append_suite_names(builder, "Pairwise",
+					info.pairwise_ciphers,
+					network_bss_pairwise_names,
+					L_ARRAY_SIZE(network_bss_pairwise_names));
+
+	group = network_bss_group_cipher_name(info.group_cipher);
+	dbus_append_dict_basic(builder, "Group", 's', group);
+
+	l_dbus_message_builder_leave_array(builder);
+
+	return true;
+}
+
 static void setup_bss_interface(struct l_dbus_interface *interface)
 {
 	l_dbus_interface_property(interface, "Address", 0, "s",
 					network_bss_property_get_address, NULL);
+	l_dbus_interface_property(interface, "RSN", 0, "a{sv}",
+					network_bss_property_get_rsn, NULL);
 }
 
 static int network_init(void)
