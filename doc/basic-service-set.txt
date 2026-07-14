@@ -8,3 +8,26 @@ Object path	/net/connman/iwd/{phy0,phy1,...}/{1,2,...}/Xxx
 Properties	string Address [readonly]
 
 			MAC address of BSS
+
+		dict RSN [readonly, optional]
+
+			Security capabilities advertised in the RSN information
+			element. The dictionary contains the following entries:
+
+			array(string) KeyMgmt
+
+				Key management suites. Values use the same names as
+				the wpa_supplicant D-Bus BSS.RSN property, such as
+				"wpa-psk", "wpa-ft-psk", "sae", "ft-sae",
+				"wpa-eap", and "owe".
+
+			array(string) Pairwise
+
+				Pairwise ciphers. Possible values are "tkip",
+				"ccmp", "gcmp", "ccmp-256", and "gcmp-256".
+
+			string Group
+
+				Group cipher. Possible values are "wep40", "wep104",
+				"tkip", "ccmp", "gcmp", "ccmp-256", and
+				"gcmp-256".
