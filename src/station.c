@@ -2598,6 +2598,7 @@ static void station_preauthenticate_cb(struct netdev *netdev,
 	if (station_transition_reassociate(station, bss, new_hs) < 0) {
 		handshake_state_unref(new_hs);
 		station_roam_failed(station);
+		return;
 	}
 
 	handshake_state_unref(station->hs);
