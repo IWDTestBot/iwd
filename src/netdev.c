@@ -4394,6 +4394,9 @@ int netdev_reassociate(struct netdev *netdev, const struct scan_bss *target_bss,
 	struct handshake_state *old_hs;
 	struct eapol_sm *old_sm;
 
+	if (netdev->connect_cmd_id || netdev->work.id)
+		return -EBUSY;
+
 	old_sm = netdev->sm;
 	old_hs = netdev->handshake;
 

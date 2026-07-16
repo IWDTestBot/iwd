@@ -2598,6 +2598,7 @@ static void station_preauthenticate_cb(struct netdev *netdev,
 	if (station_transition_reassociate(station, bss, new_hs) < 0) {
 		handshake_state_unref(new_hs);
 		station_roam_failed(station);
+		return;
 	}
 
 	handshake_state_unref(station->hs);
@@ -3272,8 +3273,7 @@ static void station_ap_directed_roam(struct station *station,
 	uint16_t dtimer;
 	uint8_t valid_interval;
 	bool can_roam = !station_cannot_roam(station);
-	bool ignore_candidates =
-		station->connected_bss->vendor_quirks.ignore_bss_tm_candidates;
+	bool ignore_candidates;
 
 	l_debug("ifindex: %u", netdev_get_ifindex(station->netdev));
 
@@ -3281,6 +3281,9 @@ static void station_ap_directed_roam(struct station *station,
 		l_debug("roam: unexpected AP directed roam -- ignore");
 		return;
 	}
+
+	ignore_candidates =
+		station->connected_bss->vendor_quirks.ignore_bss_tm_candidates;
 
 	/*
 	 * Sanitize the frame to check that it is from our current AP.
