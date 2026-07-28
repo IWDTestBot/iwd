@@ -754,7 +754,7 @@ static enum cmd_status cmd_get_bsses(const char *device_name,
 
 	sprintf(header, "%s BasicServiceSets", network_get_name(network_proxy));
 
-	proxy_properties_display_header(header, MARGIN, 10, 18);
+	proxy_properties_display_header(header, MARGIN, 10, 47);
 
 	for (e = l_queue_get_entries(bss_list); e; e = e->next) {
 		const char *path = e->data;
@@ -765,7 +765,7 @@ static enum cmd_status cmd_get_bsses(const char *device_name,
 			continue;
 
 		display_table_row(MARGIN, 1, strlen(path), path);
-		proxy_properties_display_inline(bss_i, MARGIN, 10, 18);
+		proxy_properties_display_inline(bss_i, MARGIN, 10, 47);
 		display_table_row(MARGIN, 1, 1, "");
 	}
 
