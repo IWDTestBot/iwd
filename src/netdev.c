@@ -5428,11 +5428,31 @@ static void netdev_channel_switch_event(struct l_genl_msg *msg,
 {
 	_auto_(l_free) struct band_chandef *chandef = NULL;
 
+	uint32_t count;
+	const char *driver;
+
 	if (netdev->type != NL80211_IFTYPE_STATION)
 		return;
 
 	if (L_WARN_ON(!netdev->connected))
 		return;
+
+	driver = wiphy_get_driver(netdev_get_wiphy(netdev));
+
+	/*
+	 * If the channel switch countdown is present, the switch is imminent
+	 * but has not happened yet. Wait for the second CH_SWITCH_NOTIFY
+	 * event (which omits the count) to avoid interrupting the firmware
+	 * by prematurely starting a scan.
+	 *
+	 * Restrict this workaround to mt7925 cards as requested.
+	 */
+	if (driver && !strncmp(driver, "mt7925", 6) &&
+			nl80211_parse_attrs(msg, NL80211_ATTR_CH_SWITCH_COUNT, &count,
+				NL80211_ATTR_UNSPEC) == 0) {
+		l_debug("Channel switch imminent in %u TBTTs, waiting...", count);
+		return;
+	}
 
 	chandef = l_new(struct band_chandef, 1);
 
