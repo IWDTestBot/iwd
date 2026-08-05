@@ -646,8 +646,9 @@ static struct network *station_add_seen_bss(struct station *station,
 			network_get_ssid(network), security_to_str(security));
 	}
 
-	network_bss_add(network, bss);
+	/* Publish the BasicServiceSet object before it's referenced in ExtendedServiceSet. */
 	station_register_bss(network, bss);
+	network_bss_add(network, bss);
 
 	return network;
 }
