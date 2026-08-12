@@ -860,6 +860,7 @@ void display_agent_prompt_release(const char *label)
 	if (!command_is_interactive_mode()) {
 		rl_callback_handler_remove();
 		l_io_destroy(io);
+		io = NULL;
 
 		return;
 	}
@@ -975,6 +976,7 @@ void display_exit(void)
 	rl_callback_handler_remove();
 
 	l_io_destroy(io);
+	io = NULL;
 
 	l_signal_remove(window_change_signal);
 
