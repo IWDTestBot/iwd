@@ -183,6 +183,8 @@ static void agent_finalize_pending(struct agent *agent,
 	}
 
 	pending = l_queue_pop_head(agent->requests);
+	if (!pending)
+		return;
 
 	switch (pending->type) {
 	case AGENT_REQUEST_TYPE_PASSPHRASE:
@@ -230,6 +232,7 @@ static void request_timeout(struct l_timeout *timeout, void *user_data)
 	struct agent *agent = user_data;
 
 	l_dbus_cancel(dbus_get_bus(), agent->pending_id);
+	agent->pending_id = 0;
 
 	send_cancel_request(agent, -ETIMEDOUT);
 
