@@ -135,6 +135,26 @@ void __network_config_parse(const struct l_settings *settings,
 					NET_USE_DEFAULT_ECC_GROUP);
 	} else
 		config->ecc_group = KNOWN_NETWORK_ECC_GROUP_AUTO;
+
+	if (!l_settings_get_bool(settings, NET_DISABLE_HT, &b))
+		b = false;
+
+	config->disable_ht = b;
+
+	if (!l_settings_get_bool(settings, NET_DISABLE_VHT, &b))
+		b = false;
+
+	config->disable_vht = b;
+
+	if (!l_settings_get_bool(settings, NET_DISABLE_HE, &b))
+		b = false;
+
+	config->disable_he = b;
+
+	if (!l_settings_get_bool(settings, NET_DISABLE_EHT, &b))
+		b = false;
+
+	config->disable_eht = b;
 }
 
 void __network_info_init(struct network_info *info,

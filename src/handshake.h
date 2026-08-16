@@ -145,6 +145,10 @@ struct handshake_state {
 	bool supplicant_ocvc : 1;
 	bool ext_key_id_capable : 1;
 	bool force_default_ecc_group : 1;
+	bool disable_ht : 1;
+	bool disable_vht : 1;
+	bool disable_he : 1;
+	bool disable_eht : 1;
 	bool have_pmksa : 1;
 	union {
 		struct pmksa *pmksa;

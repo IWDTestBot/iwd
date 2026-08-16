@@ -536,6 +536,10 @@ int network_handshake_setup(struct network *network, struct scan_bss *bss,
 	}
 
 	hs->force_default_ecc_group = network->force_default_ecc_group;
+	hs->disable_ht = info && info->config.disable_ht;
+	hs->disable_vht = info && info->config.disable_vht;
+	hs->disable_he = info && info->config.disable_he;
+	hs->disable_eht = info && info->config.disable_eht;
 
 	/*
 	 * The randomization options in the provisioning file are dependent on
