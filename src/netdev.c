@@ -2647,6 +2647,18 @@ static struct l_genl_msg *netdev_build_cmd_connect(struct netdev *netdev,
 
 	l_genl_msg_append_attr(msg, NL80211_ATTR_SOCKET_OWNER, 0, NULL);
 
+	if (hs->disable_ht)
+		l_genl_msg_append_attr(msg, NL80211_ATTR_DISABLE_HT, 0, NULL);
+
+	if (hs->disable_vht)
+		l_genl_msg_append_attr(msg, NL80211_ATTR_DISABLE_VHT, 0, NULL);
+
+	if (hs->disable_he)
+		l_genl_msg_append_attr(msg, NL80211_ATTR_DISABLE_HE, 0, NULL);
+
+	if (hs->disable_eht)
+		l_genl_msg_append_attr(msg, NL80211_ATTR_DISABLE_EHT, 0, NULL);
+
 	if (is_rsn) {
 		nl80211_append_rsn_attributes(msg, hs);
 		c_iov = iov_ie_append(iov, n_iov, c_iov, hs->supplicant_ie,
@@ -2988,6 +3000,18 @@ static struct l_genl_msg *netdev_build_cmd_associate_common(
 	l_genl_msg_append_attr(msg, NL80211_ATTR_MAC, ETH_ALEN, hs->aa);
 	l_genl_msg_append_attr(msg, NL80211_ATTR_SSID, hs->ssid_len, hs->ssid);
 	l_genl_msg_append_attr(msg, NL80211_ATTR_SOCKET_OWNER, 0, NULL);
+
+	if (hs->disable_ht)
+		l_genl_msg_append_attr(msg, NL80211_ATTR_DISABLE_HT, 0, NULL);
+
+	if (hs->disable_vht)
+		l_genl_msg_append_attr(msg, NL80211_ATTR_DISABLE_VHT, 0, NULL);
+
+	if (hs->disable_he)
+		l_genl_msg_append_attr(msg, NL80211_ATTR_DISABLE_HE, 0, NULL);
+
+	if (hs->disable_eht)
+		l_genl_msg_append_attr(msg, NL80211_ATTR_DISABLE_EHT, 0, NULL);
 
 	if (is_rsn)
 		nl80211_append_rsn_attributes(msg, hs);
