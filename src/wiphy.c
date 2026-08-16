@@ -288,6 +288,8 @@ enum ie_rsn_akm_suite wiphy_select_akm(struct wiphy *wiphy,
 {
 	bool psk_offload = wiphy_has_ext_feature(wiphy,
 				NL80211_EXT_FEATURE_4WAY_HANDSHAKE_STA_PSK);
+	bool softmac = wiphy_supports_cmds_auth_assoc(wiphy);
+	bool roam_offload = wiphy_supports_firmware_roam(wiphy);
 
 	/*
 	 * If FT is available, use FT authentication to keep the door open
@@ -339,8 +341,19 @@ enum ie_rsn_akm_suite wiphy_select_akm(struct wiphy *wiphy,
 				goto wpa2_personal;
 			}
 
-			if (info->akm_suites &
-					IE_RSN_AKM_SUITE_FT_OVER_SAE_SHA256)
+			/*
+			 * XXX: this replicates the condition in netdev.c:netdev_handshake_state_setup_connection_type():
+			 *      `IE_AKM_IS_FT() && !softmac && !canroam` -> ENOTSUP.
+			 *      Thus, unlike condition for WPA2-FT below, we do not check for psk_offload.
+			 *
+			 *      Should this instead be `softmac || (sae_offload && roam_offload)`?
+			 *
+			 *      Or, conservatively, just `softmac` (like FT check for 802.1x above)?
+			 *      FT check for WPA2 below was loosened to allow offload in
+			 *      f5c5efa ("wiphy: allow FT AKM to be used if Auth/Assoc is not supported").
+			 */
+			if ((info->akm_suites & IE_RSN_AKM_SUITE_FT_OVER_SAE_SHA256) &&
+				(softmac || roam_offload))
 				return IE_RSN_AKM_SUITE_FT_OVER_SAE_SHA256;
 
 			if (info->akm_suites & IE_RSN_AKM_SUITE_SAE_SHA256)
@@ -355,8 +368,7 @@ wpa2_personal:
 		 */
 		if ((info->akm_suites & IE_RSN_AKM_SUITE_FT_USING_PSK) &&
 					bss->rsne && bss->mde_present) {
-			if (wiphy->support_cmds_auth_assoc ||
-					(psk_offload && wiphy->support_fw_roam))
+			if (softmac || (psk_offload && roam_offload))
 				return IE_RSN_AKM_SUITE_FT_USING_PSK;
 		}
 
