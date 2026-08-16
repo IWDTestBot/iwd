@@ -4079,6 +4079,13 @@ static int netdev_handshake_state_setup_connection_type(
 	/*
 	 * Sanity check that any FT AKMs are set only on softmac or on
 	 * devices that support firmware roam
+	 *
+	 * XXX: is this the right condition?
+	 *      This can be reworded as `IE_AKM_IS_FT() && !(softmac || canroam)`,
+	 *      i.e. allow if `softmac OR support roam offload`. Should we also
+	 *      check for SAE offload in the second arm, i.e. allow if
+	 *      `softmac OR (support roam offload AND support SAE offload)`?
+	 *      See comment in wiphy.c:wiphy_select_akm().
 	 */
 	if (L_WARN_ON(IE_AKM_IS_FT(hs->akm_suite) && !softmac && !canroam))
 		return -ENOTSUP;
