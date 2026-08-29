@@ -127,6 +127,9 @@ struct sta_state {
 	bool rsna;
 	uint16_t aid;
 	struct mmpdu_field_capability capability;
+	uint8_t ht_capabilities[26];
+	uint8_t wmm_uapsd_queues;
+	uint8_t wmm_max_sp;
 	uint16_t listen_interval;
 	struct l_uintset *rates;
 	uint32_t assoc_resp_cmd_id;
@@ -147,6 +150,7 @@ struct sta_state {
 
 	bool ht_support : 1;
 	bool ht_greenfield : 1;
+	bool wmm_support : 1;
 };
 
 struct ap_wsc_pbc_probe_record {
@@ -1683,6 +1687,11 @@ static struct l_genl_msg *ap_build_cmd_new_station(struct sta_state *sta)
 		flags.mask |= (1 << NL80211_STA_FLAG_ASSOCIATED) |
 				(1 << NL80211_STA_FLAG_AUTHENTICATED);
 
+	if (sta->wmm_support) {
+		flags.mask |= 1 << NL80211_STA_FLAG_WME;
+		flags.set |= 1 << NL80211_STA_FLAG_WME;
+	}
+
 	msg = l_genl_msg_new_sized(NL80211_CMD_NEW_STATION, 300);
 
 	l_genl_msg_append_attr(msg, NL80211_ATTR_IFINDEX, 4, &ifindex);
@@ -1835,6 +1844,21 @@ static void ap_associate_sta(struct ap_state *ap, struct sta_state *sta)
 			rates[count++] = r;
 
 	l_genl_msg_append_attr(msg, NL80211_ATTR_STA_AID, 2, &sta->aid);
+	if (sta->ht_support)
+		l_genl_msg_append_attr(msg, NL80211_ATTR_HT_CAPABILITY,
+					sizeof(sta->ht_capabilities),
+					sta->ht_capabilities);
+
+	if (sta->wmm_support) {
+		l_genl_msg_enter_nested(msg, NL80211_ATTR_STA_WME);
+		l_genl_msg_append_attr(msg,
+					NL80211_STA_WME_UAPSD_QUEUES, 1,
+					&sta->wmm_uapsd_queues);
+		l_genl_msg_append_attr(msg, NL80211_STA_WME_MAX_SP, 1,
+					&sta->wmm_max_sp);
+		l_genl_msg_leave_nested(msg);
+	}
+
 	l_genl_msg_append_attr(msg, NL80211_ATTR_STA_SUPPORTED_RATES,
 				count, &rates);
 	l_genl_msg_append_attr(msg, NL80211_ATTR_STA_LISTEN_INTERVAL, 2,
@@ -2173,8 +2197,29 @@ static void ap_assoc_reassoc(struct sta_state *sta, bool reassoc,
 			if (test_bit(ie_tlv_iter_get_data(&iter), 4))
 				sta->ht_greenfield = true;
 
+			memcpy(sta->ht_capabilities,
+					ie_tlv_iter_get_data(&iter),
+					sizeof(sta->ht_capabilities));
 			sta->ht_support = true;
 			break;
+		case IE_TYPE_VENDOR_SPECIFIC: {
+			const uint8_t *vendor =
+					ie_tlv_iter_get_data(&iter);
+			uint8_t qos_info;
+
+			if (ie_tlv_iter_get_length(&iter) != 7 ||
+					memcmp(vendor, microsoft_oui, 3) ||
+					vendor[3] != 2 ||
+					vendor[4] != 0 ||
+					vendor[5] != 1)
+				break;
+
+			qos_info = vendor[6];
+			sta->wmm_uapsd_queues = qos_info & 0x0f;
+			sta->wmm_max_sp = (qos_info >> 5) & 0x03;
+			sta->wmm_support = true;
+			break;
+		}
 		}
 
 	if (!rates || !ssid || (!wsc_data && !rsn) ||
