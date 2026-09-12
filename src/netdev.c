@@ -735,6 +735,8 @@ static void netdev_rssi_poll_cb(struct l_genl_msg *msg, void *user_data)
 	if (!l_genl_attr_init(&attr, msg))
 		goto done;
 
+	memset(&info, 0, sizeof(info));
+
 	found = false;
 	while (l_genl_attr_next(&attr, &type, &len, &data)) {
 		if (type != NL80211_ATTR_STA_INFO)
