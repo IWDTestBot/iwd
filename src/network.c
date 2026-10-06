@@ -1842,9 +1842,13 @@ static bool network_property_get_type(struct l_dbus *dbus,
 {
 	struct network *network = user_data;
 	enum security security = network_get_security(network);
+	const char *type = security_to_str(security);
+	struct scan_bss *bss = l_queue_peek_head(network->bss_list);
 
-	l_dbus_message_builder_append_basic(builder, 's',
-						security_to_str(security));
+	if (bss && bss_is_sae(bss))
+		type = "sae";
+
+	l_dbus_message_builder_append_basic(builder, 's', type);
 
 	return true;
 }
