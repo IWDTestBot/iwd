@@ -593,11 +593,9 @@ static bool parse_addresses(const uint8_t *buf, size_t len,
 		memcpy(addr, buf + start_pos, pos - start_pos);
 		addr[pos - start_pos] = '\0';
 
-		if (addr_idx >= 2) {
-			l_error("Hwsim wiphy %s has too many addresses listed "
-				" in sysfs - only 2 supported", rec->name);
-			return false;
-		}
+		/* Only the first two addresses are used, ignore others (e.g. NAN) */
+		if (addr_idx >= 2)
+			break;
 
 		if (!util_string_to_address(addr, rec->addrs[addr_idx])) {
 			l_error("Can't parse hwsim wiphy %s address from sysfs",
