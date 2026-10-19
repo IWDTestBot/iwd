@@ -203,7 +203,14 @@ static void manager_create_interfaces(struct wiphy_setup_state *state)
 		return;
 
 	if (state->use_default) {
-		manager_use_default(state);
+		/*
+		 * If the default interface does not exist yet, wait for its
+		 * NEW_INTERFACE event before creating the P2P device.  The
+		 * event for our own P2P device would otherwise end the wait,
+		 * and the default interface would never be set up.
+		 */
+		if (!manager_use_default(state))
+			return;
 
 		/*
 		 * Some drivers don't let us touch the default interface
