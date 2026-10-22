@@ -507,17 +507,14 @@ static bool eap_peap_tunnel_handle_request(struct eap_state *eap,
 	struct peap_state *peap_state;
 	uint8_t id;
 
-	if (len > 4 && pkt[4] == EAP_TYPE_EXTENSIONS) {
-		uint16_t pkt_len;
-		uint8_t code = pkt[0];
-
-		if (code != EAP_CODE_REQUEST)
-			return false;
-
-		pkt_len = l_get_be16(pkt + 2);
-		if (pkt_len != len)
-			return false;
-
+	/*
+	 * A headerless PEAPv0 packet, e.g. an MSCHAPv2 Challenge, can also
+	 * have EAP_TYPE_EXTENSIONS at offset 4 by sheer coincidence,
+	 * so check the whole header.
+	 */
+	if (len > 4 && pkt[4] == EAP_TYPE_EXTENSIONS &&
+			pkt[0] == EAP_CODE_REQUEST &&
+			l_get_be16(pkt + 2) == len) {
 		id = pkt[1];
 
 		eap_extensions_handle_request(eap, id,
