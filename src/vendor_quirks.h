@@ -29,6 +29,7 @@
 struct vendor_quirk {
 	bool ignore_bss_tm_candidates : 1;
 	bool replay_counter_mismatch : 1;
+	bool pmkid_mismatch : 1;
 };
 
 void vendor_quirks_append_for_oui(const uint8_t *oui,

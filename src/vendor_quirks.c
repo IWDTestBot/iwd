@@ -45,6 +45,11 @@ static const struct {
 		{ 0x00, 0x0b, 0x86 },
 		{ .replay_counter_mismatch = true },
 	},
+	{
+		/* Zebra Technologies, WiNG APs now owned by Extreme */
+		{ 0x00, 0xa0, 0xf8 },
+		{ .pmkid_mismatch = true },
+	},
 };
 
 void vendor_quirks_append_for_oui(const uint8_t *oui,
@@ -62,6 +67,7 @@ void vendor_quirks_append_for_oui(const uint8_t *oui,
 				quirk->ignore_bss_tm_candidates;
 		quirks->replay_counter_mismatch |=
 				quirk->replay_counter_mismatch;
+		quirks->pmkid_mismatch |= quirk->pmkid_mismatch;
 	}
 }
 
@@ -76,6 +82,9 @@ const char *vendor_quirks_to_string(struct vendor_quirk quirks)
 
 	if (quirks.replay_counter_mismatch)
 		s += snprintf(pos, sizeof(out) - s, "ReplayCounterMismatch");
+
+	if (quirks.pmkid_mismatch)
+		s += snprintf(pos, sizeof(out) - s, "PmkidMismatch");
 
 	if (!s)
 		return NULL;
