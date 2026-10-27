@@ -1256,14 +1256,19 @@ static void eapol_handle_ptk_1_of_4(struct eapol_sm *sm,
 			goto error_unspecified;
 	} else if (pmkid) {
 		if (!handshake_state_pmkid_matches(sm->handshake, pmkid)) {
+			bool ignore = sm->eap_exchanged &&
+				sm->handshake->vendor_quirks.pmkid_mismatch;
+
 			l_debug("Authenticator sent a PMKID that didn't match");
 
 			/*
 			 * If the AP has a different PMKSA from ours and we
 			 * have means to create a new PMKSA through EAP then
-			 * try that, otherwise give up.
+			 * try that, otherwise give up.  Some APs send a PMKID
+			 * we can't derive even after a fresh EAP exchange, in
+			 * which case restarting EAP won't help.
 			 */
-			if (sm->eap) {
+			if (sm->eap && !ignore) {
 				__send_eapol_start(sm, unencrypted);
 				return;
 			}
