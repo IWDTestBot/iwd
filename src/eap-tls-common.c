@@ -117,8 +117,10 @@ struct eap_tls_state {
 	bool tunnel_ready:1;
 	bool tls_session_resumed:1;
 	bool tls_cache_disabled:1;
+	bool server_cert_pinned:1;
 
 	struct l_queue *ca_cert;
+	uint8_t server_cert_hash[32];
 	struct l_certchain *client_cert;
 	struct l_key *client_key;
 	char **domain_mask;
@@ -258,6 +260,59 @@ static void eap_tls_tunnel_debug(const char *str, void *user_data)
 	l_info("%s: %s", eap_get_method_name(eap), str);
 }
 
+struct eap_tls_certchain_walk {
+	struct eap_state *eap;
+	unsigned int depth;
+};
+
+static bool eap_tls_count_cert(struct l_cert *cert, void *user_data)
+{
+	struct eap_tls_certchain_walk *walk = user_data;
+
+	walk->depth++;
+	return false;
+}
+
+static bool eap_tls_report_server_cert(struct l_cert *cert, void *user_data)
+{
+	struct eap_tls_certchain_walk *walk = user_data;
+	struct eap_tls_server_cert info = { .depth = --walk->depth };
+	_auto_(l_free) char *subject = l_cert_get_subject_str(cert);
+	_auto_(l_free) char *cert_hash = NULL;
+	_auto_(l_strv_free) char **altsubject = l_cert_get_altnames(cert);
+	struct l_checksum *sha256 = l_checksum_new(L_CHECKSUM_SHA256);
+	uint8_t hash[32];
+
+	info.cert = l_cert_get_der_data(cert, &info.cert_len);
+
+	if (!sha256 || !l_checksum_update(sha256, info.cert, info.cert_len) ||
+			l_checksum_get_digest(sha256, hash, 32) != 32) {
+		l_checksum_free(sha256);
+		return false;
+	}
+
+	l_checksum_free(sha256);
+
+	/* Same form as wpa_supplicant: lowercase hex, no separators */
+	cert_hash = l_util_hexstring(hash, 32);
+
+	info.subject = subject;
+	info.cert_hash = cert_hash;
+	info.altsubject = altsubject;
+
+	eap_method_event(walk->eap, EAP_TLS_EVENT_SERVER_CERT, &info);
+	return false;
+}
+
+static void eap_tls_tunnel_certchain(struct l_certchain *chain,
+					void *user_data)
+{
+	struct eap_tls_certchain_walk walk = { .eap = user_data };
+
+	l_certchain_walk_from_leaf(chain, eap_tls_count_cert, &walk);
+	l_certchain_walk_from_ca(chain, eap_tls_report_server_cert, &walk);
+}
+
 static void eap_tls_tunnel_data_send(const uint8_t *data, size_t data_len,
 								void *user_data)
 {
@@ -290,7 +345,8 @@ static void eap_tls_tunnel_ready(const char *peer_identity, void *user_data)
 	eap_tls->tls_session_resumed =
 		l_tls_get_session_resumed(eap_tls->tunnel);
 
-	if (eap_tls->ca_cert && !peer_identity) {
+	if ((eap_tls->ca_cert || eap_tls->server_cert_pinned) &&
+			!peer_identity) {
 		l_error("%s: TLS did not verify AP identity",
 			eap_get_method_name(eap));
 		eap_method_error(eap);
@@ -650,6 +706,9 @@ static bool eap_tls_tunnel_init(struct eap_state *eap)
 		return false;
 	}
 
+	l_tls_set_peer_certchain_cb(eap_tls->tunnel, eap_tls_tunnel_certchain,
+					eap);
+
 	if (getenv("IWD_TLS_DEBUG")) {
 		l_tls_set_debug(eap_tls->tunnel, eap_tls_tunnel_debug, eap,
 									NULL);
@@ -689,6 +748,10 @@ static bool eap_tls_tunnel_init(struct eap_state *eap)
 
 		eap_tls->ca_cert = NULL;
 	}
+
+	if (eap_tls->server_cert_pinned)
+		l_tls_set_server_cert_hash(eap_tls->tunnel,
+						eap_tls->server_cert_hash);
 
 	if (eap_tls->domain_mask)
 		l_tls_set_domain_mask(eap_tls->tunnel, eap_tls->domain_mask);
@@ -931,6 +994,19 @@ static bool is_embedded(const char *str)
 	return false;
 }
 
+/* SHA256 of the server's DER-encoded certificate as 64 hex digits */
+static bool eap_tls_parse_server_cert_hash(const char *value, uint8_t *out)
+{
+	size_t len;
+	_auto_(l_free) uint8_t *hash = l_util_from_hexstring(value, &len);
+
+	if (!hash || len != 32)
+		return false;
+
+	memcpy(out, hash, 32);
+	return true;
+}
+
 static struct l_queue *eap_tls_load_ca_cert(struct l_settings *settings,
 						const char *value)
 {
@@ -1010,6 +1086,7 @@ int eap_tls_common_settings_check(struct l_settings *settings,
 	char setting_key[72];
 	bool have_cacerts = false;
 	const char *domain_mask_str;
+	const char *hash_str;
 	L_AUTO_FREE_VAR(char *, value);
 
 	snprintf(setting_key, sizeof(setting_key), "%sCACert", prefix);
@@ -1027,18 +1104,34 @@ int eap_tls_common_settings_check(struct l_settings *settings,
 		have_cacerts = true;
 	}
 
+	snprintf(setting_key, sizeof(setting_key), "%sServerCertHash", prefix);
+	hash_str = l_settings_get_value(settings, "Security", setting_key);
+	if (hash_str) {
+		uint8_t hash[32];
+
+		if (!eap_tls_parse_server_cert_hash(hash_str, hash)) {
+			l_error("%s must be a SHA256 hash in hex (64 digits)",
+				setting_key);
+			return -EINVAL;
+		}
+
+		have_cacerts = true;
+	}
+
 	/*
-	 * Require CACert if ServerDomainMask is present.  If the server
-	 * certificate is not being checked against any trusted certificates
-	 * there's no point validating its contents and we wouldn't even
-	 * receive the subject DN from ell, because it may be freely made up.
+	 * Require CACert or ServerCertHash if ServerDomainMask is present.
+	 * If the server certificate is not being checked against any trusted
+	 * certificates there's no point validating its contents and we
+	 * wouldn't even receive the subject DN from ell, because it may be
+	 * freely made up.
 	 */
 	snprintf(setting_key, sizeof(setting_key), "%sServerDomainMask",
 			prefix);
 	domain_mask_str = l_settings_get_value(settings, "Security",
 						setting_key);
 	if (domain_mask_str && !have_cacerts) {
-		l_error("%s was set but no CA Certificates given", setting_key);
+		l_error("%s was set but no CA Certificates or server "
+			"certificate hash given", setting_key);
 		return -EINVAL;
 	}
 
@@ -1063,6 +1156,7 @@ bool eap_tls_common_settings_load(struct eap_state *eap,
 	struct eap_tls_state *eap_tls;
 	char setting_key[72];
 	char *domain_mask_str;
+	const char *hash_str;
 	bool bool_val;
 
 	L_AUTO_FREE_VAR(char *, value) = NULL;
@@ -1081,6 +1175,18 @@ bool eap_tls_common_settings_load(struct eap_state *eap,
 			l_error("Could not load CACert %s", value);
 			goto load_error;
 		}
+	}
+
+	snprintf(setting_key, sizeof(setting_key), "%sServerCertHash", prefix);
+	hash_str = l_settings_get_value(settings, "Security", setting_key);
+	if (hash_str) {
+		if (!eap_tls_parse_server_cert_hash(hash_str,
+						eap_tls->server_cert_hash)) {
+			l_error("Invalid %s %s", setting_key, hash_str);
+			goto load_error;
+		}
+
+		eap_tls->server_cert_pinned = true;
 	}
 
 	snprintf(setting_key, sizeof(setting_key), "%sServerDomainMask",

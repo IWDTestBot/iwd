@@ -25,6 +25,7 @@
 #endif
 
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <assert.h>
 #include <sys/stat.h>
@@ -37,6 +38,7 @@
 #include "src/ie.h"
 #include "src/eap.h"
 #include "src/eap-private.h"
+#include "src/eap-tls-common.h"
 #include "src/handshake.h"
 
 /* Our nonce to use + its size */
@@ -77,6 +79,7 @@ struct test_handshake_state {
 	struct handshake_state super;
 	const uint8_t *tk;
 	bool handshake_failed;
+	bool server_cert_seen;
 };
 
 static void test_handshake_state_free(struct handshake_state *hs)
@@ -2878,14 +2881,41 @@ static void test_handshake_event(struct handshake_state *hs,
 {
 	struct test_handshake_state *ths =
 			l_container_of(hs, struct test_handshake_state, super);
+	const struct eap_tls_server_cert *cert;
+	va_list args;
+
+	va_start(args, user_data);
 
 	switch (event) {
 	case HANDSHAKE_EVENT_FAILED:
 		ths->handshake_failed = true;
 		break;
+	case HANDSHAKE_EVENT_EAP_NOTIFY:
+		if (va_arg(args, unsigned int) != EAP_TLS_EVENT_SERVER_CERT)
+			break;
+
+		cert = va_arg(args, const struct eap_tls_server_cert *);
+
+		/* The server's own certificate (depth 0) must come last */
+		assert(!ths->server_cert_seen);
+		assert(cert->cert && cert->cert_len);
+		assert(cert->cert_hash && strlen(cert->cert_hash) == 64);
+
+		if (cert->depth)
+			break;
+
+		assert(!strcmp(cert->subject, "/O=Foo Example Organization"
+				"/CN=Foo Example Organization"
+				"/emailAddress=foo@mail.example"));
+		assert(cert->altsubject &&
+			!strcmp(cert->altsubject[0], "DNS:foo.example.org"));
+		ths->server_cert_seen = true;
+		break;
 	default:
 		break;
 	}
+
+	va_end(args);
 }
 
 static void eapol_sm_test_tls(struct eapol_8021x_tls_test_state *s,
@@ -3138,6 +3168,7 @@ static void eapol_sm_test_tls(struct eapol_8021x_tls_test_state *s,
 	assert(verify_install_tk_called);
 
 done:
+	assert(ths->server_cert_seen);
 	__handshake_set_install_tk_func(NULL);
 
 	if (sm)
@@ -3238,6 +3269,94 @@ static void eapol_sm_test_eap_tls_subject_bad(const void *data)
 	eapol_sm_test_tls(&s, config);
 
 	l_settings_free(config);
+}
+
+static void eapol_sm_test_eap_tls_server_hash(bool good)
+{
+	static const char *config_fmt = "[Security]\n"
+		"EAP-Method=TLS\n"
+		"EAP-Identity=abc@example.com\n"
+		"EAP-TLS-ServerCertHash=%s\n"
+		"EAP-TLS-ClientCert=" CERTDIR "cert-client.pem\n"
+		"EAP-TLS-ClientKey=" CERTDIR "cert-client-key-pkcs8.pem\n";
+	struct eapol_8021x_tls_test_state s = {};
+	struct l_settings *config = l_settings_new();
+	struct l_certchain *chain =
+		l_pem_load_certificate_chain(CERTDIR "cert-server.pem");
+	struct l_checksum *sha256 = l_checksum_new(L_CHECKSUM_SHA256);
+	const uint8_t *der;
+	size_t der_len;
+	uint8_t hash[32] = {};
+	L_AUTO_FREE_VAR(char *, hex) = NULL;
+	L_AUTO_FREE_VAR(char *, config_8021x) = NULL;
+
+	assert(chain && sha256);
+
+	if (good) {
+		der = l_cert_get_der_data(l_certchain_get_leaf(chain),
+						&der_len);
+		assert(l_checksum_update(sha256, der, der_len));
+		assert(l_checksum_get_digest(sha256, hash, 32) == 32);
+	}
+
+	l_checksum_free(sha256);
+	l_certchain_free(chain);
+
+	hex = l_util_hexstring(hash, 32);
+	config_8021x = l_strdup_printf(config_fmt, hex);
+	l_settings_load_from_data(config, config_8021x, strlen(config_8021x));
+
+	s.app_data_cb = eapol_sm_test_tls_new_data;
+	s.ready_cb = eapol_sm_test_tls_test_ready;
+	s.disconnect_cb = eapol_sm_test_tls_test_disconnected;
+	s.method = EAP_TYPE_TLS;
+	s.expect_handshake_fail = !good;
+
+	eapol_sm_test_tls(&s, config);
+
+	l_settings_free(config);
+}
+
+static void eapol_sm_test_eap_tls_server_hash_good(const void *data)
+{
+	eapol_sm_test_eap_tls_server_hash(true);
+}
+
+static void eapol_sm_test_eap_tls_server_hash_bad(const void *data)
+{
+	eapol_sm_test_eap_tls_server_hash(false);
+}
+
+static void eapol_sm_test_eap_tls_server_hash_invalid(const void *data)
+{
+	static const char *values[] = {
+		"0123",						/* too short */
+		"zz00000000000000000000000000000000000000000000000000000000000000",
+		"hash://server/sha256/"
+		"0000000000000000000000000000000000000000000000000000000000000000",
+	};
+	unsigned int i;
+
+	eap_init();
+
+	for (i = 0; i < L_ARRAY_SIZE(values); i++) {
+		struct l_settings *config = l_settings_new();
+		struct l_queue *missing = NULL;
+
+		l_settings_set_string(config, "Security", "EAP-Method", "TLS");
+		l_settings_set_string(config, "Security", "EAP-Identity",
+					"abc@example.com");
+		l_settings_set_string(config, "Security",
+					"EAP-TLS-ServerCertHash", values[i]);
+
+		assert(eap_check_settings(config, NULL, "EAP-", true,
+						&missing) == -EINVAL);
+		assert(!missing);
+
+		l_settings_free(config);
+	}
+
+	eap_exit();
 }
 
 static const uint8_t eap_ttls_eap_identity_avp[] = {
@@ -4058,6 +4177,13 @@ int main(int argc, char *argv[])
 				eapol_sm_test_eap_tls_subject_good, NULL);
 	add_pkcs8_test("EAPoL/8021x EAP-TLS subject name mismatch",
 				eapol_sm_test_eap_tls_subject_bad, NULL);
+	add_pkcs8_test("EAPoL/8021x EAP-TLS server cert hash match",
+				eapol_sm_test_eap_tls_server_hash_good, NULL);
+	add_pkcs8_test("EAPoL/8021x EAP-TLS server cert hash mismatch",
+				eapol_sm_test_eap_tls_server_hash_bad, NULL);
+	add_pkcs8_test("EAPoL/8021x EAP-TLS invalid server cert hash",
+				eapol_sm_test_eap_tls_server_hash_invalid,
+				NULL);
 	add_pkcs8_test("EAPoL/8021x EAP-TLS embedded certs",
 				eapol_sm_test_eap_tls_embedded, NULL);
 

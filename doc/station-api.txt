@@ -135,6 +135,35 @@ Methods		void Scan()
 			Possible Errors: [service].Error.InvalidArguments
 					 [service].Error.NotFound
 
+Signals		Certification(dict certification)
+
+			Sent during EAP-TLS, EAP-TTLS and EAP-PEAP
+			authentication once for every certificate in the
+			chain received from the authentication server, before
+			the chain is verified, so it is also sent when
+			verification then fails.  Certificates are sent from
+			the highest depth (closest to the CA) down to the
+			server's own certificate (depth 0), which is always
+			last.  Same name and keys as wpa_supplicant's
+			Certification signal:
+
+			uint32 depth - position in the chain, 0 for the
+				server's own certificate
+
+			string subject - subject DN, e.g. "/O=Org/CN=name"
+				(omitted if it can't be parsed)
+
+			string cert_hash - SHA256 hash of the DER-encoded
+				certificate, lowercase hex, the same value
+				EAP-*-ServerCertHash takes
+
+			array{byte} cert - the DER-encoded certificate
+
+			array{string} altsubject - SubjectAltName entries,
+				in the certificate's order,
+				as "EMAIL:...", "DNS:..." or "URI:..."
+				(omitted if there are none)
+
 Properties	string State [readonly]
 
 			Reflects the general network connection state.  One of:

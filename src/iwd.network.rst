@@ -256,6 +256,18 @@ connect to that network.
        certificate chain must be verified by at least one CA in the list for
        the authentication to succeed.  If omitted, then authenticator's
        certificate chain will not be verified (not recommended.)
+   * - | EAP-TLS-ServerCertHash,
+       | EAP-TTLS-ServerCertHash,
+       | EAP-PEAP-ServerCertHash
+     - SHA256 hash as 64 hex digits
+
+       Pins the authenticator's server certificate: the SHA256 hash of its
+       DER encoding must match for the authentication to succeed.  This
+       authenticates the server without a CA, in which case its issuer
+       chain is not checked, but the certificate must still be within its
+       validity period.  If CACert is also given, both checks must pass.
+       The hash can be computed with
+       ``openssl x509 -in server.pem -outform DER | sha256sum``.
    * - EAP-TLS-ClientCert
      - absolute file path or embedded pem
 
