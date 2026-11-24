@@ -117,8 +117,10 @@ struct eap_tls_state {
 	bool tunnel_ready:1;
 	bool tls_session_resumed:1;
 	bool tls_cache_disabled:1;
+	bool server_cert_pinned:1;
 
 	struct l_queue *ca_cert;
+	uint8_t server_cert_hash[32];
 	struct l_certchain *client_cert;
 	struct l_key *client_key;
 	char **domain_mask;
@@ -290,7 +292,8 @@ static void eap_tls_tunnel_ready(const char *peer_identity, void *user_data)
 	eap_tls->tls_session_resumed =
 		l_tls_get_session_resumed(eap_tls->tunnel);
 
-	if (eap_tls->ca_cert && !peer_identity) {
+	if ((eap_tls->ca_cert || eap_tls->server_cert_pinned) &&
+			!peer_identity) {
 		l_error("%s: TLS did not verify AP identity",
 			eap_get_method_name(eap));
 		eap_method_error(eap);
@@ -690,6 +693,10 @@ static bool eap_tls_tunnel_init(struct eap_state *eap)
 		eap_tls->ca_cert = NULL;
 	}
 
+	if (eap_tls->server_cert_pinned)
+		l_tls_set_server_cert_hash(eap_tls->tunnel,
+						eap_tls->server_cert_hash);
+
 	if (eap_tls->domain_mask)
 		l_tls_set_domain_mask(eap_tls->tunnel, eap_tls->domain_mask);
 
@@ -931,6 +938,19 @@ static bool is_embedded(const char *str)
 	return false;
 }
 
+/* SHA256 of the server's DER-encoded certificate as 64 hex digits */
+static bool eap_tls_parse_server_cert_hash(const char *value, uint8_t *out)
+{
+	size_t len;
+	_auto_(l_free) uint8_t *hash = l_util_from_hexstring(value, &len);
+
+	if (!hash || len != 32)
+		return false;
+
+	memcpy(out, hash, 32);
+	return true;
+}
+
 static struct l_queue *eap_tls_load_ca_cert(struct l_settings *settings,
 						const char *value)
 {
@@ -1010,6 +1030,7 @@ int eap_tls_common_settings_check(struct l_settings *settings,
 	char setting_key[72];
 	bool have_cacerts = false;
 	const char *domain_mask_str;
+	const char *hash_str;
 	L_AUTO_FREE_VAR(char *, value);
 
 	snprintf(setting_key, sizeof(setting_key), "%sCACert", prefix);
@@ -1027,18 +1048,34 @@ int eap_tls_common_settings_check(struct l_settings *settings,
 		have_cacerts = true;
 	}
 
+	snprintf(setting_key, sizeof(setting_key), "%sServerCertHash", prefix);
+	hash_str = l_settings_get_value(settings, "Security", setting_key);
+	if (hash_str) {
+		uint8_t hash[32];
+
+		if (!eap_tls_parse_server_cert_hash(hash_str, hash)) {
+			l_error("%s must be a SHA256 hash in hex (64 digits)",
+				setting_key);
+			return -EINVAL;
+		}
+
+		have_cacerts = true;
+	}
+
 	/*
-	 * Require CACert if ServerDomainMask is present.  If the server
-	 * certificate is not being checked against any trusted certificates
-	 * there's no point validating its contents and we wouldn't even
-	 * receive the subject DN from ell, because it may be freely made up.
+	 * Require CACert or ServerCertHash if ServerDomainMask is present.
+	 * If the server certificate is not being checked against any trusted
+	 * certificates there's no point validating its contents and we
+	 * wouldn't even receive the subject DN from ell, because it may be
+	 * freely made up.
 	 */
 	snprintf(setting_key, sizeof(setting_key), "%sServerDomainMask",
 			prefix);
 	domain_mask_str = l_settings_get_value(settings, "Security",
 						setting_key);
 	if (domain_mask_str && !have_cacerts) {
-		l_error("%s was set but no CA Certificates given", setting_key);
+		l_error("%s was set but no CA Certificates or server "
+			"certificate hash given", setting_key);
 		return -EINVAL;
 	}
 
@@ -1063,6 +1100,7 @@ bool eap_tls_common_settings_load(struct eap_state *eap,
 	struct eap_tls_state *eap_tls;
 	char setting_key[72];
 	char *domain_mask_str;
+	const char *hash_str;
 	bool bool_val;
 
 	L_AUTO_FREE_VAR(char *, value) = NULL;
@@ -1081,6 +1119,18 @@ bool eap_tls_common_settings_load(struct eap_state *eap,
 			l_error("Could not load CACert %s", value);
 			goto load_error;
 		}
+	}
+
+	snprintf(setting_key, sizeof(setting_key), "%sServerCertHash", prefix);
+	hash_str = l_settings_get_value(settings, "Security", setting_key);
+	if (hash_str) {
+		if (!eap_tls_parse_server_cert_hash(hash_str,
+						eap_tls->server_cert_hash)) {
+			l_error("Invalid %s %s", setting_key, hash_str);
+			goto load_error;
+		}
+
+		eap_tls->server_cert_pinned = true;
 	}
 
 	snprintf(setting_key, sizeof(setting_key), "%sServerDomainMask",
