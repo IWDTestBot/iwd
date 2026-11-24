@@ -25,6 +25,7 @@
 #endif
 
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <assert.h>
 #include <sys/stat.h>
@@ -37,6 +38,7 @@
 #include "src/ie.h"
 #include "src/eap.h"
 #include "src/eap-private.h"
+#include "src/eap-tls-common.h"
 #include "src/handshake.h"
 
 /* Our nonce to use + its size */
@@ -77,6 +79,7 @@ struct test_handshake_state {
 	struct handshake_state super;
 	const uint8_t *tk;
 	bool handshake_failed;
+	bool server_cert_seen;
 };
 
 static void test_handshake_state_free(struct handshake_state *hs)
@@ -2878,14 +2881,41 @@ static void test_handshake_event(struct handshake_state *hs,
 {
 	struct test_handshake_state *ths =
 			l_container_of(hs, struct test_handshake_state, super);
+	const struct eap_tls_server_cert *cert;
+	va_list args;
+
+	va_start(args, user_data);
 
 	switch (event) {
 	case HANDSHAKE_EVENT_FAILED:
 		ths->handshake_failed = true;
 		break;
+	case HANDSHAKE_EVENT_EAP_NOTIFY:
+		if (va_arg(args, unsigned int) != EAP_TLS_EVENT_SERVER_CERT)
+			break;
+
+		cert = va_arg(args, const struct eap_tls_server_cert *);
+
+		/* The server's own certificate (depth 0) must come last */
+		assert(!ths->server_cert_seen);
+		assert(cert->cert && cert->cert_len);
+		assert(cert->cert_hash && strlen(cert->cert_hash) == 64);
+
+		if (cert->depth)
+			break;
+
+		assert(!strcmp(cert->subject, "/O=Foo Example Organization"
+				"/CN=Foo Example Organization"
+				"/emailAddress=foo@mail.example"));
+		assert(cert->altsubject &&
+			!strcmp(cert->altsubject[0], "DNS:foo.example.org"));
+		ths->server_cert_seen = true;
+		break;
 	default:
 		break;
 	}
+
+	va_end(args);
 }
 
 static void eapol_sm_test_tls(struct eapol_8021x_tls_test_state *s,
@@ -3138,6 +3168,7 @@ static void eapol_sm_test_tls(struct eapol_8021x_tls_test_state *s,
 	assert(verify_install_tk_called);
 
 done:
+	assert(ths->server_cert_seen);
 	__handshake_set_install_tk_func(NULL);
 
 	if (sm)
