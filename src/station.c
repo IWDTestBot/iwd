@@ -1149,6 +1149,72 @@ void station_set_scan_results(struct station *station,
 	station_autoconnect_start(station);
 }
 
+static void station_append_byte_array(struct l_dbus_message_builder *builder,
+					const char *name,
+					const uint8_t *bytes, size_t len)
+{
+	size_t i;
+
+	l_dbus_message_builder_enter_dict(builder, "sv");
+	l_dbus_message_builder_append_basic(builder, 's', name);
+	l_dbus_message_builder_enter_variant(builder, "ay");
+	l_dbus_message_builder_enter_array(builder, "y");
+
+	for (i = 0; i < len; i++)
+		l_dbus_message_builder_append_basic(builder, 'y', &bytes[i]);
+
+	l_dbus_message_builder_leave_array(builder);
+	l_dbus_message_builder_leave_variant(builder);
+	l_dbus_message_builder_leave_dict(builder);
+}
+
+/* Same name and dictionary keys as wpa_supplicant's Certification signal */
+static void station_emit_certification(struct station *station,
+				const struct eap_tls_server_cert *cert)
+{
+	struct l_dbus_message *signal;
+	struct l_dbus_message_builder *builder;
+	char **name;
+
+	signal = l_dbus_message_new_signal(dbus_get_bus(),
+					netdev_get_path(station->netdev),
+					IWD_STATION_INTERFACE, "Certification");
+	builder = l_dbus_message_builder_new(signal);
+
+	l_dbus_message_builder_enter_array(builder, "{sv}");
+
+	dbus_append_dict_basic(builder, "depth", 'u', &cert->depth);
+
+	if (cert->subject)
+		dbus_append_dict_basic(builder, "subject", 's', cert->subject);
+
+	dbus_append_dict_basic(builder, "cert_hash", 's', cert->cert_hash);
+	station_append_byte_array(builder, "cert", cert->cert,
+					cert->cert_len);
+
+	if (cert->altsubject) {
+		l_dbus_message_builder_enter_dict(builder, "sv");
+		l_dbus_message_builder_append_basic(builder, 's',
+							"altsubject");
+		l_dbus_message_builder_enter_variant(builder, "as");
+		l_dbus_message_builder_enter_array(builder, "s");
+
+		for (name = cert->altsubject; *name; name++)
+			l_dbus_message_builder_append_basic(builder, 's',
+								*name);
+
+		l_dbus_message_builder_leave_array(builder);
+		l_dbus_message_builder_leave_variant(builder);
+		l_dbus_message_builder_leave_dict(builder);
+	}
+
+	l_dbus_message_builder_leave_array(builder);
+	l_dbus_message_builder_finalize(builder);
+	l_dbus_message_builder_destroy(builder);
+
+	l_dbus_send(dbus_get_bus(), signal);
+}
+
 static void station_reconnect(struct station *station);
 
 static void station_handshake_event(struct handshake_state *hs,
@@ -1187,9 +1253,13 @@ static void station_handshake_event(struct handshake_state *hs,
 		network_set_transition_disable(network, td, len);
 		break;
 	}
+	case HANDSHAKE_EVENT_EAP_NOTIFY:
+		if (va_arg(args, unsigned int) == EAP_TLS_EVENT_SERVER_CERT)
+			station_emit_certification(station,
+				va_arg(args, const struct eap_tls_server_cert *));
+		break;
 	case HANDSHAKE_EVENT_COMPLETE:
 	case HANDSHAKE_EVENT_SETTING_KEYS_FAILED:
-	case HANDSHAKE_EVENT_EAP_NOTIFY:
 	case HANDSHAKE_EVENT_P2P_IP_REQUEST:
 	case HANDSHAKE_EVENT_REKEY_COMPLETE:
 		/*
@@ -5315,6 +5385,9 @@ static void station_setup_interface(struct l_dbus_interface *interface)
 				station_dbus_signal_agent_unregister,
 				"", "o", "path");
 
+	l_dbus_interface_signal(interface, "Certification", 0, "a{sv}",
+				"certification");
+
 	l_dbus_interface_property(interface, "ConnectedNetwork", 0, "o",
 					station_property_get_connected_network,
 					NULL);
@@ -5786,25 +5859,6 @@ static struct l_dbus_message *station_property_set_autoconnect(
 	station_set_autoconnect(station, autoconnect);
 
 	return l_dbus_message_new_method_return(message);
-}
-
-static void station_append_byte_array(struct l_dbus_message_builder *builder,
-					const char *name,
-					const uint8_t *bytes, size_t len)
-{
-	size_t i;
-
-	l_dbus_message_builder_enter_dict(builder, "sv");
-	l_dbus_message_builder_append_basic(builder, 's', name);
-	l_dbus_message_builder_enter_variant(builder, "ay");
-	l_dbus_message_builder_enter_array(builder, "y");
-
-	for (i = 0; i < len; i++)
-		l_dbus_message_builder_append_basic(builder, 'y', &bytes[i]);
-
-	l_dbus_message_builder_leave_array(builder);
-	l_dbus_message_builder_leave_variant(builder);
-	l_dbus_message_builder_leave_dict(builder);
 }
 
 static void station_append_bss_list(struct l_dbus_message_builder *builder,
