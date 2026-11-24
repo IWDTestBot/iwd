@@ -23,6 +23,24 @@
 typedef struct l_settings *(*eap_tls_session_cache_load_func_t)(void);
 typedef void (*eap_tls_session_cache_sync_func_t)(const struct l_settings *);
 
+enum eap_tls_event {
+	EAP_TLS_EVENT_SERVER_CERT	= 0x000d0001,
+};
+
+/*
+ * Sent once per certificate of the server's chain, highest depth (closest
+ * to the CA) first and the server's own certificate (depth 0) last, like
+ * wpa_supplicant's Certification signal.
+ */
+struct eap_tls_server_cert {
+	unsigned int depth;
+	const char *subject;
+	const char *cert_hash;
+	const uint8_t *cert;
+	size_t cert_len;
+	char **altsubject;
+};
+
 enum eap_tls_version {
 	EAP_TLS_VERSION_0               = 0x00,
 	EAP_TLS_VERSION_1               = 0x01,

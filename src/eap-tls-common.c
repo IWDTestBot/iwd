@@ -260,6 +260,59 @@ static void eap_tls_tunnel_debug(const char *str, void *user_data)
 	l_info("%s: %s", eap_get_method_name(eap), str);
 }
 
+struct eap_tls_certchain_walk {
+	struct eap_state *eap;
+	unsigned int depth;
+};
+
+static bool eap_tls_count_cert(struct l_cert *cert, void *user_data)
+{
+	struct eap_tls_certchain_walk *walk = user_data;
+
+	walk->depth++;
+	return false;
+}
+
+static bool eap_tls_report_server_cert(struct l_cert *cert, void *user_data)
+{
+	struct eap_tls_certchain_walk *walk = user_data;
+	struct eap_tls_server_cert info = { .depth = --walk->depth };
+	_auto_(l_free) char *subject = l_cert_get_subject_str(cert);
+	_auto_(l_free) char *cert_hash = NULL;
+	_auto_(l_strv_free) char **altsubject = l_cert_get_altnames(cert);
+	struct l_checksum *sha256 = l_checksum_new(L_CHECKSUM_SHA256);
+	uint8_t hash[32];
+
+	info.cert = l_cert_get_der_data(cert, &info.cert_len);
+
+	if (!sha256 || !l_checksum_update(sha256, info.cert, info.cert_len) ||
+			l_checksum_get_digest(sha256, hash, 32) != 32) {
+		l_checksum_free(sha256);
+		return false;
+	}
+
+	l_checksum_free(sha256);
+
+	/* Same form as wpa_supplicant: lowercase hex, no separators */
+	cert_hash = l_util_hexstring(hash, 32);
+
+	info.subject = subject;
+	info.cert_hash = cert_hash;
+	info.altsubject = altsubject;
+
+	eap_method_event(walk->eap, EAP_TLS_EVENT_SERVER_CERT, &info);
+	return false;
+}
+
+static void eap_tls_tunnel_certchain(struct l_certchain *chain,
+					void *user_data)
+{
+	struct eap_tls_certchain_walk walk = { .eap = user_data };
+
+	l_certchain_walk_from_leaf(chain, eap_tls_count_cert, &walk);
+	l_certchain_walk_from_ca(chain, eap_tls_report_server_cert, &walk);
+}
+
 static void eap_tls_tunnel_data_send(const uint8_t *data, size_t data_len,
 								void *user_data)
 {
@@ -652,6 +705,9 @@ static bool eap_tls_tunnel_init(struct eap_state *eap)
 						eap_get_method_name(eap));
 		return false;
 	}
+
+	l_tls_set_peer_certchain_cb(eap_tls->tunnel, eap_tls_tunnel_certchain,
+					eap);
 
 	if (getenv("IWD_TLS_DEBUG")) {
 		l_tls_set_debug(eap_tls->tunnel, eap_tls_tunnel_debug, eap,
